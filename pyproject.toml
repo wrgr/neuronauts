@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "neuronauts"
+version = "0.1.0"
+description = "Agent-based connectome recovery experiments."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "scipy",
+]
+
+[project.optional-dependencies]
+dev = [
+    "matplotlib",
+    "pytest",
+]
+
+[project.scripts]
+neuronauts = "neuronauts.run:main"
+
+[tool.setuptools]
+packages = ["neuronauts"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
