@@ -69,10 +69,12 @@ candidate synapse-side clusters from real EM.
 This is the learned center of the system.
 
 - `PathEncoder`: raw path sequence `(edge_len, radius, curvature) -> 32D`
+  sequential profile encoder
 - `MergeScorer`: pairwise fragment compatibility
-- `ArborEncoder` / `topology_atomicity`: global cluster atomicity and arbor
-  validity
-- beam search: global hypothesis assembly over fragments and joins
+- `ArborEncoder` / `topology_atomicity`: multi-fragment cluster atomicity and
+  arbor validity
+- attention-based cluster validator over padded branch embeddings
+- future beam search: global hypothesis assembly over fragments and joins
 - optional LLM oracle: sparse hypothesis-level coherence scoring
 
 The key point is that all of these should be driven by shared learned
@@ -107,10 +109,12 @@ The representation should be:
 - shared across local and global tasks
 - trainable from both edit history and connectome consistency
 
-The current `neuronauts` implementation contains only a lightweight baseline in
-`neuronauts/grammar.py`. The proposal is to evolve that shared encoder family
-upward into cluster and arbor validation rather than train isolated local
-models for each subproblem.
+The current `neuronauts` implementation contains a lightweight but nontrivial
+shared-grammar baseline in `neuronauts/grammar.py`: a sequential path-profile
+encoder and a permutation-invariant arbor summarizer. The current topology
+training path exports multi-branch examples and trains an attention-based
+atomicity validator on those embeddings. Full whole-neuron beam-search
+assembly remains a research target rather than a finished runtime component.
 
 ## 4. Why Line-Graph F1 Should Replace Local AUC
 
@@ -188,10 +192,12 @@ U-Net cache, and generates agent-based fragment proposals.
 Candidate pre-side or post-side synapse clusters are scored for atomicity. A
 non-atomic cluster should fragment before root identity is assigned.
 
-### Step 4: beam-search assembly
+### Step 4: global assembly
 
-Global hypotheses are assembled from local fragments and bridge proposals. Beam
-search explores coherent join sequences rather than committing greedily.
+Global hypotheses should be assembled from local fragments and bridge
+proposals. In the current repo, the implemented global-learning step is the
+attention-based atomicity validator over branch embeddings. Explicit beam
+search over whole-neuron hypotheses is future work.
 
 ### Step 5: oracle re-ranking
 
@@ -294,13 +300,34 @@ The practical next steps are clear.
 3. Continue exporting real MICRONS/CAVE atomicity examples from `neuronauts`.
 4. Feed those examples into the shared `PathEncoder` training path.
 5. Replace local AUC as the primary reported scalar with line-graph F1.
-6. Use beam search over fragment and cluster hypotheses, not only local merge
-   scores.
+6. Train the multi-branch atomicity model on exported CAVE examples.
+7. Add beam search over fragment and cluster hypotheses once the shared
+   representation is stable.
 
-The recent `export_topology_dataset.py` script in `neuronauts` already shows the
-correct direction: it builds real training examples from CAVE root assignments
-on MICRONS boxes. Those data can be unified with edit-decision supervision so
-both forms of training update the same grammar.
+The recent `export_topology_dataset.py` and `train_topology_model.py` path in
+`neuronauts` already shows the correct direction: it builds multi-branch
+training examples from CAVE root assignments on MICRONS boxes and fits a
+learned atomicity model on top of the shared grammar outputs. Those data can be
+unified with edit-decision supervision so both forms of training update the
+same grammar.
+
+## 11. Current Repo Status
+
+What is implemented now:
+
+- MICRONS/CAVE box and synapse fetch helpers
+- optional cached membrane path
+- synthetic and real-data line-graph evaluation
+- sequential `PathEncoder`
+- permutation-invariant `ArborEncoder`
+- multi-branch topology dataset export with masks
+- attention-based arbor validator training path
+
+What remains future work:
+
+- shared end-to-end training of local merge and global atomicity in one stack
+- explicit beam-search or hierarchical whole-neuron assembly
+- millimeter-scale sparse global inference
 
 ## Conclusion
 

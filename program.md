@@ -145,15 +145,17 @@ python scripts/export_topology_dataset.py \
   --membrane-source auto
 ```
 
-2. Train the baseline topology model:
+2. Train the topology validator:
 
 ```bash
 python scripts/train_topology_model.py \
   --dataset data/topology_dataset_smoke.npz \
-  --output models/topology_atomicity_smoke.npz
+  --output models/topology_atomicity_smoke.pt
 ```
 
-This is not the final grammar model, but it establishes the correct inner-loop
+The current implementation exports padded multi-branch tensors plus masks and
+trains an attention-based arbor validator. This is still a partial realization
+of the overall grammar claim, but it establishes the correct inner-loop
 pattern:
 
 - build real examples
@@ -197,6 +199,12 @@ Priority order:
 4. introduce a cluster/arbor atomicity head
 5. assemble with beam search
 6. evaluate with line-graph F1
+
+Important implementation note:
+
+- the current repo includes the multi-branch export path and attention-based
+  atomicity model
+- global beam-search assembly across whole neurons remains future work
 
 ## What To Avoid
 

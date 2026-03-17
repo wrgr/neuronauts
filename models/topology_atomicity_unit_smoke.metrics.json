@@ -1,0 +1,13 @@
+{
+  "train": {
+    "accuracy": 0.5,
+    "loss": 0.6936334371566772
+  },
+  "val": {
+    "accuracy": 0.0,
+    "loss": 0.724819540977478
+  },
+  "n_train": 4,
+  "n_val": 2,
+  "embed_dim": 32
+}

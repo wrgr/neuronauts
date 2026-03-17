@@ -15,6 +15,7 @@ The current benchmark is synthetic line-graph recovery. Agents move through a 3D
 - Human instruction file: `program.md`
 - Whitepaper: `docs/whitepaper.md`
 - Codex outer optimizer: `scripts/codex_optimize.py`
+- Optional Gemini outer optimizer: `scripts/gemini_researcher.py`
 - Repeated-evaluation monitor: `scripts/iterative_loop.py`
 - Membrane U-Net trainer: `scripts/train_membrane_unet.py`
 - Membrane cache builder: `scripts/cache_membrane_volume.py`
@@ -50,6 +51,13 @@ Install optional membrane-model dependencies when you want learned membrane prep
 python -m pip install -e .[membrane]
 ```
 
+Install optional topology-model dependencies when you want to train the
+attention-based global validator:
+
+```bash
+python -m pip install -e .[topology]
+```
+
 To start the autonomous loop, point Codex at [program.md](/Users/wgray13/projects/neuronauts/program.md).
 
 ## Project layout
@@ -70,6 +78,7 @@ scripts/
   cache_membrane_volume.py
   codex_optimize.py
   export_topology_dataset.py
+  gemini_researcher.py
   iterative_loop.py
   train_topology_model.py
   train_membrane_unet.py
@@ -172,8 +181,9 @@ python -m neuronauts.run \
 
 ## Topology Learning
 
-The first real inner learning loop is a synapse-cluster atomicity model trained
-from MICRONS/CAVE root consistency.
+The current inner learning loop exports multi-branch synapse-cluster examples
+from MICRONS/CAVE root consistency and trains an attention-based arbor
+validator over padded branch embeddings.
 
 Export a dataset from fixed real validation boxes:
 
@@ -181,15 +191,16 @@ Export a dataset from fixed real validation boxes:
 python scripts/export_topology_dataset.py \
   --output data/topology_dataset_smoke.npz \
   --box-indices 0,1,2 \
-  --membrane-source auto
+  --membrane-source auto \
+  --max-branches 32
 ```
 
-Train the baseline model:
+Train the topology model:
 
 ```bash
 python scripts/train_topology_model.py \
   --dataset data/topology_dataset_smoke.npz \
-  --output models/topology_atomicity_smoke.npz
+  --output models/topology_atomicity_smoke.pt
 ```
 
 The accompanying test plan is in

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export a MICRONS/CAVE synapse-cluster atomicity dataset."""
+"""Export a MICRONS/CAVE multi-branch synapse-cluster atomicity dataset."""
 
 from __future__ import annotations
 
@@ -7,9 +7,8 @@ import argparse
 import json
 from pathlib import Path
 
-from neuronauts.fetch import RealBoxSpec
 from neuronauts.run import REAL_BOXES
-from neuronauts.topology_dataset import build_cluster_examples_for_box, save_examples_npz
+from neuronauts.topology_dataset import build_cluster_examples_for_box, save_multi_branch_npz
 
 
 def parse_args() -> argparse.Namespace:
@@ -24,6 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--membrane-cache-dir", default="cache/membranes")
     parser.add_argument("--min-cluster-size", type=int, default=2)
     parser.add_argument("--max-negative-pairs-per-role", type=int, default=32)
+    parser.add_argument("--max-branches", type=int, default=32)
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
@@ -41,6 +41,7 @@ def main() -> int:
             membrane_cache_dir=args.membrane_cache_dir,
             min_cluster_size=args.min_cluster_size,
             max_negative_pairs_per_role=args.max_negative_pairs_per_role,
+            max_branches=args.max_branches,
             seed=args.seed + box_idx,
         )
         examples.extend(box_examples)
@@ -54,7 +55,7 @@ def main() -> int:
             }
         )
 
-    save_examples_npz(args.output, examples)
+    save_multi_branch_npz(args.output, examples, max_branches=args.max_branches)
     manifest_path = Path(args.output).with_suffix(".manifest.json")
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")

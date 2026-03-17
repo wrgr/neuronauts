@@ -5,11 +5,49 @@ from pathlib import Path
 import numpy as np
 
 from neuronauts.fetch import SynapseTable
-from neuronauts.topology_dataset import FEATURE_NAMES, build_cluster_examples, examples_to_arrays, save_examples_npz
-from neuronauts.topology_model import load_logistic_model, save_logistic_model, train_logistic_model
+from neuronauts.grammar import ArborEncoder, PathEncoder, build_path_batch
+from neuronauts.topology_dataset import (
+    BRANCH_FEATURE_NAME,
+    build_cluster_examples,
+    examples_to_multi_branch_arrays,
+    save_multi_branch_npz,
+)
 
 
-class TopologyLearningTest(unittest.TestCase):
+class GrammarAndTopologyDatasetTest(unittest.TestCase):
+    def test_path_encoder_captures_coarse_sequence_profile(self):
+        encoder = PathEncoder(output_dim=32)
+        early_heavy = build_path_batch(
+            edge_len=[5.0, 5.0, 1.0, 1.0, 1.0, 1.0],
+            radius=[1.0] * 6,
+            curvature=[0.0] * 6,
+        )
+        late_heavy = build_path_batch(
+            edge_len=[1.0, 1.0, 1.0, 1.0, 5.0, 5.0],
+            radius=[1.0] * 6,
+            curvature=[0.0] * 6,
+        )
+
+        emb_a = encoder.encode(early_heavy)
+        emb_b = encoder.encode(late_heavy)
+
+        self.assertEqual(emb_a.shape, (32,))
+        self.assertEqual(emb_b.shape, (32,))
+        self.assertFalse(np.allclose(emb_a, emb_b))
+
+    def test_arbor_encoder_combines_mean_and_max_pooling(self):
+        encoder = ArborEncoder(output_dim=64)
+        embeddings = [
+            np.ones(32, dtype=np.float32),
+            np.full(32, 3.0, dtype=np.float32),
+        ]
+
+        encoded = encoder.encode(embeddings)
+
+        self.assertEqual(encoded.shape, (64,))
+        np.testing.assert_allclose(encoded[:32], 2.0, atol=1e-6)
+        np.testing.assert_allclose(encoded[32:], 3.0, atol=1e-6)
+
     def test_cluster_examples_include_atomic_and_non_atomic_labels(self):
         synapses = SynapseTable(
             pre_pt=np.array(
@@ -41,39 +79,21 @@ class TopologyLearningTest(unittest.TestCase):
             membrane,
             min_cluster_size=2,
             max_negative_pairs_per_role=4,
+            max_branches=4,
             seed=7,
         )
 
         self.assertGreaterEqual(len(examples), 4)
-        labels = {example.label for example in examples}
-        self.assertEqual(labels, {0, 1})
-        x, y = examples_to_arrays(examples)
-        self.assertEqual(x.shape[1], len(FEATURE_NAMES))
+        self.assertEqual({example.label for example in examples}, {0, 1})
+        self.assertTrue(all(example.branch_embeddings for example in examples))
+
+        x, y, mask = examples_to_multi_branch_arrays(examples, max_branches=4)
         self.assertEqual(len(x), len(y))
+        self.assertEqual(mask.shape, (len(examples), 4))
+        self.assertEqual(x.ndim, 3)
+        self.assertTrue(np.any(~mask))
 
-    def test_logistic_model_round_trip(self):
-        x = np.array(
-            [
-                [0.0, 0.0],
-                [0.1, 0.2],
-                [2.0, 2.0],
-                [2.2, 2.1],
-            ],
-            dtype=np.float32,
-        )
-        y = np.array([0, 0, 1, 1], dtype=np.int64)
-        model, metrics = train_logistic_model(x, y, ["a", "b"])
-        self.assertGreaterEqual(metrics["accuracy"], 0.5)
-        probs = model.predict_proba(x)
-        self.assertTrue(np.all(np.isfinite(probs)))
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            model_path = Path(tmpdir) / "model.npz"
-            save_logistic_model(model_path, model)
-            loaded = load_logistic_model(model_path)
-            np.testing.assert_allclose(model.predict_proba(x), loaded.predict_proba(x), atol=1e-6)
-
-    def test_save_examples_npz(self):
+    def test_save_multi_branch_npz(self):
         synapses = SynapseTable(
             pre_pt=np.array([[1, 1, 1], [2, 1, 1], [10, 10, 10], [11, 10, 10]], dtype=np.float32),
             post_pt=np.array([[1, 5, 1], [2, 5, 1], [10, 15, 10], [11, 15, 10]], dtype=np.float32),
@@ -86,12 +106,14 @@ class TopologyLearningTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             output = Path(tmpdir) / "dataset.npz"
-            save_examples_npz(output, examples)
+            save_multi_branch_npz(output, examples, max_branches=5)
             loaded = np.load(output, allow_pickle=True)
             self.assertIn("x", loaded.files)
             self.assertIn("y", loaded.files)
+            self.assertIn("mask", loaded.files)
             self.assertIn("feature_names", loaded.files)
-            self.assertEqual(loaded["x"].shape[1], len(FEATURE_NAMES))
+            self.assertEqual(loaded["feature_names"].tolist(), [BRANCH_FEATURE_NAME])
+            self.assertEqual(loaded["x"].shape[1], 5)
 
 
 if __name__ == "__main__":

@@ -193,6 +193,37 @@ def fetch_synapses(
     )
 
 
+class CAVEDataFetcher:
+    """Small convenience wrapper around the module-level CAVE fetch helpers.
+
+    This keeps the public API close to the design described in the whitepaper
+    while preserving the original functional helpers used elsewhere in the repo.
+    """
+
+    def __init__(
+        self,
+        datastack: str = MICRONS_DATASTACK,
+        *,
+        cave_server: str = CAVE_SERVER,
+        token: str | None = None,
+    ) -> None:
+        self.datastack = datastack
+        self.cave_server = cave_server
+        self.token = token
+
+    def fetch_volume(self, bbox_nm: Tuple[Tuple, Tuple], *, mip: int = 2) -> VolumeChunk:
+        return fetch_volume(bbox_nm=bbox_nm, mip=mip)
+
+    def fetch_synapses(self, bbox_nm: Tuple[Tuple, Tuple], *, mip: int = 2) -> SynapseTable:
+        return fetch_synapses(
+            bbox_nm=bbox_nm,
+            mip=mip,
+            datastack=self.datastack,
+            cave_server=self.cave_server,
+            token=self.token,
+        )
+
+
 def membrane_cache_paths(
     box: RealBoxSpec,
     cache_dir: str | Path,

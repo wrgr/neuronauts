@@ -11,7 +11,16 @@ do not have a cached learned membrane volume.
 """
 
 import numpy as np
-from scipy.ndimage import gaussian_filter, sobel
+
+try:
+    from scipy.ndimage import gaussian_filter, sobel
+except ImportError:
+    def gaussian_filter(volume: np.ndarray, sigma: float = 1.0) -> np.ndarray:
+        del sigma
+        return volume.astype(np.float32, copy=False)
+
+    def sobel(volume: np.ndarray, axis: int) -> np.ndarray:
+        return np.gradient(volume.astype(np.float32, copy=False), axis=axis)
 
 
 def compute_membrane_field(

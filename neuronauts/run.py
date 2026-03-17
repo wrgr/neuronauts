@@ -5,7 +5,6 @@ import time
 from dataclasses import asdict
 
 import numpy as np
-from scipy.spatial import cKDTree
 
 from .agent import AgentConfig
 from .fields import compute_exploration_field, compute_membrane_field, compute_membrane_vectors
@@ -18,7 +17,7 @@ from .fetch import (
     make_test_volume,
 )
 from .line_graph import LineGraphMetrics, evaluate
-from .merge import ConnectivityGraph, MergedNeuron
+from .merge import ConnectivityGraph, MergedNeuron, cKDTree
 from .vectorized import run_agents_vectorized
 
 # ============================================================

@@ -1,15 +1,18 @@
-"""Dataset construction for synapse-cluster atomicity learning."""
+"""Dataset construction for multi-branch synapse-cluster atomicity learning."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Sequence
 
 import numpy as np
-from scipy.spatial.distance import pdist
 
 from .fetch import RealBoxSpec, SynapseTable, fetch_synapses, fetch_volume, load_cached_membrane
 from .fields import compute_membrane_field
+from .grammar import PathEncoder, build_path_batch
+
+BRANCH_FEATURE_NAME = "branch_embedding"
 
 
 @dataclass(frozen=True)
@@ -18,57 +21,7 @@ class ClusterExample:
     label: int
     synapse_indices: tuple[int, ...]
     root_ids: tuple[int, ...]
-    features: np.ndarray
-
-
-FEATURE_NAMES = [
-    "role_is_post",
-    "cluster_size",
-    "extent_x",
-    "extent_y",
-    "extent_z",
-    "centroid_std_x",
-    "centroid_std_y",
-    "centroid_std_z",
-    "pairwise_mean",
-    "pairwise_max",
-    "pairwise_std",
-    "membrane_mean",
-    "membrane_std",
-]
-
-
-def _sample_field(field: np.ndarray, points: np.ndarray) -> np.ndarray:
-    idx = np.clip(np.rint(points).astype(int), 0, np.array(field.shape) - 1)
-    return field[idx[:, 0], idx[:, 1], idx[:, 2]].astype(np.float32)
-
-
-def _cluster_features(role: str, points: np.ndarray, membrane_field: np.ndarray) -> np.ndarray:
-    pts = points.astype(np.float32)
-    centroid = pts.mean(axis=0)
-    centered = pts - centroid
-    extent = pts.max(axis=0) - pts.min(axis=0)
-    std = centered.std(axis=0)
-    pairwise = pdist(pts) if len(pts) >= 2 else np.array([0.0], dtype=np.float32)
-    membrane_vals = _sample_field(membrane_field, pts)
-    return np.array(
-        [
-            1.0 if role == "post" else 0.0,
-            float(len(pts)),
-            float(extent[0]),
-            float(extent[1]),
-            float(extent[2]),
-            float(std[0]),
-            float(std[1]),
-            float(std[2]),
-            float(pairwise.mean()),
-            float(pairwise.max()),
-            float(pairwise.std()),
-            float(membrane_vals.mean()),
-            float(membrane_vals.std()),
-        ],
-        dtype=np.float32,
-    )
+    branch_embeddings: tuple[np.ndarray, ...]
 
 
 def _root_groups(root_ids: np.ndarray) -> dict[int, list[int]]:
@@ -78,13 +31,75 @@ def _root_groups(root_ids: np.ndarray) -> dict[int, list[int]]:
     return groups
 
 
+def _ordered_points(points: np.ndarray) -> np.ndarray:
+    if len(points) <= 1:
+        return points.astype(np.float32, copy=False)
+
+    pts = points.astype(np.float32)
+    centered = pts - pts.mean(axis=0, keepdims=True)
+    _, _, vh = np.linalg.svd(centered, full_matrices=False)
+    primary_axis = vh[0]
+    order = np.argsort(centered @ primary_axis)
+    return pts[order].astype(np.float32, copy=False)
+
+
+def _curvature_from_points(points: np.ndarray) -> np.ndarray:
+    if len(points) < 3:
+        return np.zeros(max(0, len(points) - 1), dtype=np.float32)
+
+    segments = np.diff(points, axis=0).astype(np.float32)
+    seg_norm = np.linalg.norm(segments, axis=1)
+    unit = segments / np.clip(seg_norm[:, None], 1e-6, None)
+    turn = np.linalg.norm(np.diff(unit, axis=0), axis=1)
+    curvature = np.zeros(len(segments), dtype=np.float32)
+    curvature[1:] = turn.astype(np.float32, copy=False)
+    return curvature
+
+
+def _branch_point_splits(points: np.ndarray, max_branches: int) -> list[np.ndarray]:
+    ordered = _ordered_points(points)
+    if len(ordered) < 2:
+        return []
+
+    branch_count = min(max_branches, max(1, len(ordered) // 2))
+    parts = np.array_split(ordered, branch_count, axis=0)
+    return [part.astype(np.float32, copy=False) for part in parts if len(part) >= 2]
+
+
+def _encode_branch(points: np.ndarray, encoder: PathEncoder) -> np.ndarray:
+    ordered = _ordered_points(points)
+    diffs = np.diff(ordered, axis=0)
+    edge_len = np.linalg.norm(diffs, axis=1).astype(np.float32, copy=False)
+    centroid = ordered.mean(axis=0, keepdims=True)
+    radius = np.linalg.norm(ordered[1:] - centroid, axis=1).astype(np.float32, copy=False)
+    curvature = _curvature_from_points(ordered)
+    batch = build_path_batch(edge_len=edge_len, radius=radius, curvature=curvature)
+    return encoder.encode(batch)
+
+
+def _cluster_branch_embeddings(
+    points: np.ndarray,
+    *,
+    encoder: PathEncoder,
+    max_branches: int,
+) -> tuple[np.ndarray, ...]:
+    branches = []
+    for branch_points in _branch_point_splits(points, max_branches=max_branches):
+        branches.append(_encode_branch(branch_points, encoder))
+
+    if not branches and len(points) >= 2:
+        branches.append(_encode_branch(points, encoder))
+    return tuple(np.asarray(branch, dtype=np.float32) for branch in branches)
+
+
 def _atomic_examples_for_role(
     role: str,
     points: np.ndarray,
     root_ids: np.ndarray,
-    membrane_field: np.ndarray,
     *,
+    encoder: PathEncoder,
     min_cluster_size: int,
+    max_branches: int,
 ) -> list[ClusterExample]:
     examples = []
     for root_id, indices in _root_groups(root_ids).items():
@@ -97,7 +112,11 @@ def _atomic_examples_for_role(
                 label=1,
                 synapse_indices=tuple(int(i) for i in indices),
                 root_ids=(int(root_id),),
-                features=_cluster_features(role, cluster_points, membrane_field),
+                branch_embeddings=_cluster_branch_embeddings(
+                    cluster_points,
+                    encoder=encoder,
+                    max_branches=max_branches,
+                ),
             )
         )
     return examples
@@ -107,10 +126,11 @@ def _non_atomic_examples_for_role(
     role: str,
     points: np.ndarray,
     root_ids: np.ndarray,
-    membrane_field: np.ndarray,
     *,
+    encoder: PathEncoder,
     min_cluster_size: int,
-    max_negatives: int,
+    max_negative_pairs_per_role: int,
+    max_branches: int,
     rng: np.random.Generator,
 ) -> list[ClusterExample]:
     groups = [(root_id, indices) for root_id, indices in _root_groups(root_ids).items() if len(indices) >= min_cluster_size]
@@ -126,8 +146,8 @@ def _non_atomic_examples_for_role(
             dist = float(np.linalg.norm(centroids[int(root_a)] - centroids[int(root_b)]))
             pairs.append((dist, int(root_a), int(root_b), idx_a, idx_b))
     pairs.sort(key=lambda item: item[0])
-    if max_negatives > 0:
-        pairs = pairs[:max_negatives]
+    if max_negative_pairs_per_role > 0:
+        pairs = pairs[:max_negative_pairs_per_role]
 
     examples = []
     for _, root_a, root_b, idx_a, idx_b in pairs:
@@ -140,7 +160,11 @@ def _non_atomic_examples_for_role(
                 label=0,
                 synapse_indices=tuple(int(i) for i in merged),
                 root_ids=(int(root_a), int(root_b)),
-                features=_cluster_features(role, cluster_points, membrane_field),
+                branch_embeddings=_cluster_branch_embeddings(
+                    cluster_points,
+                    encoder=encoder,
+                    max_branches=max_branches,
+                ),
             )
         )
     return examples
@@ -152,9 +176,12 @@ def build_cluster_examples(
     *,
     min_cluster_size: int = 2,
     max_negative_pairs_per_role: int = 32,
+    max_branches: int = 32,
     seed: int = 42,
 ) -> list[ClusterExample]:
+    del membrane_field
     rng = np.random.default_rng(seed)
+    encoder = PathEncoder(output_dim=32)
     examples: list[ClusterExample] = []
     role_specs = [
         ("pre", synapses.pre_pt, synapses.pre_root_id),
@@ -166,8 +193,9 @@ def build_cluster_examples(
                 role,
                 points,
                 root_ids,
-                membrane_field,
+                encoder=encoder,
                 min_cluster_size=min_cluster_size,
+                max_branches=max_branches,
             )
         )
         examples.extend(
@@ -175,9 +203,10 @@ def build_cluster_examples(
                 role,
                 points,
                 root_ids,
-                membrane_field,
+                encoder=encoder,
                 min_cluster_size=min_cluster_size,
-                max_negatives=max_negative_pairs_per_role,
+                max_negative_pairs_per_role=max_negative_pairs_per_role,
+                max_branches=max_branches,
                 rng=rng,
             )
         )
@@ -191,6 +220,7 @@ def build_cluster_examples_for_box(
     membrane_cache_dir: str = "cache/membranes",
     min_cluster_size: int = 2,
     max_negative_pairs_per_role: int = 32,
+    max_branches: int = 32,
     seed: int = 42,
 ) -> list[ClusterExample]:
     synapses = fetch_synapses(box.bbox_nm, mip=box.mip)
@@ -207,22 +237,46 @@ def build_cluster_examples_for_box(
         membrane,
         min_cluster_size=min_cluster_size,
         max_negative_pairs_per_role=max_negative_pairs_per_role,
+        max_branches=max_branches,
         seed=seed,
     )
 
 
-def examples_to_arrays(examples: list[ClusterExample]) -> tuple[np.ndarray, np.ndarray]:
+def examples_to_multi_branch_arrays(
+    examples: list[ClusterExample],
+    *,
+    max_branches: int = 32,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     if not examples:
-        return np.zeros((0, len(FEATURE_NAMES)), dtype=np.float32), np.zeros((0,), dtype=np.int64)
-    x = np.stack([example.features for example in examples], axis=0).astype(np.float32)
-    y = np.array([example.label for example in examples], dtype=np.int64)
-    return x, y
+        return (
+            np.zeros((0, max_branches, 32), dtype=np.float32),
+            np.zeros((0,), dtype=np.int64),
+            np.zeros((0, max_branches), dtype=bool),
+        )
+
+    embed_dim = max((embedding.shape[0] for example in examples for embedding in example.branch_embeddings), default=32)
+    x = np.zeros((len(examples), max_branches, embed_dim), dtype=np.float32)
+    y = np.zeros((len(examples),), dtype=np.int64)
+    mask = np.ones((len(examples), max_branches), dtype=bool)
+
+    for i, example in enumerate(examples):
+        y[i] = int(example.label)
+        for branch_idx, embedding in enumerate(example.branch_embeddings[:max_branches]):
+            x[i, branch_idx, : embedding.shape[0]] = embedding.astype(np.float32, copy=False)
+            mask[i, branch_idx] = False
+
+    return x, y, mask
 
 
-def save_examples_npz(path: str | Path, examples: list[ClusterExample]) -> None:
+def save_multi_branch_npz(
+    path: str | Path,
+    examples: list[ClusterExample],
+    *,
+    max_branches: int = 32,
+) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    x, y = examples_to_arrays(examples)
+    x, y, mask = examples_to_multi_branch_arrays(examples, max_branches=max_branches)
     roles = np.array([example.role for example in examples], dtype=object)
     synapse_indices = np.array([np.array(example.synapse_indices, dtype=np.int64) for example in examples], dtype=object)
     root_ids = np.array([np.array(example.root_ids, dtype=np.int64) for example in examples], dtype=object)
@@ -230,8 +284,9 @@ def save_examples_npz(path: str | Path, examples: list[ClusterExample]) -> None:
         path,
         x=x,
         y=y,
+        mask=mask,
         roles=roles,
         synapse_indices=synapse_indices,
         root_ids=root_ids,
-        feature_names=np.array(FEATURE_NAMES, dtype=object),
+        feature_names=np.array([BRANCH_FEATURE_NAME], dtype=object),
     )

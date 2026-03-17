@@ -19,6 +19,9 @@ dev = [
     "matplotlib",
     "pytest",
 ]
+topology = [
+    "torch",
+]
 membrane = [
     "torch",
     "tifffile",

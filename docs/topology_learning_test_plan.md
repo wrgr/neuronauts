@@ -5,7 +5,7 @@
 Validate the first learned inner loop for Neuronauts:
 
 1. export synapse-cluster atomicity examples from MICrONS/CAVE boxes
-2. train a simple atomicity classifier
+2. train an attention-based atomicity classifier
 3. confirm the exported supervision and training path work end to end
 
 This plan focuses on correctness first, then data quality, then integration.
@@ -25,11 +25,12 @@ Verify:
 
 Verify:
 
-- exported feature vectors have stable dimensionality
+- exported padded branch tensors have stable dimensionality
+- exported masks align with branch padding
 - labels align with examples
 - empty datasets are handled safely
 
-### 3. Logistic model training
+### 3. Attention model training
 
 Verify:
 
@@ -79,7 +80,7 @@ Command:
 ```bash
 python scripts/train_topology_model.py \
   --dataset data/topology_dataset_smoke.npz \
-  --output models/topology_atomicity_smoke.npz
+  --output models/topology_atomicity_smoke.pt
 ```
 
 Verify:
