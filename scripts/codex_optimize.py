@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a Codex-driven outer optimization loop over neuronauts/run.py."""
+"""Run the primary Codex patch/evaluate/keep-or-revert loop over neuronauts/grammar.py."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-RUN_FILE = REPO_ROOT / "neuronauts" / "run.py"
+TARGET_FILE = REPO_ROOT / "neuronauts" / "grammar.py"
 PROGRAM_FILE = REPO_ROOT / "program.md"
 TEST_CMD = [".venv/bin/python", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"]
 VALIDATION_CMD = [
@@ -34,12 +34,8 @@ VALIDATION_CMD = [
     "--membrane-cache-dir",
     "cache/membranes",
 ]
-LOOP_SCRIPT = REPO_ROOT / "scripts" / "iterative_loop.py"
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--minutes", type=float, default=5.0, help="Wall-clock budget for accepted iteration runs.")
     parser.add_argument("--iterations", type=int, default=None, help="Optional number of optimizer iterations.")
     parser.add_argument(
         "--repeat-until-interrupt",
@@ -54,11 +50,6 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.0,
         help="Minimum fixed-validation F1 improvement required to keep a change.",
-    )
-    parser.add_argument(
-        "--skip-live-loop",
-        action="store_true",
-        help="Skip the accepted-change timed loop and only use fixed validation.",
     )
     return parser.parse_args()
 
@@ -166,7 +157,7 @@ Read and follow this research brief:
 {program_text}
 
 Hard constraints for this iteration:
-- Edit only neuronauts/run.py.
+- Edit only neuronauts/grammar.py.
 - Make exactly one focused experiment change.
 - Do not edit any other files.
 - Do not add shims, wrappers, or new abstractions.
@@ -182,9 +173,9 @@ Recent optimizer history:
 {recent_text}
 
 Task:
-1. Inspect neuronauts/run.py.
+1. Inspect neuronauts/grammar.py.
 2. Make one targeted change that is likely to improve real MICrONS fixed-validation performance.
-3. Stop after editing neuronauts/run.py.
+3. Stop after editing neuronauts/grammar.py.
 
 Do not run long benchmark loops yourself; the wrapper script will evaluate and decide whether to keep or revert your change.
 """
@@ -208,10 +199,9 @@ def main() -> int:
 
     session = {
         "started_at_epoch": time.time(),
-        "minutes": args.minutes,
         "iterations": args.iterations,
         "repeat_until_interrupt": args.repeat_until_interrupt,
-        "run_file": str(RUN_FILE),
+        "target_file": str(TARGET_FILE),
         "program_file": str(PROGRAM_FILE),
         "validation_cmd": VALIDATION_CMD,
         "test_cmd": TEST_CMD,
@@ -221,7 +211,6 @@ def main() -> int:
     env = os.environ.copy()
     env.setdefault("SSL_CERT_FILE", str(REPO_ROOT / ".venv/lib/python3.14/site-packages/certifi/cacert.pem"))
 
-    baseline_run_text = RUN_FILE.read_text(encoding="utf-8")
     baseline_eval = run_command(VALIDATION_CMD, cwd=REPO_ROOT, env=env)
     if baseline_eval.returncode != 0:
         write_text(log_dir / "baseline_validation.log", baseline_eval.stdout + baseline_eval.stderr)
@@ -253,9 +242,9 @@ def main() -> int:
             iteration_dir.mkdir(parents=True, exist_ok=True)
 
             accepted_before = dict(baseline_metrics)
-            run_before = RUN_FILE.read_text(encoding="utf-8")
+            run_before = TARGET_FILE.read_text(encoding="utf-8")
             run_before_hash = hash_text(run_before)
-            write_text(iteration_dir / "run_before.py", run_before)
+            write_text(iteration_dir / "target_before.py", run_before)
 
             prompt = build_prompt(
                 program_text=PROGRAM_FILE.read_text(encoding="utf-8"),
@@ -290,18 +279,21 @@ def main() -> int:
             else:
                 recommendation_text = "missing codex_last_message.txt"
 
-            run_after = RUN_FILE.read_text(encoding="utf-8")
+            run_after = TARGET_FILE.read_text(encoding="utf-8")
             run_after_hash = hash_text(run_after)
-            write_text(iteration_dir / "run_after.py", run_after)
-            write_text(iteration_dir / "run_diff.patch", diff_text(iteration_dir / "run_before.py", iteration_dir / "run_after.py", REPO_ROOT))
+            write_text(iteration_dir / "target_after.py", run_after)
+            write_text(
+                iteration_dir / "target_diff.patch",
+                diff_text(iteration_dir / "target_before.py", iteration_dir / "target_after.py", REPO_ROOT),
+            )
 
             if codex_proc.returncode != 0:
                 note = f"codex exec failed rc={codex_proc.returncode}"
-                RUN_FILE.write_text(run_before, encoding="utf-8")
+                TARGET_FILE.write_text(run_before, encoding="utf-8")
                 decision = "revert"
                 candidate_metrics = baseline_metrics.copy()
             elif run_after == run_before:
-                note = "no change to neuronauts/run.py"
+                note = "no change to neuronauts/grammar.py"
                 decision = "revert"
                 candidate_metrics = baseline_metrics.copy()
             else:
@@ -310,7 +302,7 @@ def main() -> int:
                 write_text(iteration_dir / "test.log", test_proc.stdout + test_proc.stderr)
                 if test_proc.returncode != 0:
                     note = f"tests failed rc={test_proc.returncode}"
-                    RUN_FILE.write_text(run_before, encoding="utf-8")
+                    TARGET_FILE.write_text(run_before, encoding="utf-8")
                     decision = "revert"
                     candidate_metrics = baseline_metrics.copy()
                 else:
@@ -319,7 +311,7 @@ def main() -> int:
                     write_text(iteration_dir / "candidate_validation.log", candidate_eval.stdout + candidate_eval.stderr)
                     if candidate_eval.returncode != 0:
                         note = f"validation failed rc={candidate_eval.returncode}"
-                        RUN_FILE.write_text(run_before, encoding="utf-8")
+                        TARGET_FILE.write_text(run_before, encoding="utf-8")
                         decision = "revert"
                         candidate_metrics = baseline_metrics.copy()
                     else:
@@ -329,35 +321,12 @@ def main() -> int:
                             decision = "keep"
                             note = "fixed validation improved"
                             baseline_metrics = candidate_metrics
-                            if not args.skip_live_loop:
-                                print("Running accepted 5-minute monitoring loop...")
-                                loop_log_dir = iteration_dir / "accepted_loop"
-                                loop_cmd = [
-                                    ".venv/bin/python",
-                                    str(LOOP_SCRIPT),
-                                    "--minutes",
-                                    str(args.minutes),
-                                    "--iterations",
-                                    "1",
-                                    "--python",
-                                    ".venv/bin/python",
-                                    "--data-mode",
-                                    "real",
-                                    "--real-boxes-per-eval",
-                                    "3",
-                                    "--real-min-synapses",
-                                    "50",
-                                    "--log-dir",
-                                    str(loop_log_dir),
-                                ]
-                                loop_proc = run_command(loop_cmd, cwd=REPO_ROOT, env=env)
-                                write_text(iteration_dir / "accepted_loop.log", loop_proc.stdout + loop_proc.stderr)
                         else:
                             decision = "revert"
                             note = "no fixed-validation improvement"
-                            RUN_FILE.write_text(run_before, encoding="utf-8")
+                            TARGET_FILE.write_text(run_before, encoding="utf-8")
 
-            current_run = RUN_FILE.read_text(encoding="utf-8")
+            current_run = TARGET_FILE.read_text(encoding="utf-8")
             current_hash = hash_text(current_run)
             delta_f1 = (candidate_metrics["val_f1"] or 0.0) - (accepted_before["val_f1"] or 0.0)
 

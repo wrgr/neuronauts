@@ -1,170 +1,220 @@
-# Neuronauts Research Program
+# Unified Connectome Grammar Program
 
-## The problem
+## Mission
 
-You are recovering a **connectome** — a directed graph of which neurons connect
-to which — from a 3D electron microscopy volume.  You do this by deploying a
-swarm of virtual agents that trace neuron processes through the volume.
+Build a single `neuronauts` system that goes from EM voxels to connectome with
+one shared learned representation in the middle.
 
-The goal is not to label every voxel.  You only need to determine which synapses
-share a neuron.  Two synapses on the same neuron = one edge in the connectome.
+The system has three layers:
 
----
+1. `neuronauts` layer 1: EM perception
+   - MICRONS/CAVE volume + synapse fetch
+   - optional membrane U-Net cache
+   - agent navigation
+   - fragment proposals
+   - pre/post synapse cluster candidates
 
-## Fixed inputs  (do not modify how these are loaded)
+2. `neuronauts` layer 2: shared grammar
+   - `PathEncoder`
+   - `MergeScorer`
+   - `ArborEncoder` / topology atomicity
+   - beam-search global assembly
+   - optional LLM oracle for coherence and identity
 
-```
-volume            : (X, Y, Z) uint8    — EM intensity volume
-cached_membrane   : (X, Y, Z) float32  — optional learned membrane probability
-                 In real-data mode, `run.py` may load a cached membrane volume
-                 for the same box from `cache/membranes`. If none is present,
-                 it falls back to Sobel on the EM volume.
+3. `neuronauts` layer 3: connectome extraction
+   - line-graph construction
+   - connectome evaluation
+   - terminal metric: line-graph F1
 
-synapse_pre_pts  : (N, 3) float32  — pre-synaptic  site locations in voxels
-synapse_post_pts : (N, 3) float32  — post-synaptic site locations in voxels
-```
+This is one paper, one architecture, and one repo.
 
-Both synapse arrays come from CAVE ground truth. They are your spawn points,
-navigation targets, and the objects whose co-incidence you are recovering.
+## Primary Claim
 
-The membrane cache is a preprocessing artifact, not a new inference target for
-the optimizer. Treat it as a fixed input once it exists for a box.
+The paper claim is:
 
----
+> A connectome grammar: a learned coordinate-free representation of neurite path
+> structure that simultaneously predicts local merge plausibility, cluster
+> atomicity, and global arbor grammaticality, and is optimized against terminal
+> connectome correctness.
 
-## Fixed output  (do not modify `line_graph.py`)
+This means:
 
-```
-val_f1 : float in [0, 1]
-```
+- local merge AUC is not the final target
+- morphology alone is not the final target
+- proofreading decisions alone are not the final target
+- line-graph F1 is the final target
 
-**What val_f1 measures:**  Build a graph where nodes = synapses and edges =
-"these two synapses share a neuron."  Compare to the ground-truth graph from
-CAVE root IDs.
+## Primary Editable Surface
 
-- **TP** = correctly identified co-incident synapse pairs
-- **FP** = false merges  (linked synapses that belong to different neurons)
-- **FN** = false splits  (missed links between synapses on the same neuron)
-- **F1** = 2·P·R / (P+R)
+The main learned model file is:
 
-Precision and recall are printed separately.  They tell you which direction you
-are failing:
+- [grammar.py](/Users/wgray13/projects/neuronauts/neuronauts/grammar.py)
 
-| P low, R high | over-merging  — agents crossing membranes          |
-| P high, R low | under-merging — agents not linking same-neuron paths|
+That is the default file Codex should edit.
 
----
+It currently contains:
 
-## Key architectural decisions  (already in the code — preserve these)
+- `PathEncoder`
+- `MergeScorer`
+- `ArborEncoder`
 
-### Pre/post role separation
-Agents are split into two independent populations at merge time:
+It should eventually also hold:
 
-- **Pre-role agents** — those that visited pre-synaptic sites — are merged
-  only among themselves into "pre neurons" (axons).
-- **Post-role agents** — those that visited post-synaptic sites — are merged
-  only among themselves into "post neurons" (dendrites).
+- cluster atomicity heads
+- global hypothesis scoring
+- shared representation logic used by both local and global tasks
 
-An edge is added to the graph only when a pre-neuron and a post-neuron each
-claim opposite sides of the same synapse.  This means a false merge between
-two pre-side agents can never create a spurious edge with a post-side agent,
-and vice versa.  The separation is enforced in `_merge_role_groups()`.
+Default rule:
 
-**Do not break this invariant.**  It is what makes the pre→pre and post→post
-constraint meaningful at small volume scales.
+- edit `neuronauts/grammar.py`
 
-### Merge gating
-Proximity alone does not trigger a merge.  Two agents also need a minimum
-number of shared synapse hits (`ROLE_MERGE_MIN_SHARED_HITS`) and a minimum
-path-overlap fraction (`MERGE_OVERLAP_THRESHOLD`).  This prevents merging
-agents that happen to pass near each other but are tracing different processes.
+Secondary edits are allowed only when needed to support that model or its
+training/data path.
 
-### Synapse capture radius
-The capture radius (`synapse_capture_radius`) is intentionally small (≈1–3
-voxels) to avoid spurious claims at process boundaries.  If it is too large,
-agents on adjacent processes both claim the same synapse, corrupting the graph.
+## Shared Data Path
 
----
+There are already useful fetch/data helper patterns across the old repos. The
+runtime home is now `neuronauts`, so any absorbed helpers should land here
+instead of remaining split across siblings.
 
-## What you may modify  (everything in `run.py` between the CONFIG markers)
+### `neuronauts` helpers
 
-You are not limited to tuning scalar weights.  You may:
+- [fetch.py](/Users/wgray13/projects/neuronauts/neuronauts/fetch.py)
+  - EM box fetch
+  - synapse fetch
+  - membrane cache load/save
+- [export_topology_dataset.py](/Users/wgray13/projects/neuronauts/scripts/export_topology_dataset.py)
+  - real MICRONS/CAVE topology examples from root consistency
+- future path/fragment fetch and caching helpers should also live under
+  `neuronauts/`
 
-- Replace the sensor weight vector with any policy expressible in numpy
-- Change how membrane/exploration signals translate into agent velocity updates
-- Replace the distance-based merge criterion with any data-driven criterion
-- Change spawn strategy: density, pre/post fraction, jitter scale
-- Add a small numpy MLP if it meaningfully improves F1
-- Tune `MERGE_RADIUS`, `MERGE_OVERLAP_THRESHOLD`, `ROLE_MERGE_MIN_SHARED_HITS`
-- Tune `POLARITY_CAPTURE_R` and `MAX_SYNAPSES_PER_NEURON`
+Use existing helper patterns as the integration seam, but keep execution and
+ownership local to this repo.
 
-You may NOT:
+## Supervision Sources
 
-- Use ground-truth segmentation (neuron IDs) during inference
-- Modify `line_graph.py`, `merge.py`, `fetch.py`, or `vectorized.py`
-- Add unsupported new inputs beyond the EM volume, optional cached membrane
-  field, and synapse locations
-- Hardcode values that only work for one specific subvolume
+There are two complementary supervision sources and they should update the same
+shared representation.
 
----
+### 1. CAVE edit decisions
 
-## How to run one experiment
+These supervise local merge quality:
+
+- accepted or rejected join decisions
+- hard reversals
+- pairwise fragment compatibility
+
+### 2. MICRONS/CAVE root consistency
+
+These supervise global atomicity:
+
+- candidate pre-side or post-side synapse clusters
+- `atomic` if all relevant roots agree
+- `non_atomic` otherwise
+
+Both should pull on the same `PathEncoder` weights.
+
+## Objective
+
+The primary scalar for the unified system is:
+
+- `line-graph F1`
+
+Secondary diagnostics:
+
+- local merge AUC
+- cluster atomicity accuracy / AUROC
+- beam-search hypothesis quality
+- precision / recall / TP / FP / FN
+
+Important rule:
+
+- local AUC is a proxy
+- line-graph F1 is the real target
+
+## Current Inner Learning Loop
+
+The repo now has a real trainable inner loop.
+
+1. Export topology examples from real MICRONS boxes:
 
 ```bash
-python -m neuronauts.run --data-mode real --membrane-source auto
+python scripts/export_topology_dataset.py \
+  --output data/topology_dataset_smoke.npz \
+  --box-indices 0,1,2 \
+  --membrane-source auto
 ```
 
-Ends with:
-```
-val_f1 = X.XXXX
-```
+2. Train the baseline topology model:
 
-Each run should complete in under 60 seconds.  Reduce `N_AGENTS` or
-`max_steps` if it takes longer.
-
-For a quick synthetic smoke run:
 ```bash
-python -m neuronauts.run --cases 1 --benchmark-mode fixed_validation
+python scripts/train_topology_model.py \
+  --dataset data/topology_dataset_smoke.npz \
+  --output models/topology_atomicity_smoke.npz
 ```
 
-For a quick real-data validation run:
+This is not the final grammar model, but it establishes the correct inner-loop
+pattern:
+
+- build real examples
+- train a learned model
+- evaluate
+
+## Outer Optimization Loop
+
+The outer Codex loop should be:
+
+1. edit the shared model in `neuronauts/grammar.py`
+2. run the relevant training path
+3. evaluate local diagnostics
+4. evaluate terminal line-graph F1
+5. keep or revert
+6. continue
+
+Do not center the workflow on repeated 5-minute reruns of unchanged code.
+Those are only diagnostic monitors.
+
+The primary optimizer command remains:
+
 ```bash
-python -m neuronauts.run --data-mode real --real-boxes-per-eval 1 --membrane-source auto
+python scripts/codex_optimize.py --repeat-until-interrupt
 ```
 
----
+But the target of that optimizer should migrate toward the shared grammar model
+in `neuronauts/grammar.py`, not remain only inside `neuronauts/run.py`.
 
-## Optimization target
+## What To Build Next
 
-Maximize `val_f1`.  Keep any change that improves it.  Discard changes that
-do not.  Record every experiment.
+The next real milestone is not more parameter tuning. It is model unification.
 
-Milestones:
-- val_f1 > 0.50 : competitive with heuristic baselines
-- val_f1 > 0.60 : current best on synthetic benchmark
-- val_f1 > 0.70 : matches Drenkow et al. 2020 on FIB-25
-- val_f1 > 0.85 : exceeds prior published work
+Priority order:
 
----
+1. connect the exported topology dataset into unified grammar training
+2. train shared weights on both:
+   - edit-decision merge supervision
+   - topology atomicity supervision
+3. extend `PathEncoder` consumers beyond `MergeScorer`
+4. introduce a cluster/arbor atomicity head
+5. assemble with beam search
+6. evaluate with line-graph F1
 
-## Failure mode reference
+## What To Avoid
 
-| Symptom                      | Diagnosis                | Things to try                                      |
-|------------------------------|--------------------------|----------------------------------------------------|
-| P low, R high                | Over-merging             | Lower MERGE_RADIUS; raise MERGE_OVERLAP_THRESHOLD  |
-| P high, R low                | Under-merging            | Raise MERGE_RADIUS; more agents; more steps        |
-| val_f1 flat across runs      | Policy insensitive       | Change architecture, not just weight values        |
-| Agents not reaching synapses | Navigation failure       | Raise w_synapse_attraction; inspect membrane field |
-| Cached and Sobel disagree    | Preprocess mismatch      | Rebuild membrane cache; inspect one box manually   |
-| All synapses claimed step 0  | Capture radius too large | Lower synapse_capture_radius                       |
-| Neurons >> true neuron count | Under-merging            | Raise MERGE_RADIUS or lower ROLE_MERGE_MIN_SHARED_HITS |
-| Neurons << true neuron count | Over-merging             | Lower MERGE_RADIUS; raise MERGE_OVERLAP_THRESHOLD  |
+- feature-spreadsheet morphology engineering
+- optimizing only local AUC
+- adding many new ad hoc heuristics
+- splitting the learned representation across many disconnected models
+- pretending the LLM is the learned model
 
----
+The LLM is only the outer research optimizer.
 
-## Experiment log
+## Success Condition
 
-Format: `[brief config note] → val_f1=X.XXX (P=X.XX R=X.XX)`
+The system is successful when:
 
-Baseline (Sobel, heuristic sensors, fixed_validation case 0):
-  val_f1 = 0.4909 (P=0.587 R=0.422)
+- one shared learned representation supports local merge plausibility,
+  cluster atomicity, and global assembly
+- it transfers across MICRONS volumes without retraining from scratch
+- terminal line-graph F1 improves on real data
+
+That is the target.

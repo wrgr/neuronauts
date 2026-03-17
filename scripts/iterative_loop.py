@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Run repeated benchmark iterations and log per-run and per-iteration metrics."""
+"""Deprecated repeated-evaluation monitor for neuronauts.run.
+
+This script is no longer the primary optimization loop. Prefer
+`scripts/codex_optimize.py`, which performs patch/evaluate/keep-or-revert
+iterations. This script remains useful only when you want repeated evaluation
+of a fixed code/config snapshot for diagnostics.
+"""
 
 from __future__ import annotations
 

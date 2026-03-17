@@ -9,14 +9,17 @@ The current benchmark is synthetic line-graph recovery. Agents move through a 3D
 - Installable package: `neuronauts/`
 - Main experiment entrypoint: `python -m neuronauts.run`
 - Core metric: `neuronauts.line_graph`
+- Shared grammar model home: `neuronauts.grammar`
 - Synthetic data generator: `neuronauts.fetch.make_test_volume`
 - Oracle regression test for the pre/post merge bug: `tests/test_run.py`
 - Human instruction file: `program.md`
 - Whitepaper: `docs/whitepaper.md`
-- 5-minute loop runner: `scripts/iterative_loop.py`
 - Codex outer optimizer: `scripts/codex_optimize.py`
+- Repeated-evaluation monitor: `scripts/iterative_loop.py`
 - Membrane U-Net trainer: `scripts/train_membrane_unet.py`
 - Membrane cache builder: `scripts/cache_membrane_volume.py`
+- Topology dataset exporter: `scripts/export_topology_dataset.py`
+- Topology model trainer: `scripts/train_topology_model.py`
 
 ## Quick start
 
@@ -56,6 +59,7 @@ neuronauts/
   agent.py
   fetch.py
   fields.py
+  grammar.py
   line_graph.py
   merge.py
   run.py
@@ -65,7 +69,9 @@ docs/
 scripts/
   cache_membrane_volume.py
   codex_optimize.py
+  export_topology_dataset.py
   iterative_loop.py
+  train_topology_model.py
   train_membrane_unet.py
 tests/
   test_run.py
@@ -73,7 +79,7 @@ tests/
 
 ## Codex Optimization Loop
 
-The actual `autoresearch`-style optimizer is:
+The primary `autoresearch`-style loop is:
 
 ```bash
 python scripts/codex_optimize.py --repeat-until-interrupt
@@ -81,23 +87,30 @@ python scripts/codex_optimize.py --repeat-until-interrupt
 
 That script:
 
-- asks Codex to make one focused edit to `neuronauts/run.py`
+- asks Codex to make one focused edit to the primary local model surface
 - runs the regression test
 - runs fixed real-data validation on the same boxes every iteration
 - keeps or reverts the edit based on fixed-validation F1
 - logs each proposal under `run_logs/codex_optimize/`
 
+The default learned-model target is [grammar.py](/Users/wgray13/projects/neuronauts/neuronauts/grammar.py).
+`run.py` remains the experiment harness and evaluation entrypoint.
+
+One optimizer iteration is one patch/evaluate/keep-or-revert cycle. There is no
+required wall-clock loop around unchanged code.
+
 Useful options:
 
 ```bash
-python scripts/codex_optimize.py --iterations 1 --skip-live-loop
-python scripts/codex_optimize.py --minutes 5 --log-dir run_logs/codex_session_a
+python scripts/codex_optimize.py --iterations 1
+python scripts/codex_optimize.py --log-dir run_logs/codex_session_a
 python scripts/codex_optimize.py --improvement-threshold 0.0005
 ```
 
-## Iterative 5-minute loops
+## Repeated Evaluation Monitor
 
-The helper script below runs repeated fixed-time benchmark iterations and logs per-run plus per-iteration metrics:
+This is not the optimizer. It just reruns the same benchmark command and logs
+stability/runtime for a fixed code/config snapshot:
 
 ```bash
 python scripts/iterative_loop.py --minutes 5 --repeat-until-interrupt
@@ -112,13 +125,14 @@ python scripts/iterative_loop.py --minutes 5 --benchmark-mode fixed_validation -
 python scripts/iterative_loop.py --minutes 5 --iterations 3
 ```
 
-Each 5-minute iteration writes:
+Each monitoring iteration writes:
 
 - `iteration_XXX/summary.tsv`: per-run metrics within that iteration
 - `iteration_XXX/iteration_stats.json`: aggregate metrics for that iteration
 - `iteration_summary.tsv`: one row per 5-minute iteration with mean/best/min F1, mean precision, and mean recall
 
-That makes it straightforward to monitor progress over time and plot iteration-level curves.
+That makes it straightforward to inspect stability and runtime, but it is
+secondary to the patch/evaluate/keep-or-revert loop above.
 
 Plotting example:
 
@@ -155,6 +169,33 @@ python -m neuronauts.run \
   --membrane-source auto \
   --membrane-cache-dir cache/membranes
 ```
+
+## Topology Learning
+
+The first real inner learning loop is a synapse-cluster atomicity model trained
+from MICRONS/CAVE root consistency.
+
+Export a dataset from fixed real validation boxes:
+
+```bash
+python scripts/export_topology_dataset.py \
+  --output data/topology_dataset_smoke.npz \
+  --box-indices 0,1,2 \
+  --membrane-source auto
+```
+
+Train the baseline model:
+
+```bash
+python scripts/train_topology_model.py \
+  --dataset data/topology_dataset_smoke.npz \
+  --output models/topology_atomicity_smoke.npz
+```
+
+The accompanying test plan is in
+[docs/global_validation_dataset.md](/Users/wgray13/projects/neuronauts/docs/global_validation_dataset.md)
+and
+[docs/topology_learning_test_plan.md](/Users/wgray13/projects/neuronauts/docs/topology_learning_test_plan.md).
 
 ## Running on real data later
 
