@@ -1,10 +1,13 @@
 """
 Field computation for agent sensing.
 
-We deliberately avoid learned membrane detectors here so that
-agent policy failures and perception failures are fully decoupled.
-A Sobel gradient on raw EM intensity gives a clean, deterministic
-membrane signal: membranes in EM are dark, high-contrast boundaries.
+The runtime can consume either:
+- a cached learned membrane probability volume, or
+- a deterministic Sobel fallback computed from raw EM intensity.
+
+These helpers implement the field transforms once a membrane scalar field is
+available. `compute_membrane_field()` remains the fallback path for runs that
+do not have a cached learned membrane volume.
 """
 
 import numpy as np

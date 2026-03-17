@@ -29,6 +29,10 @@ VALIDATION_CMD = [
     "3",
     "--real-min-synapses",
     "50",
+    "--membrane-source",
+    "auto",
+    "--membrane-cache-dir",
+    "cache/membranes",
 ]
 LOOP_SCRIPT = REPO_ROOT / "scripts" / "iterative_loop.py"
 

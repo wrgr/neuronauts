@@ -1,137 +1,170 @@
-# neuronauts autoresearch
+# Neuronauts Research Program
 
-This repo is set up for autonomous iteration in the style of `autoresearch`.
+## The problem
 
-The important idea is simple:
+You are recovering a **connectome** — a directed graph of which neurons connect
+to which — from a 3D electron microscopy volume.  You do this by deploying a
+swarm of virtual agents that trace neuron processes through the volume.
 
-- the benchmark harness stays small and mostly fixed
-- the human edits `program.md`
-- the agent edits `neuronauts/run.py`
-- each experiment runs for a fixed wall-clock budget
-- changes are kept only if the metric improves
+The goal is not to label every voxel.  You only need to determine which synapses
+share a neuron.  Two synapses on the same neuron = one edge in the connectome.
 
-## Setup
+---
 
-Before starting a new run, work with the human to:
+## Fixed inputs  (do not modify how these are loaded)
 
-1. Confirm the repo is in a clean enough state to start iterating.
-2. Read these files for full context:
-   - `README.md`
-   - `program.md`
-   - `neuronauts/fetch.py`
-   - `neuronauts/run.py`
-3. Verify the environment works:
-   - `python -m unittest discover -s tests -p 'test_*.py'`
-   - `python -m neuronauts.run --cases 5 --benchmark-mode fixed_validation --quiet`
-4. Confirm setup looks good.
+```
+volume            : (X, Y, Z) uint8    — EM intensity volume
+cached_membrane   : (X, Y, Z) float32  — optional learned membrane probability
+                 In real-data mode, `run.py` may load a cached membrane volume
+                 for the same box from `cache/membranes`. If none is present,
+                 it falls back to Sobel on the EM volume.
 
-## Scope
+synapse_pre_pts  : (N, 3) float32  — pre-synaptic  site locations in voxels
+synapse_post_pts : (N, 3) float32  — post-synaptic site locations in voxels
+```
 
-Treat the repo as having three conceptual parts:
+Both synapse arrays come from CAVE ground truth. They are your spawn points,
+navigation targets, and the objects whose co-incidence you are recovering.
 
-- Fixed prep / eval / utilities:
-  - `neuronauts/fetch.py`
-  - `neuronauts/fields.py`
-  - `neuronauts/line_graph.py`
-  - `neuronauts/vectorized.py`
-  - `tests/`
-- Agent-edited experiment surface:
-  - `neuronauts/run.py`
-- Human-edited research instructions:
-  - `program.md`
+The membrane cache is a preprocessing artifact, not a new inference target for
+the optimizer. Treat it as a fixed input once it exists for a box.
 
-Default rule: only edit `neuronauts/run.py`.
+---
 
-Only widen beyond that if the human explicitly asks for structural work or you discover a benchmark bug that makes the search invalid.
+## Fixed output  (do not modify `line_graph.py`)
 
-## Goal
+```
+val_f1 : float in [0, 1]
+```
 
-Optimize connectome recovery quality on real MICrONS boxes.
+**What val_f1 measures:**  Build a graph where nodes = synapses and edges =
+"these two synapses share a neuron."  Compare to the ground-truth graph from
+CAVE root IDs.
 
-Primary scalar:
+- **TP** = correctly identified co-incident synapse pairs
+- **FP** = false merges  (linked synapses that belong to different neurons)
+- **FN** = false splits  (missed links between synapses on the same neuron)
+- **F1** = 2·P·R / (P+R)
 
-- `val_f1` from `python -m neuronauts.run --data-mode real`
+Precision and recall are printed separately.  They tell you which direction you
+are failing:
 
-Secondary diagnostics:
+| P low, R high | over-merging  — agents crossing membranes          |
+| P high, R low | under-merging — agents not linking same-neuron paths|
 
-- precision
-- recall
-- TP / FP / FN
+---
 
-The real objective is not a lucky single run. The real objective is stronger average behavior over repeated 5-minute iterations.
+## Key architectural decisions  (already in the code — preserve these)
 
-## What the agent may do
+### Pre/post role separation
+Agents are split into two independent populations at merge time:
 
-- edit `neuronauts/run.py`
-- change hyperparameters
-- change merge / ownership / assignment logic inside `neuronauts/run.py`
-- run fixed-validation checks
-- run 5-minute real-data iterations
-- use synthetic mode only for smoke tests and debugging
-- keep or discard changes based on results
+- **Pre-role agents** — those that visited pre-synaptic sites — are merged
+  only among themselves into "pre neurons" (axons).
+- **Post-role agents** — those that visited post-synaptic sites — are merged
+  only among themselves into "post neurons" (dendrites).
 
-## What the agent should avoid
+An edge is added to the graph only when a pre-neuron and a post-neuron each
+claim opposite sides of the same synapse.  This means a false merge between
+two pre-side agents can never create a spurious edge with a post-side agent,
+and vice versa.  The separation is enforced in `_merge_role_groups()`.
 
-- adding unnecessary complexity to the benchmark harness
-- spreading the editable surface across many files
-- changing the scoring definition unless the existing scorer is broken
-- changing the outer-loop philosophy away from fixed-time experiments
+**Do not break this invariant.**  It is what makes the pre→pre and post→post
+constraint meaningful at small volume scales.
 
-## The loop
+### Merge gating
+Proximity alone does not trigger a merge.  Two agents also need a minimum
+number of shared synapse hits (`ROLE_MERGE_MIN_SHARED_HITS`) and a minimum
+path-overlap fraction (`MERGE_OVERLAP_THRESHOLD`).  This prevents merging
+agents that happen to pass near each other but are tracing different processes.
 
-The outer optimizer should think in 5-minute iterations.
+### Synapse capture radius
+The capture radius (`synapse_capture_radius`) is intentionally small (≈1–3
+voxels) to avoid spurious claims at process boundaries.  If it is too large,
+agents on adjacent processes both claim the same synapse, corrupting the graph.
 
-For each iteration:
+---
 
-1. Propose one experiment idea.
-2. Edit `neuronauts/run.py`.
-3. Run the regression test.
-4. Run a quick fixed-validation comparison.
-5. If promising, run a 5-minute real-data iteration.
-6. Keep the change only if the iteration-level metrics improved enough to justify the complexity.
+## What you may modify  (everything in `run.py` between the CONFIG markers)
 
-Repeat until the human stops the process.
+You are not limited to tuning scalar weights.  You may:
 
-## Simplicity rule
+- Replace the sensor weight vector with any policy expressible in numpy
+- Change how membrane/exploration signals translate into agent velocity updates
+- Replace the distance-based merge criterion with any data-driven criterion
+- Change spawn strategy: density, pre/post fraction, jitter scale
+- Add a small numpy MLP if it meaningfully improves F1
+- Tune `MERGE_RADIUS`, `MERGE_OVERLAP_THRESHOLD`, `ROLE_MERGE_MIN_SHARED_HITS`
+- Tune `POLARITY_CAPTURE_R` and `MAX_SYNAPSES_PER_NEURON`
 
-All else being equal, simpler is better.
+You may NOT:
 
-Keep changes that:
+- Use ground-truth segmentation (neuron IDs) during inference
+- Modify `line_graph.py`, `merge.py`, `fetch.py`, or `vectorized.py`
+- Add unsupported new inputs beyond the EM volume, optional cached membrane
+  field, and synapse locations
+- Hardcode values that only work for one specific subvolume
 
-- improve mean F1
-- improve precision / recall tradeoff clearly
-- remove code while preserving performance
+---
 
-Reject changes that:
+## How to run one experiment
 
-- add complexity for negligible gains
-- improve only a lucky batch but hurt the mean
-- expand the editable surface without necessity
+```bash
+python -m neuronauts.run --data-mode real --membrane-source auto
+```
 
-## Current benchmark policy
+Ends with:
+```
+val_f1 = X.XXXX
+```
 
-- primary target: real MICrONS boxes
-- use a small fixed candidate pool of `~6 x 6 x 6 um` boxes
-- require at least `50` synapses in a box for it to count
-- evaluate multiple boxes per run for robustness
-- keep synthetic mode only as a smoke-test / regression path
+Each run should complete in under 60 seconds.  Reduce `N_AGENTS` or
+`max_steps` if it takes longer.
 
-## Current real-data convention
+For a quick synthetic smoke run:
+```bash
+python -m neuronauts.run --cases 1 --benchmark-mode fixed_validation
+```
 
-Use approximately a `6 x 6 x 6 um` cube:
+For a quick real-data validation run:
+```bash
+python -m neuronauts.run --data-mode real --real-boxes-per-eval 1 --membrane-source auto
+```
 
-- `bbox_nm` side length: `6000 nm`
+---
 
-Validation policy:
+## Optimization target
 
-- use the same real validation boxes every iteration for apples-to-apples comparison
-- include a few additional candidate boxes in reserve
-- if a candidate box has fewer than `50` synapses, skip it and move to the next one
+Maximize `val_f1`.  Keep any change that improves it.  Discard changes that
+do not.  Record every experiment.
 
-## Important note
+Milestones:
+- val_f1 > 0.50 : competitive with heuristic baselines
+- val_f1 > 0.60 : current best on synthetic benchmark
+- val_f1 > 0.70 : matches Drenkow et al. 2020 on FIB-25
+- val_f1 > 0.85 : exceeds prior published work
 
-The loop runner in `scripts/iterative_loop.py` is only the benchmark harness.
+---
 
-It is not the optimizer.
+## Failure mode reference
 
-The optimizer is the external Codex session that reads `program.md`, edits `neuronauts/run.py`, runs 5-minute iterations, and decides whether to keep or discard changes.
+| Symptom                      | Diagnosis                | Things to try                                      |
+|------------------------------|--------------------------|----------------------------------------------------|
+| P low, R high                | Over-merging             | Lower MERGE_RADIUS; raise MERGE_OVERLAP_THRESHOLD  |
+| P high, R low                | Under-merging            | Raise MERGE_RADIUS; more agents; more steps        |
+| val_f1 flat across runs      | Policy insensitive       | Change architecture, not just weight values        |
+| Agents not reaching synapses | Navigation failure       | Raise w_synapse_attraction; inspect membrane field |
+| Cached and Sobel disagree    | Preprocess mismatch      | Rebuild membrane cache; inspect one box manually   |
+| All synapses claimed step 0  | Capture radius too large | Lower synapse_capture_radius                       |
+| Neurons >> true neuron count | Under-merging            | Raise MERGE_RADIUS or lower ROLE_MERGE_MIN_SHARED_HITS |
+| Neurons << true neuron count | Over-merging             | Lower MERGE_RADIUS; raise MERGE_OVERLAP_THRESHOLD  |
+
+---
+
+## Experiment log
+
+Format: `[brief config note] → val_f1=X.XXX (P=X.XX R=X.XX)`
+
+Baseline (Sobel, heuristic sensors, fixed_validation case 0):
+  val_f1 = 0.4909 (P=0.587 R=0.422)

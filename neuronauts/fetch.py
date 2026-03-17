@@ -1,6 +1,9 @@
 """Data fetching from MICrONS via CloudVolume and CAVEclient."""
 
+import hashlib
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional, Tuple
 
 import numpy as np
@@ -74,6 +77,14 @@ class RealBoxSpec:
     @property
     def bbox_nm(self) -> Tuple[Tuple[int, int, int], Tuple[int, int, int]]:
         return make_cube_bbox_nm(self.center_nm, self.side_um)
+
+    @property
+    def cache_key(self) -> str:
+        payload = json.dumps(
+            {"center_nm": self.center_nm, "side_um": self.side_um, "mip": self.mip},
+            sort_keys=True,
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def make_cube_bbox_nm(
@@ -180,6 +191,50 @@ def fetch_synapses(
         post_root_id=df["post_pt_root_id"].values.astype(np.int64),
         synapse_id=df.index.values.astype(np.int64),
     )
+
+
+def membrane_cache_paths(
+    box: RealBoxSpec,
+    cache_dir: str | Path,
+) -> tuple[Path, Path]:
+    cache_dir = Path(cache_dir)
+    stem = f"{box.cache_key}_mip{box.mip}"
+    return cache_dir / f"{stem}.npy", cache_dir / f"{stem}.json"
+
+
+def load_cached_membrane(
+    box: RealBoxSpec,
+    cache_dir: str | Path,
+) -> np.ndarray | None:
+    membrane_path, _ = membrane_cache_paths(box, cache_dir)
+    if not membrane_path.exists():
+        return None
+    membrane = np.load(membrane_path)
+    return membrane.astype(np.float32, copy=False)
+
+
+def save_cached_membrane(
+    box: RealBoxSpec,
+    cache_dir: str | Path,
+    membrane: np.ndarray,
+    *,
+    source: str,
+    extra_metadata: dict[str, object] | None = None,
+) -> Path:
+    membrane_path, metadata_path = membrane_cache_paths(box, cache_dir)
+    membrane_path.parent.mkdir(parents=True, exist_ok=True)
+    np.save(membrane_path, membrane.astype(np.float32))
+    metadata = {
+        "center_nm": box.center_nm,
+        "side_um": box.side_um,
+        "mip": box.mip,
+        "shape": list(membrane.shape),
+        "source": source,
+    }
+    if extra_metadata:
+        metadata.update(extra_metadata)
+    metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    return membrane_path
 
 
 def make_test_volume(

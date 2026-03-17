@@ -15,6 +15,8 @@ The current benchmark is synthetic line-graph recovery. Agents move through a 3D
 - Whitepaper: `docs/whitepaper.md`
 - 5-minute loop runner: `scripts/iterative_loop.py`
 - Codex outer optimizer: `scripts/codex_optimize.py`
+- Membrane U-Net trainer: `scripts/train_membrane_unet.py`
+- Membrane cache builder: `scripts/cache_membrane_volume.py`
 
 ## Quick start
 
@@ -39,6 +41,12 @@ Run the regression test:
 python -m unittest discover -s tests -p 'test_*.py'
 ```
 
+Install optional membrane-model dependencies when you want learned membrane preprocessing:
+
+```bash
+python -m pip install -e .[membrane]
+```
+
 To start the autonomous loop, point Codex at [program.md](/Users/wgray13/projects/neuronauts/program.md).
 
 ## Project layout
@@ -55,8 +63,10 @@ neuronauts/
 docs/
   whitepaper.md
 scripts/
+  cache_membrane_volume.py
   codex_optimize.py
   iterative_loop.py
+  train_membrane_unet.py
 tests/
   test_run.py
 ```
@@ -114,6 +124,36 @@ Plotting example:
 
 ```bash
 python scripts/plot_iterations.py run_logs/loop_a/iteration_summary.tsv --output run_logs/loop_a/iteration_metrics.png
+```
+
+## Membrane U-Net
+
+For a first-pass learned membrane signal, train the included small 2D U-Net on the external tif dataset repo:
+
+```bash
+python scripts/train_membrane_unet.py \
+  --dataset-dir /path/to/unet_image_segmentation/data \
+  --output models/membrane_unet.pt
+```
+
+Then fetch one MICRONS box, predict membranes slice-wise, and cache the result:
+
+```bash
+python scripts/cache_membrane_volume.py \
+  --checkpoint models/membrane_unet.pt \
+  --center-nm 1153592,793592,655640 \
+  --side-um 6.0 \
+  --mip 2 \
+  --cache-dir cache/membranes
+```
+
+Real-data runs can then use the cache automatically:
+
+```bash
+python -m neuronauts.run \
+  --data-mode real \
+  --membrane-source auto \
+  --membrane-cache-dir cache/membranes
 ```
 
 ## Running on real data later

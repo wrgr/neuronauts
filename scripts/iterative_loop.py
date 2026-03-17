@@ -57,6 +57,17 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--real-boxes-per-eval", type=int, default=3, help="Real boxes to average per evaluation run.")
     parser.add_argument("--real-min-synapses", type=int, default=50, help="Minimum synapses required for a real box to count.")
+    parser.add_argument(
+        "--membrane-source",
+        default="auto",
+        choices=["auto", "cache", "sobel"],
+        help="Membrane field source for real-data runs.",
+    )
+    parser.add_argument(
+        "--membrane-cache-dir",
+        default="cache/membranes",
+        help="Directory containing cached membrane .npy volumes.",
+    )
     return parser.parse_args()
 
 
@@ -237,6 +248,10 @@ def main() -> int:
         str(args.real_boxes_per_eval),
         "--real-min-synapses",
         str(args.real_min_synapses),
+        "--membrane-source",
+        args.membrane_source,
+        "--membrane-cache-dir",
+        args.membrane_cache_dir,
     ]
 
     session = {
@@ -252,6 +267,8 @@ def main() -> int:
         "cases": args.cases,
         "real_boxes_per_eval": args.real_boxes_per_eval,
         "real_min_synapses": args.real_min_synapses,
+        "membrane_source": args.membrane_source,
+        "membrane_cache_dir": args.membrane_cache_dir,
     }
     (log_dir / "session.json").write_text(json.dumps(session, indent=2), encoding="utf-8")
 
@@ -271,6 +288,8 @@ def main() -> int:
     if args.data_mode == "real":
         print(f"Real boxes per evaluation: {args.real_boxes_per_eval}")
         print(f"Real min synapses: {args.real_min_synapses}")
+        print(f"Membrane source: {args.membrane_source}")
+        print(f"Membrane cache dir: {args.membrane_cache_dir}")
     if args.repeat_until_interrupt:
         print("Iterations: until Ctrl+C")
     else:

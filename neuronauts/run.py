@@ -9,7 +9,14 @@ from scipy.spatial import cKDTree
 
 from .agent import AgentConfig
 from .fields import compute_exploration_field, compute_membrane_field, compute_membrane_vectors
-from .fetch import RealBoxSpec, SyntheticBenchmarkConfig, fetch_synapses, fetch_volume, make_test_volume
+from .fetch import (
+    RealBoxSpec,
+    SyntheticBenchmarkConfig,
+    fetch_synapses,
+    fetch_volume,
+    load_cached_membrane,
+    make_test_volume,
+)
 from .line_graph import LineGraphMetrics, evaluate
 from .merge import ConnectivityGraph, MergedNeuron
 from .vectorized import run_agents_vectorized
@@ -45,7 +52,7 @@ N_AGENTS = 700
 SYNAPSE_SPAWN_FRACTION = 0.25
 MERGE_RADIUS = 4.0
 MERGE_OVERLAP_THRESHOLD = 0.65
-ROLE_MERGE_MIN_SHARED_HITS = 2
+ROLE_MERGE_MIN_SHARED_HITS = 1
 MAX_SYNAPSES_PER_NEURON = 16
 MIN_PATH_LENGTH = 5
 WAYPOINTS_PER_AGENT = 20
@@ -83,6 +90,7 @@ REAL_BOXES = [
     RealBoxSpec(center_nm=(773_592, 533_592, 795_640), side_um=6.0, mip=2),
 ]
 REAL_BOXES_PER_EVAL = 3
+MEMBRANE_CACHE_DIR = "cache/membranes"
 
 # ============================================================
 # END CONFIG
@@ -267,6 +275,7 @@ def run(
     post_root_ids: np.ndarray,
     seed: int = 42,
     verbose: bool = True,
+    membrane_field_override: np.ndarray | None = None,
 ) -> LineGraphMetrics:
     rng = np.random.default_rng(seed)
     volume_shape = np.array(volume.shape)
@@ -275,11 +284,15 @@ def run(
 
     if verbose:
         print("Computing membrane fields...")
-    mf = compute_membrane_field(volume, sigma=MEMBRANE_SIGMA)
+    if membrane_field_override is not None:
+        mf = membrane_field_override.astype(np.float32, copy=False)
+    else:
+        mf = compute_membrane_field(volume, sigma=MEMBRANE_SIGMA)
     mv = compute_membrane_vectors(mf, sigma=MEMBRANE_VECTOR_SIGMA)
     ef = compute_exploration_field(volume.shape)
     if verbose:
-        print(f"  {time.time() - t0:.2f}s | vol={volume.shape} synapses={len(pre_pts)}")
+        source = "cached membrane" if membrane_field_override is not None else "Sobel EM"
+        print(f"  {time.time() - t0:.2f}s | {source} | vol={volume.shape} synapses={len(pre_pts)}")
 
     if verbose:
         print(f"Running {N_AGENTS} agents x {AGENT_CONFIG.max_steps} steps...")
@@ -401,6 +414,8 @@ def evaluate_real_box(
     min_synapses: int = REAL_MIN_SYNAPSES,
     seed: int = 42,
     verbose: bool = True,
+    membrane_source: str = "auto",
+    membrane_cache_dir: str = MEMBRANE_CACHE_DIR,
 ) -> tuple[LineGraphMetrics | None, dict[str, int | float | tuple]]:
     synapses = fetch_synapses(box.bbox_nm, mip=box.mip)
     summary = {
@@ -413,6 +428,15 @@ def evaluate_real_box(
         return None, summary
 
     chunk = fetch_volume(box.bbox_nm, mip=box.mip)
+    membrane = None
+    membrane_status = "sobel"
+    if membrane_source in {"auto", "cache"}:
+        membrane = load_cached_membrane(box, membrane_cache_dir)
+        if membrane is not None:
+            membrane_status = "cache"
+        elif membrane_source == "cache":
+            raise FileNotFoundError(f"missing cached membrane for {box.center_nm} in {membrane_cache_dir}")
+    summary["membrane_source"] = membrane_status
     metrics = run(
         volume=chunk.data,
         pre_pts=synapses.pre_pt,
@@ -421,6 +445,7 @@ def evaluate_real_box(
         post_root_ids=synapses.post_root_id,
         seed=seed,
         verbose=verbose,
+        membrane_field_override=membrane,
     )
     return metrics, summary
 
@@ -431,6 +456,8 @@ def evaluate_real_box_set(
     min_synapses: int = REAL_MIN_SYNAPSES,
     seed: int = 42,
     verbose: bool = True,
+    membrane_source: str = "auto",
+    membrane_cache_dir: str = MEMBRANE_CACHE_DIR,
 ) -> tuple[LineGraphMetrics, list[dict[str, int | float | tuple]]]:
     summaries = []
     metrics_list = []
@@ -441,6 +468,8 @@ def evaluate_real_box_set(
             min_synapses=min_synapses,
             seed=seed,
             verbose=verbose,
+            membrane_source=membrane_source,
+            membrane_cache_dir=membrane_cache_dir,
         )
         if metrics is None:
             summaries.append({**summary, "status": "skip_low_synapses"})
@@ -490,6 +519,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-seed", type=int, default=None, help="Optional debug override for a single agent simulation.")
     parser.add_argument("--real-boxes-per-eval", type=int, default=REAL_BOXES_PER_EVAL, help="Real boxes to average per evaluation.")
     parser.add_argument("--real-min-synapses", type=int, default=REAL_MIN_SYNAPSES, help="Minimum synapses required for a real box to be used.")
+    parser.add_argument(
+        "--membrane-source",
+        choices=["auto", "cache", "sobel"],
+        default="auto",
+        help="Use cached learned membranes when available, require them, or always use Sobel.",
+    )
+    parser.add_argument(
+        "--membrane-cache-dir",
+        default=MEMBRANE_CACHE_DIR,
+        help="Directory containing cached membrane .npy volumes for real boxes.",
+    )
     parser.add_argument("--quiet", action="store_true", help="Suppress per-step benchmark logging.")
     return parser.parse_args()
 
@@ -548,12 +588,14 @@ def main() -> None:
         min_synapses=args.real_min_synapses,
         seed=42 if args.run_seed is None else args.run_seed,
         verbose=not args.quiet,
+        membrane_source=args.membrane_source,
+        membrane_cache_dir=args.membrane_cache_dir,
     )
     for idx, summary in enumerate(box_summaries, start=1):
         print(
             "box_result "
             f"idx={idx} center_nm={summary['center_nm']} side_um={summary['side_um']} "
-            f"synapses={summary['synapses']} status={summary['status']}"
+            f"synapses={summary['synapses']} status={summary['status']} membrane={summary.get('membrane_source', 'n/a')}"
             + (f" f1={summary['f1']:.4f}" if 'f1' in summary else "")
         )
     print(f"Result: {metrics}")

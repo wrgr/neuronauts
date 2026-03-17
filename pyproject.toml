@@ -19,6 +19,10 @@ dev = [
     "matplotlib",
     "pytest",
 ]
+membrane = [
+    "torch",
+    "tifffile",
+]
 
 [project.scripts]
 neuronauts = "neuronauts.run:main"
