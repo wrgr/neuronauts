@@ -15,6 +15,7 @@ stack in ``neuronauts.topology_model`` consumes the embeddings exported here.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable, Sequence
 
 import numpy as np
@@ -27,6 +28,15 @@ class PathBatch:
     edge_len: np.ndarray
     radius: np.ndarray
     curvature: np.ndarray
+
+
+def _require_torch():
+    try:
+        import torch
+        import torch.nn as nn
+    except ImportError as exc:
+        raise ImportError("pip install torch or pip install -e .[topology]") from exc
+    return torch, nn
 
 
 class PathEncoder:
@@ -98,6 +108,142 @@ class ArborEncoder:
         padded = np.zeros(self.output_dim, dtype=np.float32)
         padded[: feature_vec.size] = feature_vec.astype(np.float32, copy=False)
         return padded
+
+
+class TorchPathEncoder:
+    """Factory for a torch-native sequential path encoder."""
+
+    def __new__(cls, input_dim: int = 3, hidden_dim: int = 64, output_dim: int = 32):
+        torch, nn = _require_torch()
+
+        class _TorchPathEncoder(nn.Module):
+            def __init__(self) -> None:
+                super().__init__()
+                self.input_dim = int(input_dim)
+                self.hidden_dim = int(hidden_dim)
+                self.output_dim = int(output_dim)
+                self._init_kwargs = {
+                    "input_dim": self.input_dim,
+                    "hidden_dim": self.hidden_dim,
+                    "output_dim": self.output_dim,
+                }
+                self.proj = nn.Sequential(
+                    nn.Linear(self.input_dim * 6, self.hidden_dim),
+                    nn.ReLU(),
+                    nn.Linear(self.hidden_dim, self.output_dim),
+                )
+
+            def forward(self, x, mask=None):
+                x = x.float()
+                if mask is None:
+                    mask = torch.zeros(x.shape[:2], dtype=torch.bool, device=x.device)
+                valid = (~mask).float().unsqueeze(-1)
+                pooled_parts = []
+                n_steps = x.shape[1]
+                boundaries = [0, n_steps // 3, (2 * n_steps) // 3, n_steps]
+                for start, end in zip(boundaries[:-1], boundaries[1:]):
+                    chunk = x[:, start:end, :]
+                    chunk_valid = valid[:, start:end, :]
+                    denom = chunk_valid.sum(dim=1).clamp_min(1.0)
+                    mean = (chunk * chunk_valid).sum(dim=1) / denom
+                    centered = (chunk - mean.unsqueeze(1)) * chunk_valid
+                    var = (centered.pow(2).sum(dim=1) / denom).clamp_min(0.0)
+                    std = torch.sqrt(var)
+                    pooled_parts.extend([mean, std])
+                features = torch.cat(pooled_parts, dim=-1)
+                return self.proj(features)
+
+        return _TorchPathEncoder()
+
+
+class TorchMergeScorer:
+    """Factory for a torch-native pairwise merge scorer."""
+
+    def __new__(cls, embedding_dim: int = 32, hidden_dim: int = 64):
+        torch, nn = _require_torch()
+
+        class _TorchMergeScorer(nn.Module):
+            def __init__(self) -> None:
+                super().__init__()
+                self.embedding_dim = int(embedding_dim)
+                self.hidden_dim = int(hidden_dim)
+                self._init_kwargs = {
+                    "embedding_dim": self.embedding_dim,
+                    "hidden_dim": self.hidden_dim,
+                }
+                self.net = nn.Sequential(
+                    nn.Linear(self.embedding_dim * 4, self.hidden_dim),
+                    nn.ReLU(),
+                    nn.Linear(self.hidden_dim, 1),
+                )
+
+            def forward(self, left, right):
+                features = torch.cat([left, right, torch.abs(left - right), left * right], dim=-1)
+                return self.net(features).squeeze(-1)
+
+        return _TorchMergeScorer()
+
+
+class TorchArborEncoder:
+    """Factory for a torch-native permutation-invariant arbor summarizer."""
+
+    def __new__(cls, embedding_dim: int = 32, hidden_dim: int = 64, output_dim: int = 64):
+        torch, nn = _require_torch()
+
+        class _TorchArborEncoder(nn.Module):
+            def __init__(self) -> None:
+                super().__init__()
+                self.embedding_dim = int(embedding_dim)
+                self.hidden_dim = int(hidden_dim)
+                self.output_dim = int(output_dim)
+                self._init_kwargs = {
+                    "embedding_dim": self.embedding_dim,
+                    "hidden_dim": self.hidden_dim,
+                    "output_dim": self.output_dim,
+                }
+                self.proj = nn.Sequential(
+                    nn.Linear(self.embedding_dim * 2, self.hidden_dim),
+                    nn.ReLU(),
+                    nn.Linear(self.hidden_dim, self.output_dim),
+                )
+
+            def forward(self, x, mask=None):
+                x = x.float()
+                if mask is None:
+                    mask = torch.zeros(x.shape[:2], dtype=torch.bool, device=x.device)
+                valid = (~mask).float().unsqueeze(-1)
+                denom = valid.sum(dim=1).clamp_min(1.0)
+                mean = (x * valid).sum(dim=1) / denom
+                max_ready = x.masked_fill(mask.unsqueeze(-1), float("-inf"))
+                max_pool = max_ready.max(dim=1).values
+                max_pool = torch.where(torch.isfinite(max_pool), max_pool, torch.zeros_like(max_pool))
+                features = torch.cat([mean, max_pool], dim=-1)
+                return self.proj(features)
+
+        return _TorchArborEncoder()
+
+
+def save_torch_grammar_component(path: str | Path, model) -> None:
+    torch, _, = _require_torch()
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        {
+            "state_dict": model.state_dict(),
+            "class_name": model.__class__.__name__,
+            "init_kwargs": dict(getattr(model, "_init_kwargs", {})),
+        },
+        path,
+    )
+
+
+def load_torch_grammar_component(path: str | Path, factory):
+    torch, _ = _require_torch()
+    checkpoint = torch.load(path, map_location="cpu")
+    model = factory(**checkpoint.get("init_kwargs", {}))
+    model.load_state_dict(checkpoint["state_dict"])
+    model.eval()
+    return model
 
 
 def build_path_batch(

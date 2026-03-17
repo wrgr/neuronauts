@@ -162,6 +162,23 @@ pattern:
 - train a learned model
 - evaluate
 
+The repo now also has the first shared multitask training path:
+
+- export local merge examples
+- export global atomicity examples
+- train one shared `TorchPathEncoder` against both
+
+And it now has the first terminal-objective-adjacent ranking path:
+
+- export multiple box-level assembly hypotheses
+- label them by true line-graph F1
+- train a reranker over hypothesis features
+
+The outer-loop requirement is now:
+
+- Codex and Gemini should both call the same canonical research cycle
+- environment differences should only affect proposal generation, not eval logic
+
 ## Outer Optimization Loop
 
 The outer Codex loop should be:
@@ -204,6 +221,8 @@ Important implementation note:
 
 - the current repo includes the multi-branch export path and attention-based
   atomicity model
+- the current repo also includes an initial local merge dataset export path
+- the current repo also includes box-level hypothesis export and reranking
 - global beam-search assembly across whole neurons remains future work
 
 ## What To Avoid

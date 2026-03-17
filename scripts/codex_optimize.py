@@ -7,33 +7,34 @@ import argparse
 import hashlib
 import json
 import os
-import re
 import shutil
 import subprocess
 import time
 from pathlib import Path
 
+from neuronauts.experiment_driver import (
+    append_experiment_ledger,
+    build_ledger_entry,
+    compare_cycle_summaries,
+    summarize_research_cycle,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TARGET_FILE = REPO_ROOT / "neuronauts" / "grammar.py"
 PROGRAM_FILE = REPO_ROOT / "program.md"
 TEST_CMD = [".venv/bin/python", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"]
-VALIDATION_CMD = [
-    ".venv/bin/python",
-    "-m",
-    "neuronauts.run",
-    "--quiet",
-    "--data-mode",
-    "real",
-    "--real-boxes-per-eval",
-    "3",
-    "--real-min-synapses",
-    "50",
-    "--membrane-source",
-    "auto",
-    "--membrane-cache-dir",
-    "cache/membranes",
-]
+
+
+def build_cycle_cmd(output_dir: Path) -> list[str]:
+    return [
+        ".venv/bin/python",
+        "scripts/run_research_cycle.py",
+        "--python-bin",
+        ".venv/bin/python",
+        "--output-dir",
+        str(output_dir),
+        "--quiet",
+    ]
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--iterations", type=int, default=None, help="Optional number of optimizer iterations.")
@@ -51,6 +52,7 @@ def parse_args() -> argparse.Namespace:
         default=0.0,
         help="Minimum fixed-validation F1 improvement required to keep a change.",
     )
+    parser.add_argument("--ledger-path", default="run_logs/research_ledger.jsonl", help="Shared experiment ledger path.")
     return parser.parse_args()
 
 
@@ -60,9 +62,10 @@ def resolve_executable(executable: str) -> str:
         return resolved
     if Path(executable).exists():
         return str(Path(executable).resolve())
-    fallback_paths = [
-        Path.home() / ".cursor/extensions/openai.chatgpt-26.311.21342-darwin-arm64/bin/macos-aarch64/codex",
-    ]
+    fallback_paths = sorted(
+        Path.home().glob(".cursor/extensions/openai.chatgpt-*/bin/macos-aarch64/codex"),
+        reverse=True,
+    )
     for candidate in fallback_paths:
         if candidate.exists():
             return str(candidate)
@@ -88,30 +91,6 @@ def run_command(
 
 def hash_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
-
-
-def extract_metric(pattern: str, text: str) -> str | None:
-    match = re.search(pattern, text)
-    return match.group(1) if match else None
-
-
-def parse_validation_metrics(text: str) -> dict[str, float | int | None]:
-    def as_float(pattern: str) -> float | None:
-        value = extract_metric(pattern, text)
-        return float(value) if value is not None else None
-
-    def as_int(pattern: str) -> int | None:
-        value = extract_metric(pattern, text)
-        return int(value) if value is not None else None
-
-    return {
-        "val_f1": as_float(r"val_f1\s*=\s*([0-9.]+)"),
-        "precision": as_float(r"P=([0-9.]+)"),
-        "recall": as_float(r"R=([0-9.]+)"),
-        "tp": as_int(r"TP=([0-9]+)"),
-        "fp": as_int(r"FP=([0-9]+)"),
-        "fn": as_int(r"FN=([0-9]+)"),
-    }
 
 
 def write_text(path: Path, text: str) -> None:
@@ -189,11 +168,13 @@ def main() -> int:
     codex_bin = resolve_executable(args.codex_bin)
 
     log_dir = REPO_ROOT / args.log_dir
+    ledger_path = REPO_ROOT / args.ledger_path
+    leaderboard_path = ledger_path.with_suffix(".leaderboard.tsv")
     log_dir.mkdir(parents=True, exist_ok=True)
     session_path = log_dir / "session.json"
     summary_path = log_dir / "optimizer_summary.tsv"
     summary_path.write_text(
-        "iteration\tdecision\tbaseline_f1\tcandidate_f1\tdelta_f1\tbaseline_precision\tcandidate_precision\tbaseline_recall\tcandidate_recall\trun_hash_before\trun_hash_after\trecommendation\tnote\n",
+        "iteration\tdecision\tbaseline_f1\tcandidate_f1\tdelta_f1\tbaseline_merge_acc\tcandidate_merge_acc\tbaseline_atomicity_acc\tcandidate_atomicity_acc\tbaseline_reranker_corr\tcandidate_reranker_corr\trun_hash_before\trun_hash_after\trecommendation\tnote\n",
         encoding="utf-8",
     )
 
@@ -203,7 +184,7 @@ def main() -> int:
         "repeat_until_interrupt": args.repeat_until_interrupt,
         "target_file": str(TARGET_FILE),
         "program_file": str(PROGRAM_FILE),
-        "validation_cmd": VALIDATION_CMD,
+        "validation_cmd": build_cycle_cmd(log_dir / "baseline_cycle"),
         "test_cmd": TEST_CMD,
     }
     write_text(session_path, json.dumps(session, indent=2))
@@ -211,11 +192,12 @@ def main() -> int:
     env = os.environ.copy()
     env.setdefault("SSL_CERT_FILE", str(REPO_ROOT / ".venv/lib/python3.14/site-packages/certifi/cacert.pem"))
 
-    baseline_eval = run_command(VALIDATION_CMD, cwd=REPO_ROOT, env=env)
+    baseline_eval = run_command(build_cycle_cmd(log_dir / "baseline_cycle"), cwd=REPO_ROOT, env=env)
     if baseline_eval.returncode != 0:
         write_text(log_dir / "baseline_validation.log", baseline_eval.stdout + baseline_eval.stderr)
         raise SystemExit("baseline validation failed; see run_logs for details")
-    baseline_metrics = parse_validation_metrics(baseline_eval.stdout + baseline_eval.stderr)
+    baseline_summary = json.loads(baseline_eval.stdout)
+    baseline_metrics = baseline_summary["metrics"]
     write_text(log_dir / "baseline_validation.log", baseline_eval.stdout + baseline_eval.stderr)
 
     history: list[dict[str, object]] = []
@@ -242,6 +224,8 @@ def main() -> int:
             iteration_dir.mkdir(parents=True, exist_ok=True)
 
             accepted_before = dict(baseline_metrics)
+            accepted_before_summary = dict(baseline_summary)
+            candidate_summary = dict(baseline_summary)
             run_before = TARGET_FILE.read_text(encoding="utf-8")
             run_before_hash = hash_text(run_before)
             write_text(iteration_dir / "target_before.py", run_before)
@@ -307,28 +291,33 @@ def main() -> int:
                     candidate_metrics = baseline_metrics.copy()
                 else:
                     print("Running fixed validation...")
-                    candidate_eval = run_command(VALIDATION_CMD, cwd=REPO_ROOT, env=env)
+                    candidate_eval = run_command(build_cycle_cmd(iteration_dir / "research_cycle"), cwd=REPO_ROOT, env=env)
                     write_text(iteration_dir / "candidate_validation.log", candidate_eval.stdout + candidate_eval.stderr)
                     if candidate_eval.returncode != 0:
                         note = f"validation failed rc={candidate_eval.returncode}"
                         TARGET_FILE.write_text(run_before, encoding="utf-8")
                         decision = "revert"
                         candidate_metrics = baseline_metrics.copy()
+                        candidate_summary = baseline_summary
                     else:
-                        candidate_metrics = parse_validation_metrics(candidate_eval.stdout + candidate_eval.stderr)
-                        delta = (candidate_metrics["val_f1"] or 0.0) - (accepted_before["val_f1"] or 0.0)
-                        if delta > args.improvement_threshold:
-                            decision = "keep"
-                            note = "fixed validation improved"
+                        candidate_summary = json.loads(candidate_eval.stdout)
+                        candidate_metrics = candidate_summary["metrics"]
+                        decision, note = compare_cycle_summaries(
+                            accepted_before_summary,
+                            candidate_summary,
+                            improvement_threshold=args.improvement_threshold,
+                        )
+                        if decision == "keep":
                             baseline_metrics = candidate_metrics
+                            baseline_summary = candidate_summary
                         else:
-                            decision = "revert"
-                            note = "no fixed-validation improvement"
                             TARGET_FILE.write_text(run_before, encoding="utf-8")
 
             current_run = TARGET_FILE.read_text(encoding="utf-8")
             current_hash = hash_text(current_run)
             delta_f1 = (candidate_metrics["val_f1"] or 0.0) - (accepted_before["val_f1"] or 0.0)
+            accepted_compact = summarize_research_cycle(accepted_before_summary)
+            candidate_compact = summarize_research_cycle(candidate_summary)
 
             row = {
                 "iteration": iteration_idx,
@@ -338,6 +327,20 @@ def main() -> int:
                 "note": note,
             }
             history.append(row)
+            append_experiment_ledger(
+                ledger_path,
+                build_ledger_entry(
+                    candidate_summary,
+                    source="codex",
+                    target_file=str(TARGET_FILE.relative_to(REPO_ROOT)),
+                    hypothesis=recommendation_text,
+                    decision=decision,
+                    note=note,
+                    iteration=iteration_idx,
+                    run_dir=str(iteration_dir.relative_to(REPO_ROOT)),
+                ),
+                leaderboard_path=leaderboard_path,
+            )
             with summary_path.open("a", encoding="utf-8") as fh:
                 fh.write(
                     "\t".join(
@@ -347,10 +350,12 @@ def main() -> int:
                             f"{accepted_before['val_f1'] or 0.0:.4f}",
                             f"{candidate_metrics['val_f1'] or 0.0:.4f}",
                             f"{delta_f1:.4f}",
-                            f"{accepted_before['precision'] or 0.0:.4f}",
-                            f"{candidate_metrics['precision'] or 0.0:.4f}",
-                            f"{accepted_before['recall'] or 0.0:.4f}",
-                            f"{candidate_metrics['recall'] or 0.0:.4f}",
+                            f"{accepted_compact['merge_accuracy']:.4f}",
+                            f"{candidate_compact['merge_accuracy']:.4f}",
+                            f"{accepted_compact['atomicity_accuracy']:.4f}",
+                            f"{candidate_compact['atomicity_accuracy']:.4f}",
+                            f"{accepted_compact['reranker_corr']:.4f}",
+                            f"{candidate_compact['reranker_corr']:.4f}",
                             run_before_hash,
                             current_hash,
                             recommendation_text.replace("\t", " ").replace("\n", " "),
@@ -361,12 +366,17 @@ def main() -> int:
                 )
             print(
                 f"Decision: {decision} | baseline_f1={accepted_before['val_f1'] or 0.0:.4f} "
-                f"candidate_f1={candidate_metrics['val_f1'] or 0.0:.4f} | {note}"
+                f"candidate_f1={candidate_metrics['val_f1'] or 0.0:.4f} "
+                f"merge_acc={candidate_compact['merge_accuracy']:.3f} "
+                f"atomicity_acc={candidate_compact['atomicity_accuracy']:.3f} "
+                f"reranker_corr={candidate_compact['reranker_corr']:.3f} | {note}"
             )
     except KeyboardInterrupt:
         print("\nInterrupted by user.")
 
     print(f"Optimizer summary: {summary_path}")
+    print(f"Research ledger: {ledger_path}")
+    print(f"Leaderboard: {leaderboard_path}")
     return 0
 
 

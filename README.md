@@ -16,11 +16,19 @@ The current benchmark is synthetic line-graph recovery. Agents move through a 3D
 - Whitepaper: `docs/whitepaper.md`
 - Codex outer optimizer: `scripts/codex_optimize.py`
 - Optional Gemini outer optimizer: `scripts/gemini_researcher.py`
+- Codex and Gemini loops remain supported as alternative outer optimizers
+- Both outer-loop options now share one canonical experiment driver
 - Repeated-evaluation monitor: `scripts/iterative_loop.py`
 - Membrane U-Net trainer: `scripts/train_membrane_unet.py`
 - Membrane cache builder: `scripts/cache_membrane_volume.py`
 - Topology dataset exporter: `scripts/export_topology_dataset.py`
+- Merge dataset exporter: `scripts/export_merge_dataset.py`
 - Topology model trainer: `scripts/train_topology_model.py`
+- Shared grammar trainer: `scripts/train_shared_grammar.py`
+- Assembly ranking dataset exporter: `scripts/export_assembly_ranking_dataset.py`
+- Assembly reranker trainer: `scripts/train_assembly_ranker.py`
+- Canonical experiment driver: `scripts/run_research_cycle.py`
+- Research ledger viewer: `scripts/view_research_ledger.py`
 
 ## Quick start
 
@@ -78,8 +86,13 @@ scripts/
   cache_membrane_volume.py
   codex_optimize.py
   export_topology_dataset.py
+  export_merge_dataset.py
   gemini_researcher.py
   iterative_loop.py
+  export_assembly_ranking_dataset.py
+  train_assembly_ranker.py
+  run_research_cycle.py
+  train_shared_grammar.py
   train_topology_model.py
   train_membrane_unet.py
 tests/
@@ -101,6 +114,8 @@ That script:
 - runs fixed real-data validation on the same boxes every iteration
 - keeps or reverts the edit based on fixed-validation F1
 - logs each proposal under `run_logs/codex_optimize/`
+- appends a shared experiment record to `run_logs/research_ledger.jsonl`
+- refreshes a sortable leaderboard at `run_logs/research_ledger.leaderboard.tsv`
 
 The default learned-model target is [grammar.py](/Users/wgray13/projects/neuronauts/neuronauts/grammar.py).
 `run.py` remains the experiment harness and evaluation entrypoint.
@@ -114,6 +129,18 @@ Useful options:
 python scripts/codex_optimize.py --iterations 1
 python scripts/codex_optimize.py --log-dir run_logs/codex_session_a
 python scripts/codex_optimize.py --improvement-threshold 0.0005
+python scripts/codex_optimize.py --ledger-path run_logs/research_ledger.jsonl
+```
+
+The optional Gemini loop writes to the same ledger, so Codex and Gemini runs can
+be compared in one place instead of split across incompatible logs.
+
+View the shared ledger directly:
+
+```bash
+python scripts/view_research_ledger.py --limit 20
+python scripts/view_research_ledger.py --source codex --min-holdout-f1 0.20
+python scripts/view_research_ledger.py --json --sort-by val_f1 --limit 5
 ```
 
 ## Repeated Evaluation Monitor
@@ -207,6 +234,85 @@ The accompanying test plan is in
 [docs/global_validation_dataset.md](/Users/wgray13/projects/neuronauts/docs/global_validation_dataset.md)
 and
 [docs/topology_learning_test_plan.md](/Users/wgray13/projects/neuronauts/docs/topology_learning_test_plan.md).
+
+## Merge Learning
+
+The repo now also has a first local merge-supervision export path. It emits
+pairwise fragment-sequence examples where positives come from subfragments of
+the same rooted cluster and negatives come from nearby distinct roots.
+
+```bash
+.venv/bin/python scripts/export_merge_dataset.py \
+  --output data/merge_dataset_smoke.npz \
+  --box-indices 0,1,2
+```
+
+## Shared Grammar Training
+
+The repo now has a first multitask trainer that updates one shared
+`TorchPathEncoder` against both local merge supervision and global atomicity
+supervision.
+
+```bash
+.venv/bin/python scripts/train_shared_grammar.py \
+  --merge-dataset data/merge_dataset_smoke.npz \
+  --topology-dataset data/topology_dataset_smoke.npz \
+  --output models/shared_grammar_smoke.pt
+```
+
+## Canonical Research Cycle
+
+Codex and Gemini can now both drive the same canonical experiment pipeline:
+
+```bash
+.venv/bin/python scripts/run_research_cycle.py \
+  --python-bin .venv/bin/python \
+  --output-dir run_logs/research_cycle_smoke \
+  --quiet
+```
+
+That pipeline runs:
+- merge export
+- topology export
+- shared grammar training
+- assembly hypothesis export
+- reranker training
+- validation
+
+That shared checkpoint can now be used by the runtime merge stage:
+
+```bash
+.venv/bin/python -m neuronauts.run \
+  --shared-grammar-checkpoint models/shared_grammar_smoke.pt
+```
+
+To enable box-scale multi-hypothesis assembly instead of greedy learned merges:
+
+```bash
+.venv/bin/python -m neuronauts.run \
+  --shared-grammar-checkpoint models/shared_grammar_smoke.pt \
+  --beam-width 4 \
+  --beam-max-candidates 24 \
+  --atomicity-score-weight 0.25
+```
+
+## Assembly Ranking
+
+The repo now has a first hypothesis-ranking loop for box-level assemblies. It
+exports multiple assembly hypotheses per box, labels them by true line-graph
+F1, and trains a lightweight reranker.
+
+```bash
+.venv/bin/python scripts/export_assembly_ranking_dataset.py \
+  --output data/assembly_ranking_smoke.npz \
+  --cases 3 \
+  --thresholds=-0.5,0.0,0.5 \
+  --beam-widths=1,2,4
+
+.venv/bin/python scripts/train_assembly_ranker.py \
+  --dataset data/assembly_ranking_smoke.npz \
+  --output models/assembly_reranker_smoke.npz
+```
 
 ## Running on real data later
 

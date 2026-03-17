@@ -1,0 +1,11 @@
+{
+  "last_step": {
+    "loss": 0.8047801852226257,
+    "merge_loss": 0.24372343719005585,
+    "atomicity_loss": 0.5610567331314087
+  },
+  "merge_accuracy": 0.8857142857142857,
+  "atomicity_accuracy": 0.7941952506596306,
+  "n_merge": 245,
+  "n_topology": 379
+}

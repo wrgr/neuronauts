@@ -9,27 +9,23 @@ the test suite and requires external credentials and dependencies.
 from __future__ import annotations
 
 import os
+import json
 import re
 import subprocess
 from pathlib import Path
+
+from neuronauts.experiment_driver import append_experiment_ledger, build_ledger_entry
 
 
 TARGET_GRAMMAR = Path("neuronauts/grammar.py")
 TARGET_TOPOLOGY = Path("neuronauts/topology_model.py")
 PROGRAM_MD = Path("program.md")
-EXPORT_CMD = ["python3", "scripts/export_topology_dataset.py", "--output", "data/topology_dataset_multi.npz"]
-TRAIN_CMD = ["python3", "scripts/train_topology_model.py", "--dataset", "data/topology_dataset_multi.npz"]
-EVAL_CMD = ["python3", "-m", "neuronauts.run", "--data-mode", "real", "--quiet"]
+LEDGER_PATH = Path("run_logs/research_ledger.jsonl")
 
 
 def _extract_code(text: str) -> str:
     match = re.search(r"```python\n(.*?)\n```", text, re.DOTALL)
     return match.group(1) if match else text
-
-
-def _parse_metrics(output: str) -> dict[str, float]:
-    match = re.search(r"F1=([0-9.]+)", output)
-    return {"val_f1": float(match.group(1)) if match else 0.0}
 
 
 def main() -> int:
@@ -67,13 +63,40 @@ Return one hypothesis and one full Python file to replace, wrapped in a
     new_code = _extract_code(response.text)
     target = TARGET_GRAMMAR if "class PathEncoder" in new_code else TARGET_TOPOLOGY
     target.write_text(new_code, encoding="utf-8")
-
-    subprocess.run(EXPORT_CMD, check=True)
-    subprocess.run(TRAIN_CMD, check=True)
-    result = subprocess.run(EVAL_CMD, capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        [
+            "python3",
+            "scripts/run_research_cycle.py",
+            "--python-bin",
+            ".venv/bin/python",
+            "--output-dir",
+            "run_logs/gemini_research_cycle",
+            "--quiet",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     print(response.text)
-    print(_parse_metrics(result.stdout + result.stderr))
-    return 0
+    if result.stdout.strip():
+        try:
+            summary = json.loads(result.stdout)
+            append_experiment_ledger(
+                LEDGER_PATH,
+                build_ledger_entry(
+                    summary,
+                    source="gemini",
+                    target_file=str(target),
+                    hypothesis=response.text.strip().splitlines()[0] if response.text.strip() else "",
+                    decision="completed" if summary.get("ok") else "failed",
+                    note="gemini_researcher cycle",
+                    run_dir="run_logs/gemini_research_cycle",
+                ),
+            )
+            print(json.dumps(summary, indent=2))
+        except json.JSONDecodeError:
+            print(result.stdout)
+    return result.returncode
 
 
 if __name__ == "__main__":

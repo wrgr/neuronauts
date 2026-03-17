@@ -11,6 +11,7 @@ import numpy as np
 from .fetch import RealBoxSpec, SynapseTable, fetch_synapses, fetch_volume, load_cached_membrane
 from .fields import compute_membrane_field
 from .grammar import PathEncoder, build_path_batch
+from .training_batches import pad_nested_path_sequences
 
 BRANCH_FEATURE_NAME = "branch_embedding"
 
@@ -21,6 +22,7 @@ class ClusterExample:
     label: int
     synapse_indices: tuple[int, ...]
     root_ids: tuple[int, ...]
+    branch_sequences: tuple[np.ndarray, ...]
     branch_embeddings: tuple[np.ndarray, ...]
 
 
@@ -66,15 +68,38 @@ def _branch_point_splits(points: np.ndarray, max_branches: int) -> list[np.ndarr
     return [part.astype(np.float32, copy=False) for part in parts if len(part) >= 2]
 
 
-def _encode_branch(points: np.ndarray, encoder: PathEncoder) -> np.ndarray:
+def _branch_sequence_from_points(points: np.ndarray) -> np.ndarray:
     ordered = _ordered_points(points)
     diffs = np.diff(ordered, axis=0)
     edge_len = np.linalg.norm(diffs, axis=1).astype(np.float32, copy=False)
     centroid = ordered.mean(axis=0, keepdims=True)
     radius = np.linalg.norm(ordered[1:] - centroid, axis=1).astype(np.float32, copy=False)
     curvature = _curvature_from_points(ordered)
-    batch = build_path_batch(edge_len=edge_len, radius=radius, curvature=curvature)
+    return np.stack([edge_len, radius, curvature], axis=-1).astype(np.float32, copy=False)
+
+
+def _encode_branch(points: np.ndarray, encoder: PathEncoder) -> np.ndarray:
+    sequence = _branch_sequence_from_points(points)
+    batch = build_path_batch(
+        edge_len=sequence[:, 0],
+        radius=sequence[:, 1],
+        curvature=sequence[:, 2],
+    )
     return encoder.encode(batch)
+
+
+def _cluster_branch_sequences(
+    points: np.ndarray,
+    *,
+    max_branches: int,
+) -> tuple[np.ndarray, ...]:
+    branches = []
+    for branch_points in _branch_point_splits(points, max_branches=max_branches):
+        branches.append(_branch_sequence_from_points(branch_points))
+
+    if not branches and len(points) >= 2:
+        branches.append(_branch_sequence_from_points(points))
+    return tuple(np.asarray(branch, dtype=np.float32) for branch in branches)
 
 
 def _cluster_branch_embeddings(
@@ -106,12 +131,14 @@ def _atomic_examples_for_role(
         if len(indices) < min_cluster_size:
             continue
         cluster_points = points[indices]
+        branch_sequences = _cluster_branch_sequences(cluster_points, max_branches=max_branches)
         examples.append(
             ClusterExample(
                 role=role,
                 label=1,
                 synapse_indices=tuple(int(i) for i in indices),
                 root_ids=(int(root_id),),
+                branch_sequences=branch_sequences,
                 branch_embeddings=_cluster_branch_embeddings(
                     cluster_points,
                     encoder=encoder,
@@ -154,12 +181,14 @@ def _non_atomic_examples_for_role(
         merged = list(idx_a) + list(idx_b)
         rng.shuffle(merged)
         cluster_points = points[merged]
+        branch_sequences = _cluster_branch_sequences(cluster_points, max_branches=max_branches)
         examples.append(
             ClusterExample(
                 role=role,
                 label=0,
                 synapse_indices=tuple(int(i) for i in merged),
                 root_ids=(int(root_a), int(root_b)),
+                branch_sequences=branch_sequences,
                 branch_embeddings=_cluster_branch_embeddings(
                     cluster_points,
                     encoder=encoder,
@@ -268,6 +297,19 @@ def examples_to_multi_branch_arrays(
     return x, y, mask
 
 
+def examples_to_branch_sequence_arrays(
+    examples: list[ClusterExample],
+    *,
+    max_branches: int = 32,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    nested = pad_nested_path_sequences(
+        [list(example.branch_sequences) for example in examples],
+        max_items=max_branches,
+        feature_dim=3,
+    )
+    return nested.x, nested.sequence_mask, nested.item_mask
+
+
 def save_multi_branch_npz(
     path: str | Path,
     examples: list[ClusterExample],
@@ -277,6 +319,10 @@ def save_multi_branch_npz(
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     x, y, mask = examples_to_multi_branch_arrays(examples, max_branches=max_branches)
+    branch_x, branch_sequence_mask, branch_mask = examples_to_branch_sequence_arrays(
+        examples,
+        max_branches=max_branches,
+    )
     roles = np.array([example.role for example in examples], dtype=object)
     synapse_indices = np.array([np.array(example.synapse_indices, dtype=np.int64) for example in examples], dtype=object)
     root_ids = np.array([np.array(example.root_ids, dtype=np.int64) for example in examples], dtype=object)
@@ -285,6 +331,9 @@ def save_multi_branch_npz(
         x=x,
         y=y,
         mask=mask,
+        branch_x=branch_x,
+        branch_sequence_mask=branch_sequence_mask,
+        branch_mask=branch_mask,
         roles=roles,
         synapse_indices=synapse_indices,
         root_ids=root_ids,

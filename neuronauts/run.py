@@ -3,10 +3,13 @@
 import argparse
 import time
 from dataclasses import asdict
+from functools import lru_cache
 
 import numpy as np
 
+from .assembly_dataset import hypothesis_features
 from .agent import AgentConfig
+from .assembly import CandidateMerge, beam_search_merge_groups
 from .fields import compute_exploration_field, compute_membrane_field, compute_membrane_vectors
 from .fetch import (
     RealBoxSpec,
@@ -90,6 +93,14 @@ REAL_BOXES = [
 ]
 REAL_BOXES_PER_EVAL = 3
 MEMBRANE_CACHE_DIR = "cache/membranes"
+SHARED_GRAMMAR_CHECKPOINT = None
+ASSEMBLY_RERANKER_CHECKPOINT = None
+LEARNED_MERGE_SCORE_THRESHOLD = 0.0
+BEAM_WIDTH = 1
+BEAM_MAX_CANDIDATES = 24
+ATOMICITY_SCORE_WEIGHT = 0.25
+RERANKER_THRESHOLDS = "-0.5,0.0,0.5"
+RERANKER_BEAM_WIDTHS = "1,2,4"
 
 # ============================================================
 # END CONFIG
@@ -115,11 +126,84 @@ def _subsample_points(path: np.ndarray) -> np.ndarray:
     return path[step_idx].astype(np.float32)
 
 
+def _path_sequence_from_points(points: np.ndarray) -> np.ndarray:
+    if len(points) < 2:
+        return np.zeros((0, 3), dtype=np.float32)
+    diffs = np.diff(points.astype(np.float32), axis=0)
+    edge_len = np.linalg.norm(diffs, axis=1).astype(np.float32, copy=False)
+    centroid = points.astype(np.float32).mean(axis=0, keepdims=True)
+    radius = np.linalg.norm(points.astype(np.float32)[1:] - centroid, axis=1).astype(np.float32, copy=False)
+    if len(points) < 3:
+        curvature = np.zeros(len(edge_len), dtype=np.float32)
+    else:
+        unit = diffs / np.clip(np.linalg.norm(diffs, axis=1, keepdims=True), 1e-6, None)
+        turn = np.linalg.norm(np.diff(unit, axis=0), axis=1)
+        curvature = np.zeros(len(edge_len), dtype=np.float32)
+        curvature[1:] = turn.astype(np.float32, copy=False)
+    return np.stack([edge_len, radius, curvature], axis=-1).astype(np.float32, copy=False)
+
+
+@lru_cache(maxsize=4)
+def _load_shared_merge_score_fn(checkpoint_path: str):
+    from .shared_grammar_model import load_shared_grammar_model
+
+    import torch
+
+    model = load_shared_grammar_model(checkpoint_path)
+    model.eval()
+
+    def score_fn(left_sequence: np.ndarray, right_sequence: np.ndarray) -> float:
+        left = torch.from_numpy(left_sequence[None, ...]).float()
+        right = torch.from_numpy(right_sequence[None, ...]).float()
+        left_mask = torch.zeros((1, left.shape[1]), dtype=torch.bool)
+        right_mask = torch.zeros((1, right.shape[1]), dtype=torch.bool)
+        with torch.no_grad():
+            logits = model.score_merge(left, left_mask, right, right_mask)
+        return float(logits.squeeze().cpu())
+
+    return score_fn
+
+
+@lru_cache(maxsize=4)
+def _load_shared_atomicity_score_fn(checkpoint_path: str):
+    from .shared_grammar_model import load_shared_grammar_model
+    from .training_batches import pad_nested_path_sequences
+
+    import torch
+
+    model = load_shared_grammar_model(checkpoint_path)
+    model.eval()
+
+    def score_fn(branch_sequences: tuple[np.ndarray, ...]) -> float:
+        nested = pad_nested_path_sequences([list(branch_sequences)], max_items=len(branch_sequences), feature_dim=3)
+        branch_x = torch.from_numpy(nested.x).float()
+        branch_sequence_mask = torch.from_numpy(nested.sequence_mask)
+        branch_mask = torch.from_numpy(nested.item_mask)
+        with torch.no_grad():
+            logits = model.score_atomicity(branch_x, branch_sequence_mask, branch_mask)
+        return float(logits.squeeze().cpu())
+
+    return score_fn
+
+
+@lru_cache(maxsize=4)
+def _load_assembly_reranker(checkpoint_path: str):
+    from .hypothesis_reranker import load_linear_reranker
+
+    return load_linear_reranker(checkpoint_path)
+
+
 def _merge_role_groups(
     path_arr: np.ndarray,
     role_hits: np.ndarray,
     role_name: str,
     next_neuron_id: int,
+    learned_merge_score_fn=None,
+    learned_merge_score_threshold: float = LEARNED_MERGE_SCORE_THRESHOLD,
+    atomicity_score_fn=None,
+    beam_width: int = BEAM_WIDTH,
+    beam_max_candidates: int = BEAM_MAX_CANDIDATES,
+    atomicity_score_weight: float = ATOMICITY_SCORE_WEIGHT,
 ) -> tuple[dict[int, MergedNeuron], dict[int, list[int]], dict[int, cKDTree], int]:
     role_agent_ids = np.where(role_hits.any(axis=1))[0].astype(np.int32)
     if len(role_agent_ids) == 0:
@@ -153,21 +237,70 @@ def _merge_role_groups(
     sub_pts = np.vstack(sub_pts_list)
     sub_labels_arr = np.array(sub_labels, dtype=np.int32)
     pairs = cKDTree(sub_pts).query_pairs(r=MERGE_RADIUS, output_type="ndarray")
+    candidate_merges: list[CandidateMerge] = []
+    seen_pairs: set[tuple[int, int]] = set()
+    agent_sequences: dict[int, np.ndarray] = {}
+
     for a, b in pairs:
         agent_a = int(sub_labels_arr[a])
         agent_b = int(sub_labels_arr[b])
+        pair_key = (min(agent_a, agent_b), max(agent_a, agent_b))
+        if pair_key in seen_pairs:
+            continue
+        seen_pairs.add(pair_key)
         hits_a = role_hits[agent_a]
         hits_b = role_hits[agent_b]
         shared_count = int(np.count_nonzero(hits_a & hits_b))
         if shared_count < ROLE_MERGE_MIN_SHARED_HITS:
             continue
-        overlap = shared_count / max(1, min(int(np.count_nonzero(hits_a)), int(np.count_nonzero(hits_b))))
-        if overlap >= MERGE_OVERLAP_THRESHOLD:
-            union(agent_a, agent_b)
+        if learned_merge_score_fn is not None:
+            seq_a = agent_sequences.setdefault(agent_a, _path_sequence_from_points(_agent_points(path_arr, agent_a)))
+            seq_b = agent_sequences.setdefault(agent_b, _path_sequence_from_points(_agent_points(path_arr, agent_b)))
+            if len(seq_a) == 0 or len(seq_b) == 0:
+                continue
+            score = float(learned_merge_score_fn(seq_a, seq_b))
+            candidate_merges.append(CandidateMerge(left_agent=agent_a, right_agent=agent_b, score=score))
+        else:
+            overlap = shared_count / max(1, min(int(np.count_nonzero(hits_a)), int(np.count_nonzero(hits_b))))
+            if overlap >= MERGE_OVERLAP_THRESHOLD:
+                union(agent_a, agent_b)
 
-    grouped_agents: dict[int, list[int]] = {}
-    for agent_id in role_agent_ids.tolist():
-        grouped_agents.setdefault(find(int(agent_id)), []).append(int(agent_id))
+    if learned_merge_score_fn is not None:
+        candidate_merges = [candidate for candidate in candidate_merges if candidate.score >= learned_merge_score_threshold]
+        candidate_merges.sort(key=lambda candidate: candidate.score, reverse=True)
+        candidate_merges = candidate_merges[: max(0, beam_max_candidates)]
+
+        if beam_width > 1 and candidate_merges:
+            def beam_atomicity(group_members: tuple[int, ...]) -> float:
+                if atomicity_score_fn is None:
+                    return 0.0
+                sequences = tuple(
+                    agent_sequences.setdefault(agent_id, _path_sequence_from_points(_agent_points(path_arr, agent_id)))
+                    for agent_id in group_members
+                    if len(agent_sequences.setdefault(agent_id, _path_sequence_from_points(_agent_points(path_arr, agent_id)))) > 0
+                )
+                if not sequences:
+                    return 0.0
+                return float(atomicity_score_fn(sequences))
+
+            final_groups = beam_search_merge_groups(
+                role_agent_ids.tolist(),
+                candidate_merges,
+                beam_width=beam_width,
+                atomicity_score_fn=beam_atomicity if atomicity_score_fn is not None else None,
+                atomicity_weight=atomicity_score_weight,
+            )
+            grouped_agents = {idx: sorted(group) for idx, group in enumerate(final_groups)}
+        else:
+            for candidate in candidate_merges:
+                union(candidate.left_agent, candidate.right_agent)
+            grouped_agents = {}
+    else:
+        grouped_agents = {}
+
+    if not grouped_agents:
+        for agent_id in role_agent_ids.tolist():
+            grouped_agents.setdefault(find(int(agent_id)), []).append(int(agent_id))
 
     neurons = {}
     synapse_owner = {}
@@ -218,6 +351,12 @@ def _build_graph(
     synapse_hits: np.ndarray,
     pre_pts: np.ndarray,
     post_pts: np.ndarray,
+    learned_merge_score_fn=None,
+    learned_merge_score_threshold: float = LEARNED_MERGE_SCORE_THRESHOLD,
+    atomicity_score_fn=None,
+    beam_width: int = BEAM_WIDTH,
+    beam_max_candidates: int = BEAM_MAX_CANDIDATES,
+    atomicity_score_weight: float = ATOMICITY_SCORE_WEIGHT,
 ) -> ConnectivityGraph:
     del path_lengths
     n_syn = len(pre_pts)
@@ -231,8 +370,30 @@ def _build_graph(
     pre_hits[valid_idx] = role_hits[:, :n_syn]
     post_hits[valid_idx] = role_hits[:, n_syn:]
 
-    pre_neurons, pre_owners, pre_trees, next_id = _merge_role_groups(path_arr, pre_hits, "pre", 0)
-    post_neurons, post_owners, post_trees, next_id = _merge_role_groups(path_arr, post_hits, "post", next_id)
+    pre_neurons, pre_owners, pre_trees, next_id = _merge_role_groups(
+        path_arr,
+        pre_hits,
+        "pre",
+        0,
+        learned_merge_score_fn=learned_merge_score_fn,
+        learned_merge_score_threshold=learned_merge_score_threshold,
+        atomicity_score_fn=atomicity_score_fn,
+        beam_width=beam_width,
+        beam_max_candidates=beam_max_candidates,
+        atomicity_score_weight=atomicity_score_weight,
+    )
+    post_neurons, post_owners, post_trees, next_id = _merge_role_groups(
+        path_arr,
+        post_hits,
+        "post",
+        next_id,
+        learned_merge_score_fn=learned_merge_score_fn,
+        learned_merge_score_threshold=learned_merge_score_threshold,
+        atomicity_score_fn=atomicity_score_fn,
+        beam_width=beam_width,
+        beam_max_candidates=beam_max_candidates,
+        atomicity_score_weight=atomicity_score_weight,
+    )
     del next_id
 
     neurons = {}
@@ -266,36 +427,26 @@ def _build_graph(
     return ConnectivityGraph(neurons=neurons, edges=edges, unresolved_synapse_indices=unresolved)
 
 
-def run(
+def simulate_paths_and_hits(
     volume: np.ndarray,
     pre_pts: np.ndarray,
     post_pts: np.ndarray,
-    pre_root_ids: np.ndarray,
-    post_root_ids: np.ndarray,
+    *,
     seed: int = 42,
     verbose: bool = True,
     membrane_field_override: np.ndarray | None = None,
-) -> LineGraphMetrics:
+):
     rng = np.random.default_rng(seed)
     volume_shape = np.array(volume.shape)
     all_syn_pts = np.vstack([pre_pts, post_pts])
-    t0 = time.time()
 
-    if verbose:
-        print("Computing membrane fields...")
     if membrane_field_override is not None:
         mf = membrane_field_override.astype(np.float32, copy=False)
     else:
         mf = compute_membrane_field(volume, sigma=MEMBRANE_SIGMA)
     mv = compute_membrane_vectors(mf, sigma=MEMBRANE_VECTOR_SIGMA)
     ef = compute_exploration_field(volume.shape)
-    if verbose:
-        source = "cached membrane" if membrane_field_override is not None else "Sobel EM"
-        print(f"  {time.time() - t0:.2f}s | {source} | vol={volume.shape} synapses={len(pre_pts)}")
 
-    if verbose:
-        print(f"Running {N_AGENTS} agents x {AGENT_CONFIG.max_steps} steps...")
-    t1 = time.time()
     path_arr, synapse_hits, alive = run_agents_vectorized(
         volume_shape=volume_shape,
         n_agents=N_AGENTS,
@@ -308,13 +459,156 @@ def run(
         synapse_fraction=SYNAPSE_SPAWN_FRACTION,
         verbose=verbose,
     )
+    path_lengths = np.array([AGENT_CONFIG.max_steps] * N_AGENTS)
+    return path_arr, synapse_hits, path_lengths, alive
+
+
+def build_graph_hypotheses(
+    path_arr: np.ndarray,
+    path_lengths: np.ndarray,
+    synapse_hits: np.ndarray,
+    pre_pts: np.ndarray,
+    post_pts: np.ndarray,
+    *,
+    thresholds: list[float],
+    beam_widths: list[int],
+    shared_grammar_checkpoint: str | None = SHARED_GRAMMAR_CHECKPOINT,
+):
+    learned_merge_score_fn = None
+    atomicity_score_fn = None
+    if shared_grammar_checkpoint:
+        learned_merge_score_fn = _load_shared_merge_score_fn(shared_grammar_checkpoint)
+        atomicity_score_fn = _load_shared_atomicity_score_fn(shared_grammar_checkpoint)
+
+    hypotheses = []
+    for threshold in thresholds:
+        for beam_width in beam_widths:
+            graph = _build_graph(
+                path_arr,
+                path_lengths,
+                synapse_hits,
+                pre_pts,
+                post_pts,
+                learned_merge_score_fn=learned_merge_score_fn,
+                learned_merge_score_threshold=threshold,
+                atomicity_score_fn=atomicity_score_fn,
+                beam_width=beam_width,
+                beam_max_candidates=BEAM_MAX_CANDIDATES,
+                atomicity_score_weight=ATOMICITY_SCORE_WEIGHT,
+            )
+            hypotheses.append((threshold, beam_width, graph))
+    return hypotheses
+
+
+def select_hypothesis_with_reranker(
+    hypotheses: list[tuple[float, int, ConnectivityGraph]],
+    *,
+    reranker_checkpoint: str,
+    n_synapses: int,
+) -> tuple[float, int, ConnectivityGraph]:
+    reranker = _load_assembly_reranker(reranker_checkpoint)
+    features = np.stack(
+        [
+            hypothesis_features(
+                graph,
+                merge_threshold=threshold,
+                beam_width=beam_width,
+                n_synapses=n_synapses,
+            )
+            for threshold, beam_width, graph in hypotheses
+        ],
+        axis=0,
+    ).astype(np.float32)
+    scores = reranker.predict(features)
+    best_idx = int(np.argmax(scores))
+    return hypotheses[best_idx]
+
+
+def run(
+    volume: np.ndarray,
+    pre_pts: np.ndarray,
+    post_pts: np.ndarray,
+    pre_root_ids: np.ndarray,
+    post_root_ids: np.ndarray,
+    seed: int = 42,
+    verbose: bool = True,
+    membrane_field_override: np.ndarray | None = None,
+    shared_grammar_checkpoint: str | None = SHARED_GRAMMAR_CHECKPOINT,
+    assembly_reranker_checkpoint: str | None = ASSEMBLY_RERANKER_CHECKPOINT,
+    learned_merge_score_fn=None,
+    learned_merge_score_threshold: float = LEARNED_MERGE_SCORE_THRESHOLD,
+    beam_width: int = BEAM_WIDTH,
+    beam_max_candidates: int = BEAM_MAX_CANDIDATES,
+    atomicity_score_weight: float = ATOMICITY_SCORE_WEIGHT,
+    reranker_thresholds: str = RERANKER_THRESHOLDS,
+    reranker_beam_widths: str = RERANKER_BEAM_WIDTHS,
+) -> LineGraphMetrics:
+    t0 = time.time()
+    all_syn_pts = np.vstack([pre_pts, post_pts])
+
+    if verbose:
+        print("Computing membrane fields...")
+    if membrane_field_override is not None:
+        mf = membrane_field_override.astype(np.float32, copy=False)
+    else:
+        mf = compute_membrane_field(volume, sigma=MEMBRANE_SIGMA)
+    if verbose:
+        source = "cached membrane" if membrane_field_override is not None else "Sobel EM"
+        print(f"  {time.time() - t0:.2f}s | {source} | vol={volume.shape} synapses={len(pre_pts)}")
+
+    if verbose:
+        print(f"Running {N_AGENTS} agents x {AGENT_CONFIG.max_steps} steps...")
+    t1 = time.time()
+    path_arr, synapse_hits, path_lengths, alive = simulate_paths_and_hits(
+        volume,
+        pre_pts,
+        post_pts,
+        seed=seed,
+        verbose=verbose,
+        membrane_field_override=mf,
+    )
     if verbose:
         hit_count = synapse_hits.any(axis=0).sum()
         print(f"  {time.time() - t1:.2f}s | {hit_count}/{len(all_syn_pts)} sites hit, {alive.sum()} alive")
-
-    path_lengths = np.array([AGENT_CONFIG.max_steps] * N_AGENTS)
     t2 = time.time()
-    graph = _build_graph(path_arr, path_lengths, synapse_hits, pre_pts, post_pts)
+    score_fn = learned_merge_score_fn
+    atomicity_fn = None
+    if score_fn is None and shared_grammar_checkpoint:
+        score_fn = _load_shared_merge_score_fn(shared_grammar_checkpoint)
+    if shared_grammar_checkpoint:
+        atomicity_fn = _load_shared_atomicity_score_fn(shared_grammar_checkpoint)
+    if assembly_reranker_checkpoint:
+        thresholds = [float(item.strip()) for item in reranker_thresholds.split(",") if item.strip()]
+        beam_widths = [int(item.strip()) for item in reranker_beam_widths.split(",") if item.strip()]
+        hypotheses = build_graph_hypotheses(
+            path_arr,
+            path_lengths,
+            synapse_hits,
+            pre_pts,
+            post_pts,
+            thresholds=thresholds,
+            beam_widths=beam_widths,
+            shared_grammar_checkpoint=shared_grammar_checkpoint,
+        )
+        _, _, graph = select_hypothesis_with_reranker(
+            hypotheses,
+            reranker_checkpoint=assembly_reranker_checkpoint,
+            n_synapses=len(pre_pts),
+        )
+    else:
+        graph = _build_graph(
+            path_arr,
+            path_lengths,
+            synapse_hits,
+            pre_pts,
+            post_pts,
+            learned_merge_score_fn=score_fn,
+            learned_merge_score_threshold=learned_merge_score_threshold,
+            atomicity_score_fn=atomicity_fn,
+            beam_width=beam_width,
+            beam_max_candidates=beam_max_candidates,
+            atomicity_score_weight=atomicity_score_weight,
+        )
     if verbose:
         print(
             f"  merge+graph {time.time() - t2:.2f}s | "
@@ -415,6 +709,14 @@ def evaluate_real_box(
     verbose: bool = True,
     membrane_source: str = "auto",
     membrane_cache_dir: str = MEMBRANE_CACHE_DIR,
+    shared_grammar_checkpoint: str | None = SHARED_GRAMMAR_CHECKPOINT,
+    assembly_reranker_checkpoint: str | None = ASSEMBLY_RERANKER_CHECKPOINT,
+    learned_merge_score_threshold: float = LEARNED_MERGE_SCORE_THRESHOLD,
+    beam_width: int = BEAM_WIDTH,
+    beam_max_candidates: int = BEAM_MAX_CANDIDATES,
+    atomicity_score_weight: float = ATOMICITY_SCORE_WEIGHT,
+    reranker_thresholds: str = RERANKER_THRESHOLDS,
+    reranker_beam_widths: str = RERANKER_BEAM_WIDTHS,
 ) -> tuple[LineGraphMetrics | None, dict[str, int | float | tuple]]:
     synapses = fetch_synapses(box.bbox_nm, mip=box.mip)
     summary = {
@@ -445,6 +747,14 @@ def evaluate_real_box(
         seed=seed,
         verbose=verbose,
         membrane_field_override=membrane,
+        shared_grammar_checkpoint=shared_grammar_checkpoint,
+        assembly_reranker_checkpoint=assembly_reranker_checkpoint,
+        learned_merge_score_threshold=learned_merge_score_threshold,
+        beam_width=beam_width,
+        beam_max_candidates=beam_max_candidates,
+        atomicity_score_weight=atomicity_score_weight,
+        reranker_thresholds=reranker_thresholds,
+        reranker_beam_widths=reranker_beam_widths,
     )
     return metrics, summary
 
@@ -457,6 +767,14 @@ def evaluate_real_box_set(
     verbose: bool = True,
     membrane_source: str = "auto",
     membrane_cache_dir: str = MEMBRANE_CACHE_DIR,
+    shared_grammar_checkpoint: str | None = SHARED_GRAMMAR_CHECKPOINT,
+    assembly_reranker_checkpoint: str | None = ASSEMBLY_RERANKER_CHECKPOINT,
+    learned_merge_score_threshold: float = LEARNED_MERGE_SCORE_THRESHOLD,
+    beam_width: int = BEAM_WIDTH,
+    beam_max_candidates: int = BEAM_MAX_CANDIDATES,
+    atomicity_score_weight: float = ATOMICITY_SCORE_WEIGHT,
+    reranker_thresholds: str = RERANKER_THRESHOLDS,
+    reranker_beam_widths: str = RERANKER_BEAM_WIDTHS,
 ) -> tuple[LineGraphMetrics, list[dict[str, int | float | tuple]]]:
     summaries = []
     metrics_list = []
@@ -469,6 +787,14 @@ def evaluate_real_box_set(
             verbose=verbose,
             membrane_source=membrane_source,
             membrane_cache_dir=membrane_cache_dir,
+            shared_grammar_checkpoint=shared_grammar_checkpoint,
+            assembly_reranker_checkpoint=assembly_reranker_checkpoint,
+            learned_merge_score_threshold=learned_merge_score_threshold,
+            beam_width=beam_width,
+            beam_max_candidates=beam_max_candidates,
+            atomicity_score_weight=atomicity_score_weight,
+            reranker_thresholds=reranker_thresholds,
+            reranker_beam_widths=reranker_beam_widths,
         )
         if metrics is None:
             summaries.append({**summary, "status": "skip_low_synapses"})
@@ -498,6 +824,13 @@ def evaluate_real_box_set(
     return agg, summaries
 
 
+def _parse_box_indices(indices_text: str | None) -> list[RealBoxSpec]:
+    if indices_text is None or not indices_text.strip():
+        return list(REAL_BOXES)
+    indices = [int(item.strip()) for item in indices_text.split(",") if item.strip()]
+    return [REAL_BOXES[idx] for idx in indices]
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -517,6 +850,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--volume-seed", type=int, default=None, help="Optional debug override for a single synthetic case.")
     parser.add_argument("--run-seed", type=int, default=None, help="Optional debug override for a single agent simulation.")
     parser.add_argument("--real-boxes-per-eval", type=int, default=REAL_BOXES_PER_EVAL, help="Real boxes to average per evaluation.")
+    parser.add_argument("--real-box-indices", default=None, help="Optional comma-separated subset of REAL_BOXES to evaluate.")
     parser.add_argument("--real-min-synapses", type=int, default=REAL_MIN_SYNAPSES, help="Minimum synapses required for a real box to be used.")
     parser.add_argument(
         "--membrane-source",
@@ -529,6 +863,14 @@ def parse_args() -> argparse.Namespace:
         default=MEMBRANE_CACHE_DIR,
         help="Directory containing cached membrane .npy volumes for real boxes.",
     )
+    parser.add_argument("--shared-grammar-checkpoint", default=SHARED_GRAMMAR_CHECKPOINT, help="Optional shared grammar checkpoint for learned merge scoring.")
+    parser.add_argument("--assembly-reranker-checkpoint", default=ASSEMBLY_RERANKER_CHECKPOINT, help="Optional assembly reranker checkpoint for hypothesis selection.")
+    parser.add_argument("--learned-merge-score-threshold", type=float, default=LEARNED_MERGE_SCORE_THRESHOLD, help="Decision threshold over learned merge logits.")
+    parser.add_argument("--beam-width", type=int, default=BEAM_WIDTH, help="Beam width for box-scale learned assembly search.")
+    parser.add_argument("--beam-max-candidates", type=int, default=BEAM_MAX_CANDIDATES, help="Maximum learned merge candidates to consider in beam search.")
+    parser.add_argument("--atomicity-score-weight", type=float, default=ATOMICITY_SCORE_WEIGHT, help="Weight for atomicity reranking inside beam search.")
+    parser.add_argument("--reranker-thresholds", default=RERANKER_THRESHOLDS, help="Threshold sweep used when reranker-driven hypothesis selection is enabled.")
+    parser.add_argument("--reranker-beam-widths", default=RERANKER_BEAM_WIDTHS, help="Beam-width sweep used when reranker-driven hypothesis selection is enabled.")
     parser.add_argument("--quiet", action="store_true", help="Suppress per-step benchmark logging.")
     return parser.parse_args()
 
@@ -549,6 +891,14 @@ def main() -> None:
                 volume_seed=args.volume_seed,
                 run_seed=args.run_seed,
                 verbose=not args.quiet,
+                shared_grammar_checkpoint=args.shared_grammar_checkpoint,
+                assembly_reranker_checkpoint=args.assembly_reranker_checkpoint,
+                learned_merge_score_threshold=args.learned_merge_score_threshold,
+                beam_width=args.beam_width,
+                beam_max_candidates=args.beam_max_candidates,
+                atomicity_score_weight=args.atomicity_score_weight,
+                reranker_thresholds=args.reranker_thresholds,
+                reranker_beam_widths=args.reranker_beam_widths,
             )
             print(f"Result: {metrics}")
             print(f"\nval_f1 = {metrics.f1:.4f}")
@@ -576,19 +926,28 @@ def main() -> None:
         return
 
     print("=== Real MICrONS benchmark ===")
+    selected_boxes = _parse_box_indices(args.real_box_indices)
     print(
         f"boxes_per_eval={args.real_boxes_per_eval} "
         f"real_min_synapses={args.real_min_synapses} "
-        f"candidate_boxes={len(REAL_BOXES)}"
+        f"candidate_boxes={len(selected_boxes)}"
     )
     metrics, box_summaries = evaluate_real_box_set(
-        boxes=REAL_BOXES,
+        boxes=selected_boxes,
         boxes_per_eval=args.real_boxes_per_eval,
         min_synapses=args.real_min_synapses,
         seed=42 if args.run_seed is None else args.run_seed,
         verbose=not args.quiet,
         membrane_source=args.membrane_source,
         membrane_cache_dir=args.membrane_cache_dir,
+        shared_grammar_checkpoint=args.shared_grammar_checkpoint,
+        assembly_reranker_checkpoint=args.assembly_reranker_checkpoint,
+        learned_merge_score_threshold=args.learned_merge_score_threshold,
+        beam_width=args.beam_width,
+        beam_max_candidates=args.beam_max_candidates,
+        atomicity_score_weight=args.atomicity_score_weight,
+        reranker_thresholds=args.reranker_thresholds,
+        reranker_beam_widths=args.reranker_beam_widths,
     )
     for idx, summary in enumerate(box_summaries, start=1):
         print(
