@@ -1,62 +1,137 @@
-# neuronauts Research Program
+# neuronauts autoresearch
+
+This repo is set up for autonomous iteration in the style of `autoresearch`.
+
+The important idea is simple:
+
+- the benchmark harness stays small and mostly fixed
+- the human edits `program.md`
+- the agent edits `neuronauts/run.py`
+- each experiment runs for a fixed wall-clock budget
+- changes are kept only if the metric improves
+
+## Setup
+
+Before starting a new run, work with the human to:
+
+1. Confirm the repo is in a clean enough state to start iterating.
+2. Read these files for full context:
+   - `README.md`
+   - `program.md`
+   - `neuronauts/fetch.py`
+   - `neuronauts/run.py`
+3. Verify the environment works:
+   - `python -m unittest discover -s tests -p 'test_*.py'`
+   - `python -m neuronauts.run --cases 5 --benchmark-mode fixed_validation --quiet`
+4. Confirm setup looks good.
+
+## Scope
+
+Treat the repo as having three conceptual parts:
+
+- Fixed prep / eval / utilities:
+  - `neuronauts/fetch.py`
+  - `neuronauts/fields.py`
+  - `neuronauts/line_graph.py`
+  - `neuronauts/vectorized.py`
+  - `tests/`
+- Agent-edited experiment surface:
+  - `neuronauts/run.py`
+- Human-edited research instructions:
+  - `program.md`
+
+Default rule: only edit `neuronauts/run.py`.
+
+Only widen beyond that if the human explicitly asks for structural work or you discover a benchmark bug that makes the search invalid.
 
 ## Goal
-Maximize **line graph F1** on the synthetic test volume, then transfer to MICrONS.
 
-Line graph F1 measures how accurately the agent swarm recovers neuron connectivity:
-- TP = two synapses correctly identified as co-incident on the same neuron
-- FP = false merge (synapses incorrectly linked)
-- FN = false split (synapses that should be linked but aren't)
+Optimize connectome recovery quality on real MICrONS boxes.
 
-The metric is computed in `neuronauts/line_graph.py` and returned by `neuronauts/run.py`.
-The scalar to optimize is `metrics.f1` (higher = better, max 1.0).
+Primary scalar:
 
-## What you may edit
-Primary experiment entrypoint: `neuronauts/run.py`.
+- `val_f1` from `python -m neuronauts.run --data-mode real`
 
-For autoresearch-style sweeps, edit the CONFIG block between the
-`# EXPERIMENT CONFIG` and `# END CONFIG` markers.
+Secondary diagnostics:
 
-Tunable parameters:
-- `AgentConfig` fields (sensor weights, speed, thresholds)
-- `N_AGENTS` and `SYNAPSE_SPAWN_FRACTION`
-- `MERGE_RADIUS` and `MIN_PATH_LENGTH`
-- `POLARITY_CAPTURE_RADIUS`
-- Field parameters (`MEMBRANE_SIGMA`, `SYNAPSE_ATTRACTION_RADIUS`, etc.)
+- precision
+- recall
+- TP / FP / FN
 
-Keep package internals intact unless you are intentionally changing core behavior.
+The real objective is not a lucky single run. The real objective is stronger average behavior over repeated 5-minute iterations.
 
-## How to run one experiment
-```
-python -m neuronauts.run
-```
-This runs on the synthetic 96x96x96 volume and prints `val_f1 = X.XXXX`.
+## What the agent may do
 
-## Evaluation budget
-Each run takes ~30-90 seconds on CPU. You have a fixed time budget.
-Run as many experiments as possible, keep changes that improve val_f1.
+- edit `neuronauts/run.py`
+- change hyperparameters
+- change merge / ownership / assignment logic inside `neuronauts/run.py`
+- run fixed-validation checks
+- run 5-minute real-data iterations
+- use synthetic mode only for smoke tests and debugging
+- keep or discard changes based on results
 
-## What good looks like
-- val_f1 > 0.5 on synthetic data is a reasonable first target
-- val_f1 > 0.7 would be competitive with the 2020 APL BRAIN paper on FIB-25
+## What the agent should avoid
 
-## Known failure modes to watch for
-- Agents all dying early (raise `max_steps` or lower `membrane_threshold`)
-- Over-merging (val_f1 drops, FP rises — lower `merge_radius`)  
-- Under-merging (FN rises — raise `merge_radius` or `synapse_capture_radius`)
-- Agents not reaching synapses (raise `w_synapse_attraction`)
+- adding unnecessary complexity to the benchmark harness
+- spreading the editable surface across many files
+- changing the scoring definition unless the existing scorer is broken
+- changing the outer-loop philosophy away from fixed-time experiments
 
-## Biological context
-- Agents trace neuron processes through 3D EM volumes
-- Membranes = dark boundaries in the image (Sobel gradient detects them)
-- Synapses = target waypoints (agents spawn at them and seek them)
-- Two agents merge into one neuron if their paths cross
-- The line graph edge between two synapses = they share a neuron
+## The loop
 
-## Transfer to real data (future)
-After optimizing on synthetic, run on MICrONS mip-2 data:
-```python
-from neuronauts.fetch import fetch_volume, fetch_synapses
-# See fetch.py for bbox_nm format
-```
-Ground truth is available from CAVE (minnie65_public, no token required).
+The outer optimizer should think in 5-minute iterations.
+
+For each iteration:
+
+1. Propose one experiment idea.
+2. Edit `neuronauts/run.py`.
+3. Run the regression test.
+4. Run a quick fixed-validation comparison.
+5. If promising, run a 5-minute real-data iteration.
+6. Keep the change only if the iteration-level metrics improved enough to justify the complexity.
+
+Repeat until the human stops the process.
+
+## Simplicity rule
+
+All else being equal, simpler is better.
+
+Keep changes that:
+
+- improve mean F1
+- improve precision / recall tradeoff clearly
+- remove code while preserving performance
+
+Reject changes that:
+
+- add complexity for negligible gains
+- improve only a lucky batch but hurt the mean
+- expand the editable surface without necessity
+
+## Current benchmark policy
+
+- primary target: real MICrONS boxes
+- use a small fixed candidate pool of `~6 x 6 x 6 um` boxes
+- require at least `50` synapses in a box for it to count
+- evaluate multiple boxes per run for robustness
+- keep synthetic mode only as a smoke-test / regression path
+
+## Current real-data convention
+
+Use approximately a `6 x 6 x 6 um` cube:
+
+- `bbox_nm` side length: `6000 nm`
+
+Validation policy:
+
+- use the same real validation boxes every iteration for apples-to-apples comparison
+- include a few additional candidate boxes in reserve
+- if a candidate box has fewer than `50` synapses, skip it and move to the next one
+
+## Important note
+
+The loop runner in `scripts/iterative_loop.py` is only the benchmark harness.
+
+It is not the optimizer.
+
+The optimizer is the external Codex session that reads `program.md`, edits `neuronauts/run.py`, runs 5-minute iterations, and decides whether to keep or discard changes.

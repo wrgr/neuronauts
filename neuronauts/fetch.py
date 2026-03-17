@@ -10,13 +10,30 @@ MICRONS_DATASTACK = "minnie65_public"
 CAVE_SERVER = "https://global.daf-apis.com"
 DEFAULT_BOX_SIDE_UM = 6.0
 DEFAULT_BOX_SIDE_NM = int(DEFAULT_BOX_SIDE_UM * 1000)
+SYNAPSE_VOXEL_SIZE_NM = (4, 4, 40)
 
 MIP_VOXEL_SIZES = {
-    0: (8, 8, 30),
-    1: (16, 16, 30),
-    2: (32, 32, 30),
-    3: (64, 64, 30),
+    0: (8, 8, 40),
+    1: (16, 16, 40),
+    2: (32, 32, 40),
+    3: (64, 64, 40),
 }
+
+
+def _install_system_trust_store() -> None:
+    """Use the platform trust store when available.
+
+    Python 3.14 environments created from Homebrew can fail certificate
+    validation against the DAF APIs even when curl succeeds. truststore keeps
+    TLS verification enabled while aligning requests with the system trust
+    roots.
+    """
+    try:
+        import truststore
+    except ImportError:
+        return
+
+    truststore.inject_into_ssl()
 
 
 @dataclass
@@ -48,6 +65,17 @@ class SyntheticBenchmarkConfig:
     post_cluster_std: float = 4.0
 
 
+@dataclass(frozen=True)
+class RealBoxSpec:
+    center_nm: Tuple[int, int, int]
+    side_um: float = DEFAULT_BOX_SIDE_UM
+    mip: int = 2
+
+    @property
+    def bbox_nm(self) -> Tuple[Tuple[int, int, int], Tuple[int, int, int]]:
+        return make_cube_bbox_nm(self.center_nm, self.side_um)
+
+
 def make_cube_bbox_nm(
     center_nm: Tuple[int, int, int],
     side_um: float = DEFAULT_BOX_SIDE_UM,
@@ -70,6 +98,7 @@ def fetch_volume(
     mip: int = 2,
     em_path: str = MICRONS_EM_PATH,
 ) -> VolumeChunk:
+    _install_system_trust_store()
     try:
         from cloudvolume import CloudVolume
     except ImportError as exc:
@@ -100,6 +129,7 @@ def fetch_synapses(
     cave_server: str = CAVE_SERVER,
     token: Optional[str] = None,
 ) -> SynapseTable:
+    _install_system_trust_store()
     try:
         from caveclient import CAVEclient
     except ImportError as exc:
@@ -107,8 +137,13 @@ def fetch_synapses(
 
     client = CAVEclient(datastack, server_address=cave_server, auth_token=token)
     (x0, y0, z0), (x1, y1, z1) = bbox_nm
+    syn_vox = np.array(SYNAPSE_VOXEL_SIZE_NM, dtype=np.float32)
+    bbox_synapse_units = [
+        (np.array([x0, y0, z0], dtype=np.float32) / syn_vox).astype(np.int64).tolist(),
+        (np.array([x1, y1, z1], dtype=np.float32) / syn_vox).astype(np.int64).tolist(),
+    ]
     df = client.materialize.synapse_query(
-        bounding_box=[[x0, y0, z0], [x1, y1, z1]],
+        bounding_box=bbox_synapse_units,
         bounding_box_column="ctr_pt_position",
     )
 
@@ -123,10 +158,20 @@ def fetch_synapses(
         )
 
     vox = MIP_VOXEL_SIZES[mip]
+    bbox_origin_vox = np.array(
+        [
+            bbox_nm[0][0] / vox[0],
+            bbox_nm[0][1] / vox[1],
+            bbox_nm[0][2] / vox[2],
+        ],
+        dtype=np.float32,
+    )
 
     def pts_to_voxels(col: str) -> np.ndarray:
         pts = np.stack(df[col].values)
-        return (pts / np.array(vox)).astype(np.float32)
+        pts_nm = pts * syn_vox
+        pts_vox = pts_nm / np.array(vox, dtype=np.float32)
+        return (pts_vox - bbox_origin_vox).astype(np.float32)
 
     return SynapseTable(
         pre_pt=pts_to_voxels("pre_pt_position"),

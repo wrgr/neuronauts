@@ -1,6 +1,6 @@
 # neuronauts
 
-`neuronauts` is a Python package for agent-based connectome recovery experiments. It is structured to support the `karpathy/autoresearch` workflow: a small, explicit experiment surface, short repeated improvement loops against a scalar metric, and benchmark generation policy defined in config instead of hidden in ad hoc scripts.
+`neuronauts` is a Python package for agent-based connectome recovery experiments. It is structured to support a small `autoresearch`-style workflow with a fixed benchmark harness, one main experiment file, and a human-written `program.md`.
 
 The current benchmark is synthetic line-graph recovery. Agents move through a 3D EM-like volume, touch pre/post synaptic sites, merge into neuron hypotheses, and are scored by line-graph F1.
 
@@ -11,8 +11,10 @@ The current benchmark is synthetic line-graph recovery. Agents move through a 3D
 - Core metric: `neuronauts.line_graph`
 - Synthetic data generator: `neuronauts.fetch.make_test_volume`
 - Oracle regression test for the pre/post merge bug: `tests/test_run.py`
+- Human instruction file: `program.md`
 - Whitepaper: `docs/whitepaper.md`
 - 5-minute loop runner: `scripts/iterative_loop.py`
+- Codex outer optimizer: `scripts/codex_optimize.py`
 
 ## Quick start
 
@@ -37,6 +39,8 @@ Run the regression test:
 python -m unittest discover -s tests -p 'test_*.py'
 ```
 
+To start the autonomous loop, point Codex at [program.md](/Users/wgray13/projects/neuronauts/program.md).
+
 ## Project layout
 
 ```text
@@ -51,25 +55,39 @@ neuronauts/
 docs/
   whitepaper.md
 scripts/
+  codex_optimize.py
   iterative_loop.py
 tests/
   test_run.py
 ```
 
-## Autoresearch workflow
+## Codex Optimization Loop
 
-The intended pattern is:
+The actual `autoresearch`-style optimizer is:
 
-1. Treat `neuronauts/run.py` as the main experiment file.
-2. Keep edits focused on the config block and clearly motivated algorithm changes.
-3. Run short, repeated local loops against `val_f1`.
-4. Preserve any regression tests that reveal specific failure modes.
+```bash
+python scripts/codex_optimize.py --repeat-until-interrupt
+```
 
-This repo already includes the first oracle-discovered structural fix: pre-role and post-role waypoint grouping are merged separately before synapse edges are assigned. That avoids false positive line-graph edges caused by mixing pre and post evidence into one merged neuron.
+That script:
+
+- asks Codex to make one focused edit to `neuronauts/run.py`
+- runs the regression test
+- runs fixed real-data validation on the same boxes every iteration
+- keeps or reverts the edit based on fixed-validation F1
+- logs each proposal under `run_logs/codex_optimize/`
+
+Useful options:
+
+```bash
+python scripts/codex_optimize.py --iterations 1 --skip-live-loop
+python scripts/codex_optimize.py --minutes 5 --log-dir run_logs/codex_session_a
+python scripts/codex_optimize.py --improvement-threshold 0.0005
+```
 
 ## Iterative 5-minute loops
 
-The helper script below repeatedly runs the benchmark for a fixed wall-clock budget and logs every run:
+The helper script below runs repeated fixed-time benchmark iterations and logs per-run plus per-iteration metrics:
 
 ```bash
 python scripts/iterative_loop.py --minutes 5 --repeat-until-interrupt
@@ -83,16 +101,6 @@ python scripts/iterative_loop.py --minutes 5 --log-dir run_logs/loop_a
 python scripts/iterative_loop.py --minutes 5 --benchmark-mode fixed_validation --cases 5
 python scripts/iterative_loop.py --minutes 5 --iterations 3
 ```
-
-Recommended loop discipline:
-
-1. Edit one thing.
-2. Run the regression test.
-3. Run a 5-minute benchmark loop.
-4. Keep only changes that improve the metric or close a known failure mode.
-5. Write down the best observed mean `val_f1` and the exact config snapshot that produced it.
-
-By default, each benchmark run evaluates multiple fresh synthetic cases. Use `--benchmark-mode fixed_validation` only when you want strict apples-to-apples regression tracking.
 
 Each 5-minute iteration writes:
 

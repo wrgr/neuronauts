@@ -44,11 +44,19 @@ def parse_args() -> argparse.Namespace:
         help="Benchmark sampling policy.",
     )
     parser.add_argument(
+        "--data-mode",
+        default="synthetic",
+        choices=["synthetic", "real"],
+        help="Whether each run evaluates synthetic cases or real MICrONS boxes.",
+    )
+    parser.add_argument(
         "--cases",
         type=int,
         default=5,
         help="Synthetic cases per evaluation run.",
     )
+    parser.add_argument("--real-boxes-per-eval", type=int, default=3, help="Real boxes to average per evaluation run.")
+    parser.add_argument("--real-min-synapses", type=int, default=50, help="Minimum synapses required for a real box to count.")
     return parser.parse_args()
 
 
@@ -107,74 +115,78 @@ def run_iteration(
     recall_values: list[float] = []
     best_f1 = None
     run_idx = 0
+    interrupted = False
 
     print(f"\n=== Iteration {iteration_idx:03d} ({minutes:.2f} min) ===")
     print(f"Iteration logs: {iteration_dir}")
 
-    while time.time() < deadline:
-        run_idx += 1
-        run_started = time.time()
-        proc = subprocess.run(
-            list(base_cmd),
-            capture_output=True,
-            text=True,
-            env=os.environ.copy(),
-        )
-        elapsed = time.time() - run_started
-        output = proc.stdout + ("\n" + proc.stderr if proc.stderr else "")
-        metrics = extract_metrics(output)
+    try:
+        while time.time() < deadline:
+            run_idx += 1
+            run_started = time.time()
+            proc = subprocess.run(
+                list(base_cmd),
+                capture_output=True,
+                text=True,
+                env=os.environ.copy(),
+            )
+            elapsed = time.time() - run_started
+            output = proc.stdout + ("\n" + proc.stderr if proc.stderr else "")
+            metrics = extract_metrics(output)
 
-        log_path = iteration_dir / f"run_{run_idx:03d}.log"
-        log_path.write_text(output, encoding="utf-8")
+            log_path = iteration_dir / f"run_{run_idx:03d}.log"
+            log_path.write_text(output, encoding="utf-8")
 
-        if metrics["val_f1"] is not None:
-            f1_value = float(metrics["val_f1"])
-            f1_values.append(f1_value)
-            best_f1 = max(best_f1, f1_value) if best_f1 is not None else f1_value
-        if metrics["precision"] is not None:
-            precision_values.append(float(metrics["precision"]))
-        if metrics["recall"] is not None:
-            recall_values.append(float(metrics["recall"]))
+            if metrics["val_f1"] is not None:
+                f1_value = float(metrics["val_f1"])
+                f1_values.append(f1_value)
+                best_f1 = max(best_f1, f1_value) if best_f1 is not None else f1_value
+            if metrics["precision"] is not None:
+                precision_values.append(float(metrics["precision"]))
+            if metrics["recall"] is not None:
+                recall_values.append(float(metrics["recall"]))
 
-        with summary_path.open("a", encoding="utf-8") as fh:
-            fh.write(
-                "\t".join(
-                    [
-                        str(run_idx),
-                        str(proc.returncode),
-                        f"{elapsed:.3f}",
-                        benchmark_mode,
-                        str(cases),
-                        metrics["val_f1"] or "",
-                        metrics["precision"] or "",
-                        metrics["recall"] or "",
-                        metrics["tp"] or "",
-                        metrics["fp"] or "",
-                        metrics["fn"] or "",
-                        metrics["case_results"] or "",
-                        metrics["neurons"] or "",
-                        metrics["edges"] or "",
-                        metrics["unresolved"] or "",
-                        log_path.name,
-                    ]
+            with summary_path.open("a", encoding="utf-8") as fh:
+                fh.write(
+                    "\t".join(
+                        [
+                            str(run_idx),
+                            str(proc.returncode),
+                            f"{elapsed:.3f}",
+                            benchmark_mode,
+                            str(cases),
+                            metrics["val_f1"] or "",
+                            metrics["precision"] or "",
+                            metrics["recall"] or "",
+                            metrics["tp"] or "",
+                            metrics["fp"] or "",
+                            metrics["fn"] or "",
+                            metrics["case_results"] or "",
+                            metrics["neurons"] or "",
+                            metrics["edges"] or "",
+                            metrics["unresolved"] or "",
+                            log_path.name,
+                        ]
+                    )
+                    + "\n"
                 )
-                + "\n"
+
+            print(
+                f"[it {iteration_idx:03d} run {run_idx:03d}] rc={proc.returncode} "
+                f"elapsed={elapsed:.2f}s "
+                f"val_f1={metrics['val_f1'] or 'n/a'} "
+                f"P={metrics['precision'] or 'n/a'} "
+                f"R={metrics['recall'] or 'n/a'} "
+                f"TP={metrics['tp'] or 'n/a'} "
+                f"FP={metrics['fp'] or 'n/a'} "
+                f"FN={metrics['fn'] or 'n/a'} "
+                f"best={f'{best_f1:.4f}' if best_f1 is not None else 'n/a'}"
             )
 
-        print(
-            f"[it {iteration_idx:03d} run {run_idx:03d}] rc={proc.returncode} "
-            f"elapsed={elapsed:.2f}s "
-            f"val_f1={metrics['val_f1'] or 'n/a'} "
-            f"P={metrics['precision'] or 'n/a'} "
-            f"R={metrics['recall'] or 'n/a'} "
-            f"TP={metrics['tp'] or 'n/a'} "
-            f"FP={metrics['fp'] or 'n/a'} "
-            f"FN={metrics['fn'] or 'n/a'} "
-            f"best={f'{best_f1:.4f}' if best_f1 is not None else 'n/a'}"
-        )
-
-        if proc.returncode != 0 and stop_on_error:
-            raise RuntimeError(f"iteration {iteration_idx} run {run_idx} failed; see {log_path}")
+            if proc.returncode != 0 and stop_on_error:
+                raise RuntimeError(f"iteration {iteration_idx} run {run_idx} failed; see {log_path}")
+    except KeyboardInterrupt:
+        interrupted = True
 
     stats = {
         "iteration": iteration_idx,
@@ -185,6 +197,7 @@ def run_iteration(
         "mean_precision": mean(precision_values),
         "mean_recall": mean(recall_values),
         "summary_path": summary_path.name,
+        "interrupted": interrupted,
     }
     (iteration_dir / "iteration_stats.json").write_text(json.dumps(stats, indent=2), encoding="utf-8")
     print(
@@ -214,10 +227,16 @@ def main() -> int:
         args.python,
         *shlex.split(args.cmd),
         "--quiet",
+        "--data-mode",
+        args.data_mode,
         "--cases",
         str(args.cases),
         "--benchmark-mode",
         args.benchmark_mode,
+        "--real-boxes-per-eval",
+        str(args.real_boxes_per_eval),
+        "--real-min-synapses",
+        str(args.real_min_synapses),
     ]
 
     session = {
@@ -229,7 +248,10 @@ def main() -> int:
         "config_path": str(config_path),
         "config_hash": config_hash,
         "benchmark_mode": args.benchmark_mode,
+        "data_mode": args.data_mode,
         "cases": args.cases,
+        "real_boxes_per_eval": args.real_boxes_per_eval,
+        "real_min_synapses": args.real_min_synapses,
     }
     (log_dir / "session.json").write_text(json.dumps(session, indent=2), encoding="utf-8")
 
@@ -243,8 +265,12 @@ def main() -> int:
     print(f"Command: {' '.join(base_cmd)}")
     print(f"Logs: {log_dir}")
     print(f"Config: {config_path} (sha256:{config_hash})")
+    print(f"Data mode: {args.data_mode}")
     print(f"Benchmark mode: {args.benchmark_mode}")
     print(f"Cases per evaluation: {args.cases}")
+    if args.data_mode == "real":
+        print(f"Real boxes per evaluation: {args.real_boxes_per_eval}")
+        print(f"Real min synapses: {args.real_min_synapses}")
     if args.repeat_until_interrupt:
         print("Iterations: until Ctrl+C")
     else:
@@ -290,6 +316,9 @@ def main() -> int:
                 f"latest_mean_f1={float(stats['mean_f1']):.4f} "
                 f"best_iteration_mean_f1={max(all_iteration_means):.4f}"
             )
+            if bool(stats["interrupted"]):
+                print("\nInterrupted by user. Writing final summaries.")
+                break
     except KeyboardInterrupt:
         print("\nInterrupted by user. Writing final summaries.")
 

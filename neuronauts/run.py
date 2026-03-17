@@ -9,7 +9,7 @@ from scipy.spatial import cKDTree
 
 from .agent import AgentConfig
 from .fields import compute_exploration_field, compute_membrane_field, compute_membrane_vectors
-from .fetch import SyntheticBenchmarkConfig, make_test_volume
+from .fetch import RealBoxSpec, SyntheticBenchmarkConfig, fetch_synapses, fetch_volume, make_test_volume
 from .line_graph import LineGraphMetrics, evaluate
 from .merge import ConnectivityGraph, MergedNeuron
 from .vectorized import run_agents_vectorized
@@ -46,7 +46,7 @@ SYNAPSE_SPAWN_FRACTION = 0.25
 MERGE_RADIUS = 4.0
 MERGE_OVERLAP_THRESHOLD = 0.65
 ROLE_MERGE_MIN_SHARED_HITS = 2
-MAX_SYNAPSES_PER_NEURON = 8
+MAX_SYNAPSES_PER_NEURON = 16
 MIN_PATH_LENGTH = 5
 WAYPOINTS_PER_AGENT = 20
 
@@ -55,7 +55,7 @@ MEMBRANE_SIGMA = 1.0
 MEMBRANE_VECTOR_SIGMA = 1.5
 POLARITY_CAPTURE_R = 3.5
 PRE_POST_OWNER_TOPK = 3
-OWNER_MARGIN = 0.5
+OWNER_MARGIN = 0.0
 
 # Synthetic benchmark policy
 BENCHMARK_CONFIG = SyntheticBenchmarkConfig(
@@ -70,6 +70,19 @@ BENCHMARK_CONFIG = SyntheticBenchmarkConfig(
 )
 BENCHMARK_CASES = 5
 BENCHMARK_MODE = "random"
+
+# Real-data benchmark policy
+REAL_MIN_SYNAPSES = 50
+REAL_BOXES = [
+    RealBoxSpec(center_nm=(1_153_592, 793_592, 655_640), side_um=6.0, mip=2),
+    RealBoxSpec(center_nm=(733_592, 513_592, 595_640), side_um=6.0, mip=2),
+    RealBoxSpec(center_nm=(1_213_592, 333_592, 975_640), side_um=6.0, mip=2),
+    RealBoxSpec(center_nm=(473_592, 433_592, 1_095_640), side_um=6.0, mip=2),
+    RealBoxSpec(center_nm=(893_592, 973_592, 915_640), side_um=6.0, mip=2),
+    RealBoxSpec(center_nm=(1_333_592, 633_592, 975_640), side_um=6.0, mip=2),
+    RealBoxSpec(center_nm=(773_592, 533_592, 795_640), side_um=6.0, mip=2),
+]
+REAL_BOXES_PER_EVAL = 3
 
 # ============================================================
 # END CONFIG
@@ -383,8 +396,88 @@ def evaluate_synthetic_batch(
     return agg, case_summaries
 
 
+def evaluate_real_box(
+    box: RealBoxSpec,
+    min_synapses: int = REAL_MIN_SYNAPSES,
+    seed: int = 42,
+    verbose: bool = True,
+) -> tuple[LineGraphMetrics | None, dict[str, int | float | tuple]]:
+    synapses = fetch_synapses(box.bbox_nm, mip=box.mip)
+    summary = {
+        "center_nm": box.center_nm,
+        "side_um": box.side_um,
+        "mip": box.mip,
+        "synapses": int(len(synapses.pre_pt)),
+    }
+    if len(synapses.pre_pt) < min_synapses:
+        return None, summary
+
+    chunk = fetch_volume(box.bbox_nm, mip=box.mip)
+    metrics = run(
+        volume=chunk.data,
+        pre_pts=synapses.pre_pt,
+        post_pts=synapses.post_pt,
+        pre_root_ids=synapses.pre_root_id,
+        post_root_ids=synapses.post_root_id,
+        seed=seed,
+        verbose=verbose,
+    )
+    return metrics, summary
+
+
+def evaluate_real_box_set(
+    boxes: list[RealBoxSpec],
+    boxes_per_eval: int,
+    min_synapses: int = REAL_MIN_SYNAPSES,
+    seed: int = 42,
+    verbose: bool = True,
+) -> tuple[LineGraphMetrics, list[dict[str, int | float | tuple]]]:
+    summaries = []
+    metrics_list = []
+
+    for box in boxes:
+        metrics, summary = evaluate_real_box(
+            box=box,
+            min_synapses=min_synapses,
+            seed=seed,
+            verbose=verbose,
+        )
+        if metrics is None:
+            summaries.append({**summary, "status": "skip_low_synapses"})
+            continue
+        summaries.append({**summary, "status": "used", "f1": metrics.f1})
+        metrics_list.append(metrics)
+        if len(metrics_list) >= boxes_per_eval:
+            break
+
+    if len(metrics_list) < boxes_per_eval:
+        raise RuntimeError(
+            f"only found {len(metrics_list)} real boxes with >= {min_synapses} synapses; "
+            f"need {boxes_per_eval}"
+        )
+
+    agg = LineGraphMetrics(
+        tp=sum(m.tp for m in metrics_list),
+        fp=sum(m.fp for m in metrics_list),
+        fn=sum(m.fn for m in metrics_list),
+        precision=float(np.mean([m.precision for m in metrics_list])),
+        recall=float(np.mean([m.recall for m in metrics_list])),
+        f1=float(np.mean([m.f1 for m in metrics_list])),
+        n_true_edges=sum(m.n_true_edges for m in metrics_list),
+        n_estimated_edges=sum(m.n_estimated_edges for m in metrics_list),
+        n_synapses=sum(m.n_synapses for m in metrics_list),
+    )
+    return agg, summaries
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--data-mode",
+        choices=["synthetic", "real"],
+        default="synthetic",
+        help="Whether to evaluate on synthetic benchmark cases or real MICrONS boxes.",
+    )
     parser.add_argument("--cases", type=int, default=BENCHMARK_CASES, help="Synthetic cases per evaluation.")
     parser.add_argument(
         "--benchmark-mode",
@@ -395,46 +488,73 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval-seed", type=int, default=None, help="Optional seed for reproducible batch sampling.")
     parser.add_argument("--volume-seed", type=int, default=None, help="Optional debug override for a single synthetic case.")
     parser.add_argument("--run-seed", type=int, default=None, help="Optional debug override for a single agent simulation.")
+    parser.add_argument("--real-boxes-per-eval", type=int, default=REAL_BOXES_PER_EVAL, help="Real boxes to average per evaluation.")
+    parser.add_argument("--real-min-synapses", type=int, default=REAL_MIN_SYNAPSES, help="Minimum synapses required for a real box to be used.")
     parser.add_argument("--quiet", action="store_true", help="Suppress per-step benchmark logging.")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    print("=== Synthetic benchmark ===")
-    print(
-        f"mode={args.benchmark_mode} cases={args.cases} "
-        f"eval_seed={args.eval_seed} benchmark_config={asdict(BENCHMARK_CONFIG)}"
-    )
+    if args.data_mode == "synthetic":
+        print("=== Synthetic benchmark ===")
+        print(
+            f"mode={args.benchmark_mode} cases={args.cases} "
+            f"eval_seed={args.eval_seed} benchmark_config={asdict(BENCHMARK_CONFIG)}"
+        )
 
-    if args.volume_seed is not None or args.run_seed is not None:
-        print(f"debug_replay volume_seed={args.volume_seed} run_seed={args.run_seed}")
-        metrics = evaluate_synthetic_case(
+        if args.volume_seed is not None or args.run_seed is not None:
+            print(f"debug_replay volume_seed={args.volume_seed} run_seed={args.run_seed}")
+            metrics = evaluate_synthetic_case(
+                benchmark_config=BENCHMARK_CONFIG,
+                volume_seed=args.volume_seed,
+                run_seed=args.run_seed,
+                verbose=not args.quiet,
+            )
+            print(f"Result: {metrics}")
+            print(f"\nval_f1 = {metrics.f1:.4f}")
+            return
+
+        metrics, case_summaries = evaluate_synthetic_batch(
             benchmark_config=BENCHMARK_CONFIG,
-            volume_seed=args.volume_seed,
-            run_seed=args.run_seed,
+            cases=args.cases,
+            mode=args.benchmark_mode,
+            base_seed=args.eval_seed,
             verbose=not args.quiet,
         )
+        for summary in case_summaries:
+            print(
+                "case_result "
+                f"case={summary['case']} "
+                f"volume_seed={summary['volume_seed']} "
+                f"run_seed={summary['run_seed']} "
+                f"f1={summary['f1']:.4f} "
+                f"p={summary['precision']:.3f} "
+                f"r={summary['recall']:.3f}"
+            )
         print(f"Result: {metrics}")
         print(f"\nval_f1 = {metrics.f1:.4f}")
         return
 
-    metrics, case_summaries = evaluate_synthetic_batch(
-        benchmark_config=BENCHMARK_CONFIG,
-        cases=args.cases,
-        mode=args.benchmark_mode,
-        base_seed=args.eval_seed,
+    print("=== Real MICrONS benchmark ===")
+    print(
+        f"boxes_per_eval={args.real_boxes_per_eval} "
+        f"real_min_synapses={args.real_min_synapses} "
+        f"candidate_boxes={len(REAL_BOXES)}"
+    )
+    metrics, box_summaries = evaluate_real_box_set(
+        boxes=REAL_BOXES,
+        boxes_per_eval=args.real_boxes_per_eval,
+        min_synapses=args.real_min_synapses,
+        seed=42 if args.run_seed is None else args.run_seed,
         verbose=not args.quiet,
     )
-    for summary in case_summaries:
+    for idx, summary in enumerate(box_summaries, start=1):
         print(
-            "case_result "
-            f"case={summary['case']} "
-            f"volume_seed={summary['volume_seed']} "
-            f"run_seed={summary['run_seed']} "
-            f"f1={summary['f1']:.4f} "
-            f"p={summary['precision']:.3f} "
-            f"r={summary['recall']:.3f}"
+            "box_result "
+            f"idx={idx} center_nm={summary['center_nm']} side_um={summary['side_um']} "
+            f"synapses={summary['synapses']} status={summary['status']}"
+            + (f" f1={summary['f1']:.4f}" if 'f1' in summary else "")
         )
     print(f"Result: {metrics}")
     print(f"\nval_f1 = {metrics.f1:.4f}")
