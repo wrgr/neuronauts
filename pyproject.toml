@@ -9,6 +9,10 @@ description = "Agent-based connectome recovery experiments."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "requests>=2.32.0",
+    "urllib3<3",
+    "charset-normalizer<4",
+    "chardet<6",
     "numpy",
     "scipy",
     "truststore",
@@ -29,6 +33,7 @@ membrane = [
 
 [project.scripts]
 neuronauts = "neuronauts.run:main"
+neuronauts-qa = "neuronauts.qa_agent_cli:main"
 
 [tool.setuptools]
 packages = ["neuronauts"]

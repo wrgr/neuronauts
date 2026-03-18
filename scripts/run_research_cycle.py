@@ -1,5 +1,21 @@
 #!/usr/bin/env python3
-"""Run the canonical Neuronauts research cycle."""
+"""Run the canonical Neuronauts v1 research cycle (export → train → validate).
+
+NOTE: For Neuronauts v2 the recommended training path is ``scripts/train.py``,
+which handles real-data box caching, shared grammar training, and GAT training
+in a single CLI without requiring pre-exported dataset files::
+
+    python scripts/train.py run \\
+        --cache-dir data/boxes \\
+        --n-boxes 100 \\
+        --grammar-output models/shared_grammar.pt \\
+        --gat-output models/gat.pt \\
+        --epochs 50 \\
+        --train-gat
+
+This script remains functional for the v1 offline-export pipeline (useful for
+ablation studies or when datasets must be shared across multiple training runs).
+"""
 
 from __future__ import annotations
 

@@ -1,247 +1,173 @@
-# Unified Connectome Grammar Program
+# Neuronauts v2: Scaffolded Global Grammar
 
 ## Mission
 
-Build a single `neuronauts` system that goes from EM voxels to connectome with
-one shared learned representation in the middle.
+Build a unified system that goes from EM voxels to connectome using a shared
+learned representation trained end-to-end against synapse line-graph F1.
 
-The system has three layers:
+**Status: v2 fully implemented.** All five architectural layers are complete
+and tested (329 tests). The primary remaining work is training on real MICrONS
+data and driving the learned components with real supervision.
 
-1. `neuronauts` layer 1: EM perception
-   - MICRONS/CAVE volume + synapse fetch
-   - optional membrane U-Net cache
-   - agent navigation
-   - fragment proposals
-   - pre/post synapse cluster candidates
+## Architecture (five layers)
 
-2. `neuronauts` layer 2: shared grammar
-   - `PathEncoder`
-   - `MergeScorer`
-   - `ArborEncoder` / topology atomicity
-   - beam-search global assembly
-   - optional LLM oracle for coherence and identity
+```
+EM volume + CAVE synapses
+        │
+        ▼
+1. Perception          fetch.py · fields.py · vectorized.py · membrane_unet.py
+   2.5D membrane U-Net (InstanceNorm2d, context slices)
+   700 agents × 450 steps → path arrays + synapse hits
 
-3. `neuronauts` layer 3: connectome extraction
-   - line-graph construction
-   - connectome evaluation
-   - terminal metric: line-graph F1
+        ▼
+2. Scaffold init       run.py → _scaffold_union_from_seg_ids
+   CAVE seg-IDs pre-group same-supervoxel agents → ~10× search space reduction
+   HeuristicConfig: spatial thresholds become candidate generators, not decisions
 
-This is one paper, one architecture, and one repo.
+        ▼
+3. Shared Grammar      grammar.py · shared_grammar_model.py
+   TorchPathEncoder: Transformer + [CLS] token, multi-modal
+   MergeScorer, BridgeHead (6D trajectory prediction)
+   multitask_train_step: merge loss + atomicity loss + bridge loss
+
+        ▼
+4. Global Assembly     assembly.py · shared_grammar_model.py
+   GlobalAssemblyGAT: sparse multi-head attention over ConnectivityGraph
+   gat_train_step: BCE + soft-F1 surrogate, path encoder frozen
+   label_graph_edges: per-edge labels from majority-vote root-ID matching
+
+        ▼
+5. Evaluation          line_graph.py
+   Synapse line-graph F1  ← primary scalar for all training and evaluation
+```
 
 ## Primary Claim
 
-The paper claim is:
+> A learned coordinate-free path representation shared across local merge
+> plausibility, cluster atomicity, bridge prediction, and global graph
+> attention — trained end-to-end against synapse line-graph F1.
 
-> A connectome grammar: a learned coordinate-free representation of neurite path
-> structure that simultaneously predicts local merge plausibility, cluster
-> atomicity, and global arbor grammaticality, and is optimized against terminal
-> connectome correctness.
+## Primary Training Path
 
-This means:
+The recommended workflow uses `scripts/train.py`:
 
-- local merge AUC is not the final target
-- morphology alone is not the final target
-- proofreading decisions alone are not the final target
-- line-graph F1 is the final target
+```bash
+# Step 1: Build a cache of real MICrONS boxes (network required)
+python scripts/train.py build-dataset \
+  --cache-dir data/boxes \
+  --n-boxes 100 \
+  --min-synapses 15
 
-## Primary Editable Surface
+# Step 2: Train grammar + GAT
+python scripts/train.py train \
+  --cache-dir data/boxes \
+  --grammar-output models/shared_grammar.pt \
+  --gat-output models/gat.pt \
+  --epochs 50 \
+  --train-gat
+```
 
-The main learned model file is:
+**Grammar training** uses cached synapse tables directly — no agent simulation
+required. Each box contributes merge examples (same-root positive, nearby-different-root
+negative) and topology/atomicity examples. Approximately 0.3 s/box on CPU.
 
-- [grammar.py](/Users/wgray13/projects/neuronauts/neuronauts/grammar.py)
+**GAT training** additionally requires agent path simulation (~30 s/box on CPU).
+The `--gat-every-n-epochs 5` flag amortizes this cost by training the GAT every
+5 grammar epochs rather than every epoch.
 
-That is the default file Codex should edit.
+## Key Files
 
-It currently contains:
-
-- `PathEncoder`
-- `MergeScorer`
-- `ArborEncoder`
-
-It should eventually also hold:
-
-- cluster atomicity heads
-- global hypothesis scoring
-- shared representation logic used by both local and global tasks
-
-Default rule:
-
-- edit `neuronauts/grammar.py`
-
-Secondary edits are allowed only when needed to support that model or its
-training/data path.
-
-## Shared Data Path
-
-There are already useful fetch/data helper patterns across the old repos. The
-runtime home is now `neuronauts`, so any absorbed helpers should land here
-instead of remaining split across siblings.
-
-### `neuronauts` helpers
-
-- [fetch.py](/Users/wgray13/projects/neuronauts/neuronauts/fetch.py)
-  - EM box fetch
-  - synapse fetch
-  - membrane cache load/save
-- [export_topology_dataset.py](/Users/wgray13/projects/neuronauts/scripts/export_topology_dataset.py)
-  - real MICRONS/CAVE topology examples from root consistency
-- future path/fragment fetch and caching helpers should also live under
-  `neuronauts/`
-
-Use existing helper patterns as the integration seam, but keep execution and
-ownership local to this repo.
+| File | Purpose |
+|---|---|
+| `neuronauts/grammar.py` | `TorchPathEncoder`, `MergeScorer`, `PathBatch` |
+| `neuronauts/shared_grammar_model.py` | `SharedGrammarModel`, `BridgeHead`, `GlobalAssemblyGAT`, `GATTrainingConfig`, `gat_train_step`, `train_global_assembly_gat`, `multitask_train_step` |
+| `neuronauts/assembly.py` | `gat_refine_connectivity`, `label_graph_edges` |
+| `neuronauts/run.py` | Runtime runner, `HeuristicConfig`, `_scaffold_union_from_seg_ids`, `simulate_paths_and_hits` |
+| `neuronauts/dataset_builder.py` | `BoxCache`, `select_random_boxes`, `build_dataset` |
+| `scripts/train.py` | ★ Primary training CLI |
+| `neuronauts/line_graph.py` | `evaluate` → line-graph F1 (primary metric) |
 
 ## Supervision Sources
 
-There are two complementary supervision sources and they should update the same
-shared representation.
+### 1. Local merge supervision
 
-### 1. CAVE edit decisions
+- positives: subfragments from the same CAVE root cluster (spatial split at PCA midpoint)
+- negatives: nearby fragments from different root IDs
+- source: cached synapse tables, no simulation required
 
-These supervise local merge quality:
+### 2. Global atomicity supervision
 
-- accepted or rejected join decisions
-- hard reversals
-- pairwise fragment compatibility
+- positive: synapse cluster where all synapses share one root on the relevant side
+- negative: cluster formed by merging two distinct roots
+- source: cached synapse tables, no simulation required
 
-### 2. MICRONS/CAVE root consistency
+### 3. Self-supervised bridge loss
 
-These supervise global atomicity:
+- target: 3D midpoint + 3D tangent between adjacent fragment endpoints
+- derived geometrically from synapse positions, no manual labels
 
-- candidate pre-side or post-side synapse clusters
-- `atomic` if all relevant roots agree
-- `non_atomic` otherwise
+### 4. GAT soft-F1 loss
 
-Both should pull on the same `PathEncoder` weights.
+- label: per-edge binary from majority-vote root-ID matching
+- loss: `(1−w)·BCE + w·(1 − soft_F1)` with `w=0.5`
+- this directly aligns GAT training with the terminal metric
 
 ## Objective
 
-The primary scalar for the unified system is:
+Primary scalar: **synapse line-graph F1**
 
-- `line-graph F1`
+Supporting diagnostics (not training targets):
+- local merge accuracy
+- atomicity accuracy
+- bridge prediction MSE / cosine similarity
+- GAT edge precision / recall / F1
 
-Secondary diagnostics:
+## What Is Actually Complete
 
-- local merge AUC
-- cluster atomicity accuracy / AUROC
-- beam-search hypothesis quality
-- precision / recall / TP / FP / FN
+All items from the global inference roadmap are implemented:
 
-Important rule:
+| Component | Status |
+|---|---|
+| Transformer PathEncoder + [CLS] | ✓ `grammar.py` |
+| Multi-modal PathBatch (skeleton, mesh) | ✓ `grammar.py`, `fetch.py` |
+| BridgeHead + Dijkstra proposals | ✓ `dijkstra.py`, `shared_grammar_model.py`, `run.py` |
+| Scaffold init from CAVE seg-IDs | ✓ `run.py`, `fetch.py` |
+| 2.5D MembraneUNet (InstanceNorm2d) | ✓ `membrane_unet.py` |
+| GlobalAssemblyGAT + training loop | ✓ `assembly.py`, `shared_grammar_model.py` |
+| HeuristicConfig decommissioning | ✓ `run.py` |
+| Real-data BoxCache + selection | ✓ `dataset_builder.py` |
+| End-to-end training CLI | ✓ `scripts/train.py` |
 
-- local AUC is a proxy
-- line-graph F1 is the real target
+## What To Work On Next
 
-## Current Inner Learning Loop
+The remaining work is empirical, not architectural:
 
-The repo now has a real trainable inner loop.
+1. **Run real-data training.** Execute `scripts/train.py run --cache-dir data/boxes --n-boxes 100 --epochs 50 --train-gat` on MICrONS data and measure val F1.
 
-1. Export topology examples from real MICRONS boxes:
+2. **Diagnosis loop.** If val F1 is not improving, diagnose which component is the bottleneck (merge accuracy? atomicity accuracy? GAT edge precision?) using the per-component diagnostics logged in `run_logs/train_log.tsv`.
 
-```bash
-python scripts/export_topology_dataset.py \
-  --output data/topology_dataset_smoke.npz \
-  --box-indices 0,1,2 \
-  --membrane-source auto
-```
+3. **Model improvements (ranked by expected impact):**
+   - Increase training data: more boxes, longer training, larger `volume_shape` for synthetic GAT data.
+   - Richer path features: feed skeleton tortuosity and mesh volume-surface ratio into `PathBatch.skeleton_feat` and `mesh_feat`.
+   - Pre-train on CAVE edit decisions if available (accepted/rejected merge decisions as additional merge supervision).
+   - Scale the model: larger `d_model`, more Transformer layers, more GAT heads.
+   - Multi-scale inference: run at MIP 1 and MIP 3 in addition to MIP 2.
 
-2. Train the topology validator:
-
-```bash
-python scripts/train_topology_model.py \
-  --dataset data/topology_dataset_smoke.npz \
-  --output models/topology_atomicity_smoke.pt
-```
-
-The current implementation exports padded multi-branch tensors plus masks and
-trains an attention-based arbor validator. This is still a partial realization
-of the overall grammar claim, but it establishes the correct inner-loop
-pattern:
-
-- build real examples
-- train a learned model
-- evaluate
-
-The repo now also has the first shared multitask training path:
-
-- export local merge examples
-- export global atomicity examples
-- train one shared `TorchPathEncoder` against both
-
-And it now has the first terminal-objective-adjacent ranking path:
-
-- export multiple box-level assembly hypotheses
-- label them by true line-graph F1
-- train a reranker over hypothesis features
-
-The outer-loop requirement is now:
-
-- Codex and Gemini should both call the same canonical research cycle
-- environment differences should only affect proposal generation, not eval logic
-
-## Outer Optimization Loop
-
-The outer Codex loop should be:
-
-1. edit the shared model in `neuronauts/grammar.py`
-2. run the relevant training path
-3. evaluate local diagnostics
-4. evaluate terminal line-graph F1
-5. keep or revert
-6. continue
-
-Do not center the workflow on repeated 5-minute reruns of unchanged code.
-Those are only diagnostic monitors.
-
-The primary optimizer command remains:
-
-```bash
-python scripts/codex_optimize.py --repeat-until-interrupt
-```
-
-But the target of that optimizer should migrate toward the shared grammar model
-in `neuronauts/grammar.py`, not remain only inside `neuronauts/run.py`.
-
-## What To Build Next
-
-The next real milestone is not more parameter tuning. It is model unification.
-
-Priority order:
-
-1. connect the exported topology dataset into unified grammar training
-2. train shared weights on both:
-   - edit-decision merge supervision
-   - topology atomicity supervision
-3. extend `PathEncoder` consumers beyond `MergeScorer`
-4. introduce a cluster/arbor atomicity head
-5. assemble with beam search
-6. evaluate with line-graph F1
-
-Important implementation note:
-
-- the current repo includes the multi-branch export path and attention-based
-  atomicity model
-- the current repo also includes an initial local merge dataset export path
-- the current repo also includes box-level hypothesis export and reranking
-- global beam-search assembly across whole neurons remains future work
+4. **Evaluation rigor.** Add a held-out test set separate from the validation boxes used for checkpointing. Report per-neuron F1 distribution, not only mean.
 
 ## What To Avoid
 
-- feature-spreadsheet morphology engineering
-- optimizing only local AUC
-- adding many new ad hoc heuristics
-- splitting the learned representation across many disconnected models
-- pretending the LLM is the learned model
-
-The LLM is only the outer research optimizer.
+- Feature-spreadsheet morphology engineering
+- Optimizing only local merge AUC as the primary target
+- Hard-coded spatial thresholds as decision rules (they exist only as candidate generators in `HeuristicConfig.learned()`)
+- Splitting the learned representation across disconnected models
 
 ## Success Condition
 
 The system is successful when:
 
-- one shared learned representation supports local merge plausibility,
-  cluster atomicity, and global assembly
-- it transfers across MICRONS volumes without retraining from scratch
-- terminal line-graph F1 improves on real data
-
-That is the target.
+- one shared learned representation (`TorchPathEncoder`) supports local merge,
+  cluster atomicity, bridge prediction, and global GAT assembly
+- terminal synapse line-graph F1 improves measurably over the heuristic baseline
+  on a held-out set of real MICrONS boxes
+- the improvement is robust across different box locations and neuron types

@@ -2,15 +2,17 @@
 
 import argparse
 import time
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from functools import lru_cache
 
 import numpy as np
 
 from .assembly_dataset import hypothesis_features
 from .agent import AgentConfig
-from .assembly import CandidateMerge, beam_search_merge_groups
+from .assembly import CandidateMerge, beam_search_merge_groups, gat_refine_connectivity
+from .dijkstra import BridgeGraph
 from .fields import compute_exploration_field, compute_membrane_field, compute_membrane_vectors
+from .membrane_unet import load_model as _load_membrane_model, predict_membranes as _predict_membranes
 from .fetch import (
     RealBoxSpec,
     SyntheticBenchmarkConfig,
@@ -107,6 +109,86 @@ RERANKER_BEAM_WIDTHS = "1,2,4"
 # ============================================================
 
 
+@dataclass(frozen=True)
+class HeuristicConfig:
+    """Controls whether spatial thresholds act as hard decisions or candidate generators.
+
+    Philosophy
+    ----------
+    In the v1 heuristic-only pipeline, spatial thresholds were *decisions*:
+    two agents had to overlap within ``merge_radius`` **and** share ≥
+    ``merge_overlap_threshold`` of their synapse hits before being merged.
+    Synapse assignments only succeeded when the nearest neuron was within
+    ``polarity_capture_r`` voxels.
+
+    In the v2 learned pipeline (PR 4 + 5) these same thresholds become
+    *candidate generators*:
+
+    - ``merge_radius`` still restricts which agent-pairs the KD-tree considers
+      (a reasonable proximity pre-filter), but the final merge/reject call is
+      made by ``learned_merge_score_fn`` or the downstream GAT — not by the
+      overlap fraction.
+    - ``polarity_capture_r`` is relaxed to ``inf`` so every plausible
+      (pre-neuron, post-neuron) pair becomes a candidate edge for the GAT to
+      score.  Hard geometric pruning happens **after** learning, not before.
+    - ``max_synapses_per_neuron`` is raised to a large limit; again, the
+      learned scorer performs the final culling.
+
+    Use ``HeuristicConfig.legacy()`` to reproduce pre-PR5 behaviour exactly
+    (useful for ablation runs and regression tests).  Use
+    ``HeuristicConfig.learned()`` when a grammar / GAT checkpoint is present.
+
+    Attributes
+    ----------
+    merge_radius:
+        KD-tree radius for generating candidate agent pairs. Kept in both
+        modes as a fast spatial pre-filter.
+    merge_overlap_threshold:
+        Minimum shared-hit fraction for heuristic merging.  Bypassed in
+        learned mode.
+    role_merge_min_shared_hits:
+        Minimum number of shared synapse hits for any pair to be considered.
+        Kept in both modes as a data-quality guard.
+    polarity_capture_r:
+        Maximum voxel distance for synapse-to-neuron assignment.  Set to
+        ``inf`` in learned mode so all plausible pairs reach the GAT.
+    max_synapses_per_neuron:
+        Hard cap on synapse count per neuron.  Raised to a large limit in
+        learned mode.
+    use_learned_decisions:
+        When ``True`` the overlap-threshold check is skipped; all pairs
+        within ``merge_radius`` that satisfy ``role_merge_min_shared_hits``
+        are forwarded to the learned scorer (or kept as GAT candidate edges).
+    """
+
+    merge_radius: float = MERGE_RADIUS
+    merge_overlap_threshold: float = MERGE_OVERLAP_THRESHOLD
+    role_merge_min_shared_hits: int = ROLE_MERGE_MIN_SHARED_HITS
+    polarity_capture_r: float = POLARITY_CAPTURE_R
+    max_synapses_per_neuron: int = MAX_SYNAPSES_PER_NEURON
+    use_learned_decisions: bool = False
+
+    @classmethod
+    def legacy(cls) -> "HeuristicConfig":
+        """Reproduce the original pre-PR5 heuristic-only behaviour."""
+        return cls(use_learned_decisions=False)
+
+    @classmethod
+    def learned(cls) -> "HeuristicConfig":
+        """Permissive candidate-generation mode for learned grammar pipelines.
+
+        Thresholds become wide-open so the path encoder, bridge head, and
+        GAT make all real decisions.  Only the KD-tree radius and the
+        minimum-shared-hits data-quality guard are retained.
+        """
+        return cls(
+            merge_overlap_threshold=0.0,
+            polarity_capture_r=float("inf"),
+            max_synapses_per_neuron=1024,
+            use_learned_decisions=True,
+        )
+
+
 def _valid_agent_indices(path_arr: np.ndarray) -> np.ndarray:
     if path_arr.shape[1] <= MIN_PATH_LENGTH:
         return np.array([], dtype=np.int32)
@@ -126,14 +208,29 @@ def _subsample_points(path: np.ndarray) -> np.ndarray:
     return path[step_idx].astype(np.float32)
 
 
+# Isotropic scaling: convert MIP-2 voxel coords to 32-nm units (1 unit = 32 nm).
+# This keeps feature values in the same numerical range as raw voxel coords
+# (~1–60) while correctly weighting the Z axis at 40/32 = 1.25× relative to XY.
+# Raw nm (×32, ×32, ×40) would produce values up to ~2000 nm and destabilise
+# the input projection layer.
+_PATH_ISO = np.array([1.0, 1.0, 40.0 / 32.0], dtype=np.float32)
+
+
 def _path_sequence_from_points(points: np.ndarray) -> np.ndarray:
+    """Compute (edge_len, radius, curvature) sequence from path points.
+
+    Points are in MIP-2 voxel coordinates.  Features are computed in isotropic
+    32-nm units ([1, 1, 1.25] scaling) so that Z-axis steps are correctly
+    weighted relative to XY while keeping numerical values in the range ~1–60.
+    """
     if len(points) < 2:
         return np.zeros((0, 3), dtype=np.float32)
-    diffs = np.diff(points.astype(np.float32), axis=0)
+    pts_nm = points.astype(np.float32) * _PATH_ISO
+    diffs = np.diff(pts_nm, axis=0)
     edge_len = np.linalg.norm(diffs, axis=1).astype(np.float32, copy=False)
-    centroid = points.astype(np.float32).mean(axis=0, keepdims=True)
-    radius = np.linalg.norm(points.astype(np.float32)[1:] - centroid, axis=1).astype(np.float32, copy=False)
-    if len(points) < 3:
+    centroid = pts_nm.mean(axis=0, keepdims=True)
+    radius = np.linalg.norm(pts_nm[1:] - centroid, axis=1).astype(np.float32, copy=False)
+    if len(pts_nm) < 3:
         curvature = np.zeros(len(edge_len), dtype=np.float32)
     else:
         unit = diffs / np.clip(np.linalg.norm(diffs, axis=1, keepdims=True), 1e-6, None)
@@ -193,6 +290,72 @@ def _load_assembly_reranker(checkpoint_path: str):
     return load_linear_reranker(checkpoint_path)
 
 
+def _scaffold_union_from_seg_ids(
+    role_agent_ids: np.ndarray,
+    role_hits: np.ndarray,
+    role_seg_ids: np.ndarray | None,
+    parent: dict[int, int],
+) -> None:
+    """Pre-merge agents whose hit synapses all belong to the same scaffold seg_id.
+
+    When CAVE segment IDs are available, agents that only ever hit synapses
+    from a single segment are very likely part of the same physical neurite
+    fragment.  Pre-unioning them before the more expensive geometry- or
+    grammar-based passes collapses the search space and prevents the learned
+    scorer from needing to compare pairs that should trivially merge.
+
+    An agent is assigned to a segment if:
+    - it hit at least one synapse, AND
+    - every synapse it hit has the same non-zero seg_id.
+
+    Agents that hit synapses across multiple seg_ids are left to the
+    downstream geometry / grammar pass.
+
+    Parameters
+    ----------
+    role_agent_ids:
+        Integer array of agent indices that have at least one hit.
+    role_hits:
+        Bool array ``[n_agents, n_synapses]``.
+    role_seg_ids:
+        Int64 array ``[n_synapses]`` of segment IDs, or ``None`` if not
+        available (in which case this function is a no-op).
+    parent:
+        Union-find parent dict, mutated in place.
+    """
+    if role_seg_ids is None:
+        return
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(x: int, y: int) -> None:
+        px, py = find(x), find(y)
+        if px != py:
+            parent[px] = py
+
+    # Map seg_id → first agent that is purely within that segment.
+    seg_representative: dict[int, int] = {}
+
+    for agent_id in role_agent_ids.tolist():
+        hit_indices = np.flatnonzero(role_hits[agent_id])
+        if len(hit_indices) == 0:
+            continue
+        agent_seg_ids = role_seg_ids[hit_indices]
+        unique_segs = np.unique(agent_seg_ids)
+        if len(unique_segs) != 1 or int(unique_segs[0]) == 0:
+            # Agent spans multiple segments or has an unknown segment — skip.
+            continue
+        seg_id = int(unique_segs[0])
+        if seg_id in seg_representative:
+            union(agent_id, seg_representative[seg_id])
+        else:
+            seg_representative[seg_id] = agent_id
+
+
 def _merge_role_groups(
     path_arr: np.ndarray,
     role_hits: np.ndarray,
@@ -204,12 +367,33 @@ def _merge_role_groups(
     beam_width: int = BEAM_WIDTH,
     beam_max_candidates: int = BEAM_MAX_CANDIDATES,
     atomicity_score_weight: float = ATOMICITY_SCORE_WEIGHT,
+    role_seg_ids: np.ndarray | None = None,
+    heuristic_config: "HeuristicConfig | None" = None,
 ) -> tuple[dict[int, MergedNeuron], dict[int, list[int]], dict[int, cKDTree], int]:
+    """Merge agent paths into neuron groups, optionally seeded by scaffold seg_ids.
+
+    When ``role_seg_ids`` is provided the union-find structure is pre-seeded
+    by ``_scaffold_union_from_seg_ids`` before the geometry- and grammar-based
+    passes run.  This means agents that trivially belong to the same CAVE
+    segment are merged for free, and the remaining expensive pairwise scoring
+    only considers cross-segment candidates — significantly reducing the
+    search space in scaffold-aware mode.
+
+    In ``HeuristicConfig.learned()`` mode (PR 5) the overlap-threshold check
+    is bypassed: all candidate pairs within ``merge_radius`` that satisfy the
+    minimum-shared-hits data-quality guard are forwarded to the learned scorer.
+    When no scorer is present in learned mode, pairs are unioned optimistically
+    and the GAT refinement step (PR 4) performs the real pruning.
+    """
+    hcfg = heuristic_config or HeuristicConfig.legacy()
     role_agent_ids = np.where(role_hits.any(axis=1))[0].astype(np.int32)
     if len(role_agent_ids) == 0:
         return {}, {}, {}, next_neuron_id
 
     parent = {int(agent_id): int(agent_id) for agent_id in role_agent_ids.tolist()}
+
+    # --- Scaffold pre-initialization (PR 3) ---
+    _scaffold_union_from_seg_ids(role_agent_ids, role_hits, role_seg_ids, parent)
 
     def find(x: int) -> int:
         while parent[x] != x:
@@ -236,7 +420,8 @@ def _merge_role_groups(
 
     sub_pts = np.vstack(sub_pts_list)
     sub_labels_arr = np.array(sub_labels, dtype=np.int32)
-    pairs = cKDTree(sub_pts).query_pairs(r=MERGE_RADIUS, output_type="ndarray")
+    # MERGE_RADIUS is always a candidate generator; acceptance is decided below.
+    pairs = cKDTree(sub_pts).query_pairs(r=hcfg.merge_radius, output_type="ndarray")
     candidate_merges: list[CandidateMerge] = []
     seen_pairs: set[tuple[int, int]] = set()
     agent_sequences: dict[int, np.ndarray] = {}
@@ -251,7 +436,8 @@ def _merge_role_groups(
         hits_a = role_hits[agent_a]
         hits_b = role_hits[agent_b]
         shared_count = int(np.count_nonzero(hits_a & hits_b))
-        if shared_count < ROLE_MERGE_MIN_SHARED_HITS:
+        # Data-quality guard: kept in both legacy and learned modes.
+        if shared_count < hcfg.role_merge_min_shared_hits:
             continue
         if learned_merge_score_fn is not None:
             seq_a = agent_sequences.setdefault(agent_a, _path_sequence_from_points(_agent_points(path_arr, agent_a)))
@@ -260,9 +446,14 @@ def _merge_role_groups(
                 continue
             score = float(learned_merge_score_fn(seq_a, seq_b))
             candidate_merges.append(CandidateMerge(left_agent=agent_a, right_agent=agent_b, score=score))
+        elif hcfg.use_learned_decisions:
+            # Learned mode but no scorer yet: union optimistically so downstream
+            # GAT refinement (PR 4) can make the real acceptance/rejection call.
+            union(agent_a, agent_b)
         else:
+            # Legacy mode: overlap fraction is the decision criterion.
             overlap = shared_count / max(1, min(int(np.count_nonzero(hits_a)), int(np.count_nonzero(hits_b))))
-            if overlap >= MERGE_OVERLAP_THRESHOLD:
+            if overlap >= hcfg.merge_overlap_threshold:
                 union(agent_a, agent_b)
 
     if learned_merge_score_fn is not None:
@@ -329,6 +520,7 @@ def _nearest_owner(
     pt: np.ndarray,
     owners: dict[int, list[int]],
     trees: dict[int, cKDTree],
+    owner_margin: float = OWNER_MARGIN,
 ) -> tuple[int | None, float]:
     candidates = []
     for neuron_id in owners.get(syn_idx, [])[:PRE_POST_OWNER_TOPK]:
@@ -340,9 +532,142 @@ def _nearest_owner(
 
     candidates.sort(key=lambda item: item[1])
     best_id, best_dist = candidates[0]
-    if len(candidates) > 1 and (candidates[1][1] - best_dist) < OWNER_MARGIN:
+    if len(candidates) > 1 and (candidates[1][1] - best_dist) < owner_margin:
         return None, float("inf")
     return best_id, best_dist
+
+
+def _build_bridge_graph(
+    neurons: dict,
+    *,
+    bridge_score_fn=None,
+    max_bridge_cost: float | None = None,
+) -> BridgeGraph:
+    """Construct a ``BridgeGraph`` over neuron endpoint nodes.
+
+    Each neuron contributes two nodes: one for its first path point
+    (``node_id = 2 * neuron_id``) and one for its last path point
+    (``node_id = 2 * neuron_id + 1``).  Intra-neuron edges connect the two
+    endpoints with zero cost so the whole neuron acts as a free waypoint.
+    Inter-neuron edges are added between every endpoint pair whose Euclidean
+    distance is below ``max_bridge_cost`` (or unconditionally when
+    ``max_bridge_cost`` is ``None``).  When a ``bridge_score_fn`` is provided
+    it is used to override the Euclidean cost with a learned value.
+
+    Parameters
+    ----------
+    neurons:
+        Mapping from ``neuron_id`` to ``MergedNeuron`` objects as returned by
+        ``_merge_role_groups``.
+    bridge_score_fn:
+        Optional callable ``(seq_a, seq_b) -> float`` returning a cost
+        (lower is better).  When ``None``, Euclidean endpoint distance is used.
+    max_bridge_cost:
+        Prune candidate inter-neuron edges whose cost exceeds this threshold.
+
+    Returns
+    -------
+    BridgeGraph
+        Graph ready for ``BridgeGraph.best_bridge`` or ``BridgeGraph.dijkstra``.
+    """
+    graph = BridgeGraph()
+    endpoint_pos: dict[int, np.ndarray] = {}
+    endpoint_seq: dict[int, np.ndarray] = {}
+
+    for neuron_id, neuron in neurons.items():
+        pts = neuron.path_points
+        if len(pts) == 0:
+            continue
+        nid_start = 2 * neuron_id
+        nid_end = 2 * neuron_id + 1
+        endpoint_pos[nid_start] = pts[0].astype(np.float32)
+        endpoint_pos[nid_end] = pts[-1].astype(np.float32)
+        # Free intra-neuron edge so the full neuron is traversable.
+        graph.add_edge(nid_start, nid_end, 0.0)
+        if bridge_score_fn is not None:
+            seq = _path_sequence_from_points(pts)
+            endpoint_seq[nid_start] = seq
+            endpoint_seq[nid_end] = seq
+
+    node_ids = list(endpoint_pos.keys())
+    for i in range(len(node_ids)):
+        u = node_ids[i]
+        for j in range(i + 1, len(node_ids)):
+            v = node_ids[j]
+            # Skip the self-loop added above (same neuron's two endpoints).
+            if u // 2 == v // 2:
+                continue
+            if bridge_score_fn is not None:
+                seq_u = endpoint_seq.get(u)
+                seq_v = endpoint_seq.get(v)
+                if seq_u is None or seq_v is None or len(seq_u) == 0 or len(seq_v) == 0:
+                    cost = float(np.linalg.norm(endpoint_pos[u] - endpoint_pos[v]))
+                else:
+                    # Bridge score fn returns a logit; convert to non-negative cost.
+                    raw = float(bridge_score_fn(seq_u, seq_v))
+                    cost = max(0.0, -raw)
+            else:
+                cost = float(np.linalg.norm(endpoint_pos[u] - endpoint_pos[v]))
+
+            if max_bridge_cost is not None and cost > max_bridge_cost:
+                continue
+            graph.add_edge(u, v, cost)
+
+    return graph
+
+
+def _propose_bridges(
+    neurons: dict,
+    bridge_graph: BridgeGraph,
+    *,
+    max_bridge_cost: float | None = None,
+    top_k: int = 8,
+) -> list[tuple[int, int, float]]:
+    """Return up to ``top_k`` cross-neuron bridge proposals sorted by cost.
+
+    Each proposal is a tuple ``(neuron_id_a, neuron_id_b, cost)``.  The
+    bridge is proposed between the two neurons whose endpoint pair is cheapest
+    in the ``BridgeGraph``.  Only one proposal per unordered neuron pair is
+    returned (the cheapest endpoint combination).
+
+    Parameters
+    ----------
+    neurons:
+        Same mapping passed to ``_build_bridge_graph``.
+    bridge_graph:
+        Pre-built ``BridgeGraph`` from ``_build_bridge_graph``.
+    max_bridge_cost:
+        Hard cost ceiling; proposals above this are discarded.
+    top_k:
+        Maximum number of proposals to return.
+
+    Returns
+    -------
+    list of (neuron_id_a, neuron_id_b, cost)
+        Sorted ascending by cost.
+    """
+    neuron_ids = [nid for nid, n in neurons.items() if len(n.path_points) > 0]
+    proposals: dict[tuple[int, int], float] = {}
+
+    for nid_a in neuron_ids:
+        sources = [2 * nid_a, 2 * nid_a + 1]
+        targets = [ep for nid_b in neuron_ids if nid_b != nid_a for ep in (2 * nid_b, 2 * nid_b + 1)]
+        if not targets:
+            continue
+        result = bridge_graph.dijkstra(sources=sources, targets=targets, max_cost=max_bridge_cost)
+        for node, path in result.items():
+            nid_b = node // 2
+            if nid_b == nid_a:
+                continue
+            pair = (min(nid_a, nid_b), max(nid_a, nid_b))
+            if pair not in proposals or path.cost < proposals[pair]:
+                proposals[pair] = path.cost
+
+    sorted_proposals = sorted(
+        ((a, b, cost) for (a, b), cost in proposals.items()),
+        key=lambda item: item[2],
+    )
+    return sorted_proposals[:top_k]
 
 
 def _build_graph(
@@ -357,8 +682,12 @@ def _build_graph(
     beam_width: int = BEAM_WIDTH,
     beam_max_candidates: int = BEAM_MAX_CANDIDATES,
     atomicity_score_weight: float = ATOMICITY_SCORE_WEIGHT,
+    pre_seg_ids: np.ndarray | None = None,
+    post_seg_ids: np.ndarray | None = None,
+    heuristic_config: "HeuristicConfig | None" = None,
 ) -> ConnectivityGraph:
     del path_lengths
+    hcfg = heuristic_config or HeuristicConfig.legacy()
     n_syn = len(pre_pts)
     valid_idx = _valid_agent_indices(path_arr)
     if len(valid_idx) == 0:
@@ -381,6 +710,8 @@ def _build_graph(
         beam_width=beam_width,
         beam_max_candidates=beam_max_candidates,
         atomicity_score_weight=atomicity_score_weight,
+        role_seg_ids=pre_seg_ids,
+        heuristic_config=hcfg,
     )
     post_neurons, post_owners, post_trees, next_id = _merge_role_groups(
         path_arr,
@@ -393,6 +724,8 @@ def _build_graph(
         beam_width=beam_width,
         beam_max_candidates=beam_max_candidates,
         atomicity_score_weight=atomicity_score_weight,
+        role_seg_ids=post_seg_ids,
+        heuristic_config=hcfg,
     )
     del next_id
 
@@ -403,6 +736,8 @@ def _build_graph(
 
     edges = []
     unresolved = []
+    _pcr = hcfg.polarity_capture_r
+    _max_syn = hcfg.max_synapses_per_neuron
     for syn_idx in range(n_syn):
         pre_neuron, pre_dist = _nearest_owner(syn_idx, pre_pts[syn_idx], pre_owners, pre_trees)
         post_neuron, post_dist = _nearest_owner(syn_idx, post_pts[syn_idx], post_owners, post_trees)
@@ -410,10 +745,10 @@ def _build_graph(
         if (
             pre_neuron is not None
             and post_neuron is not None
-            and pre_dist < POLARITY_CAPTURE_R
-            and post_dist < POLARITY_CAPTURE_R
-            and len(assigned_synapses[pre_neuron]) < MAX_SYNAPSES_PER_NEURON
-            and len(assigned_synapses[post_neuron]) < MAX_SYNAPSES_PER_NEURON
+            and pre_dist < _pcr
+            and post_dist < _pcr
+            and len(assigned_synapses[pre_neuron]) < _max_syn
+            and len(assigned_synapses[post_neuron]) < _max_syn
         ):
             edges.append((pre_neuron, post_neuron, syn_idx))
             assigned_synapses[pre_neuron].append(syn_idx)
@@ -542,6 +877,11 @@ def run(
     atomicity_score_weight: float = ATOMICITY_SCORE_WEIGHT,
     reranker_thresholds: str = RERANKER_THRESHOLDS,
     reranker_beam_widths: str = RERANKER_BEAM_WIDTHS,
+    pre_seg_ids: np.ndarray | None = None,
+    post_seg_ids: np.ndarray | None = None,
+    membrane_unet_checkpoint: str | None = None,
+    gat_assembly_checkpoint: str | None = None,
+    gat_edge_threshold: float = 0.5,
 ) -> LineGraphMetrics:
     t0 = time.time()
     all_syn_pts = np.vstack([pre_pts, post_pts])
@@ -550,10 +890,15 @@ def run(
         print("Computing membrane fields...")
     if membrane_field_override is not None:
         mf = membrane_field_override.astype(np.float32, copy=False)
+        source = "override"
+    elif membrane_unet_checkpoint is not None:
+        _unet_model, _unet_device = _load_membrane_model(membrane_unet_checkpoint)
+        mf = _predict_membranes(_unet_model, volume, device=_unet_device)
+        source = f"UNet({membrane_unet_checkpoint})"
     else:
         mf = compute_membrane_field(volume, sigma=MEMBRANE_SIGMA)
+        source = "Sobel"
     if verbose:
-        source = "cached membrane" if membrane_field_override is not None else "Sobel EM"
         print(f"  {time.time() - t0:.2f}s | {source} | vol={volume.shape} synapses={len(pre_pts)}")
 
     if verbose:
@@ -577,6 +922,20 @@ def run(
         score_fn = _load_shared_merge_score_fn(shared_grammar_checkpoint)
     if shared_grammar_checkpoint:
         atomicity_fn = _load_shared_atomicity_score_fn(shared_grammar_checkpoint)
+
+    # --- PR 5: auto-select heuristic policy ---
+    # When any learned component is available (grammar, GAT, or explicit scorer),
+    # switch to permissive candidate-generation mode so that spatial thresholds
+    # become pre-filters rather than hard decisions.
+    _use_learned = bool(
+        shared_grammar_checkpoint
+        or gat_assembly_checkpoint
+        or learned_merge_score_fn is not None
+    )
+    _hcfg = HeuristicConfig.learned() if _use_learned else HeuristicConfig.legacy()
+    if verbose and _use_learned:
+        print(f"  heuristic_mode=learned | polarity_capture_r=∞ | max_syn={_hcfg.max_synapses_per_neuron}")
+
     if assembly_reranker_checkpoint:
         thresholds = [float(item.strip()) for item in reranker_thresholds.split(",") if item.strip()]
         beam_widths = [int(item.strip()) for item in reranker_beam_widths.split(",") if item.strip()]
@@ -608,6 +967,9 @@ def run(
             beam_width=beam_width,
             beam_max_candidates=beam_max_candidates,
             atomicity_score_weight=atomicity_score_weight,
+            pre_seg_ids=pre_seg_ids,
+            post_seg_ids=post_seg_ids,
+            heuristic_config=_hcfg,
         )
     if verbose:
         print(
@@ -615,6 +977,29 @@ def run(
             f"{len(graph.neurons)} neurons, {len(graph.edges)} edges, "
             f"{len(graph.unresolved_synapse_indices)} unresolved"
         )
+
+    # --- PR 4: Global GAT refinement ---
+    if gat_assembly_checkpoint is not None:
+        from .shared_grammar_model import load_global_assembly_gat
+        t3 = time.time()
+        gat_model = load_global_assembly_gat(gat_assembly_checkpoint)
+        # Reuse the path encoder from the shared grammar checkpoint when available,
+        # otherwise build a minimal encoder consistent with default dimensions.
+        if shared_grammar_checkpoint:
+            from .shared_grammar_model import load_shared_grammar_model
+            _sgm = load_shared_grammar_model(shared_grammar_checkpoint)
+            _enc = _sgm.path_encoder
+        else:
+            from .shared_grammar_model import SharedGrammarModel
+            _enc = SharedGrammarModel().path_encoder
+        graph = gat_refine_connectivity(
+            graph, _enc, gat_model, threshold=gat_edge_threshold
+        )
+        if verbose:
+            print(
+                f"  GAT refine {time.time() - t3:.2f}s | "
+                f"{len(graph.edges)} edges after threshold={gat_edge_threshold}"
+            )
 
     metrics = evaluate(graph, pre_root_ids, post_root_ids)
     if verbose:
@@ -628,6 +1013,10 @@ def evaluate_synthetic_case(
     volume_seed: int | None = None,
     run_seed: int | None = None,
     verbose: bool = True,
+    use_scaffold: bool = True,
+    membrane_unet_checkpoint: str | None = None,
+    gat_assembly_checkpoint: str | None = None,
+    gat_edge_threshold: float = 0.5,
 ) -> LineGraphMetrics:
     chunk, synapses = make_test_volume(config=benchmark_config, seed=volume_seed)
     return run(
@@ -638,6 +1027,11 @@ def evaluate_synthetic_case(
         post_root_ids=synapses.post_root_id,
         seed=42 if run_seed is None else run_seed,
         verbose=verbose,
+        pre_seg_ids=synapses.pre_seg_id if use_scaffold else None,
+        post_seg_ids=synapses.post_seg_id if use_scaffold else None,
+        membrane_unet_checkpoint=membrane_unet_checkpoint,
+        gat_assembly_checkpoint=gat_assembly_checkpoint,
+        gat_edge_threshold=gat_edge_threshold,
     )
 
 

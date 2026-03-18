@@ -1,5 +1,16 @@
 # Global Validation Dataset And Learning Loop
 
+> **Status: Implemented.**
+> The learning loop described here is now operational via `scripts/train.py`.
+> Real MICrONS box caching: `neuronauts/dataset_builder.py`.
+> Grammar training (merge + atomicity supervision from synapse tables):
+> `multitask_train_step` in `shared_grammar_model.py`.
+> GAT training (soft-F1 surrogate on ConnectivityGraph edges):
+> `gat_train_step` + `train_global_assembly_gat`.
+> This document is retained as design history.
+
+---
+
 ## Core Position
 
 The interesting learned object is not the LLM.

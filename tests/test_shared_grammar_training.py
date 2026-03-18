@@ -74,7 +74,7 @@ class SharedGrammarTrainingTest(unittest.TestCase):
 
         model = SharedGrammarModel()
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-        before = model.path_encoder.proj[0].weight.detach().clone()
+        before = model.path_encoder.input_proj.weight.detach().clone()
 
         metrics = multitask_train_step(
             model,
@@ -94,12 +94,13 @@ class SharedGrammarTrainingTest(unittest.TestCase):
             },
         )
 
-        after = model.path_encoder.proj[0].weight.detach().clone()
+        after = model.path_encoder.input_proj.weight.detach().clone()
         self.assertIn("loss", metrics)
         self.assertFalse(torch.equal(before, after))
 
     def test_shared_grammar_model_round_trip(self):
         model = SharedGrammarModel()
+        model.eval()
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "shared_grammar.pt"
             save_shared_grammar_model(path, model)
@@ -108,8 +109,9 @@ class SharedGrammarTrainingTest(unittest.TestCase):
             left_mask = torch.tensor([[False, False, False, True], [False, False, True, True]])
             right_x = torch.randn(2, 4, 3)
             right_mask = torch.tensor([[False, False, False, True], [False, False, True, True]])
-            expected = model.score_merge(left_x, left_mask, right_x, right_mask)
-            actual = loaded.score_merge(left_x, left_mask, right_x, right_mask)
+            with torch.no_grad():
+                expected = model.score_merge(left_x, left_mask, right_x, right_mask)
+                actual = loaded.score_merge(left_x, left_mask, right_x, right_mask)
             torch.testing.assert_close(actual, expected)
 
 

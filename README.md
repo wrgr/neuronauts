@@ -1,343 +1,293 @@
 # neuronauts
 
-`neuronauts` is a Python package for agent-based connectome recovery experiments. It is structured to support a small `autoresearch`-style workflow with a fixed benchmark harness, one main experiment file, and a human-written `program.md`.
+`neuronauts` is a Python package for end-to-end connectome inference from electron microscopy data. It implements **Neuronauts v2: Scaffolded Global Grammar** — a multi-modal Transformer-GNN architecture that treats reconstruction as a graph-refinement problem over existing CAVE segmentations, evaluated directly against synapse line-graph F1.
 
-The current benchmark is synthetic line-graph recovery. Agents move through a 3D EM-like volume, touch pre/post synaptic sites, merge into neuron hypotheses, and are scored by line-graph F1.
+## Architecture overview
 
-## What is here
+The system is organized into five learned layers:
 
-- Installable package: `neuronauts/`
-- Main experiment entrypoint: `python -m neuronauts.run`
-- Core metric: `neuronauts.line_graph`
-- Shared grammar model home: `neuronauts.grammar`
-- Synthetic data generator: `neuronauts.fetch.make_test_volume`
-- Oracle regression test for the pre/post merge bug: `tests/test_run.py`
-- Human instruction file: `program.md`
-- Whitepaper: `docs/whitepaper.md`
-- Codex outer optimizer: `scripts/codex_optimize.py`
-- Optional Gemini outer optimizer: `scripts/gemini_researcher.py`
-- Codex and Gemini loops remain supported as alternative outer optimizers
-- Both outer-loop options now share one canonical experiment driver
-- Repeated-evaluation monitor: `scripts/iterative_loop.py`
-- Membrane U-Net trainer: `scripts/train_membrane_unet.py`
-- Membrane cache builder: `scripts/cache_membrane_volume.py`
-- Topology dataset exporter: `scripts/export_topology_dataset.py`
-- Merge dataset exporter: `scripts/export_merge_dataset.py`
-- Topology model trainer: `scripts/train_topology_model.py`
-- Shared grammar trainer: `scripts/train_shared_grammar.py`
-- Assembly ranking dataset exporter: `scripts/export_assembly_ranking_dataset.py`
-- Assembly reranker trainer: `scripts/train_assembly_ranker.py`
-- Canonical experiment driver: `scripts/run_research_cycle.py`
-- Research ledger viewer: `scripts/view_research_ledger.py`
+```
+EM volume + CAVE synapses
+        │
+        ▼
+1. Perception          fetch.py · fields.py · vectorized.py · membrane_unet.py
+   Agent traces, 2.5D membrane U-Net, synapse hits
+
+        ▼
+2. Scaffold init       run.py (_scaffold_union_from_seg_ids)
+   CAVE seg-IDs pre-group agents → collapse search space 10×
+
+        ▼
+3. Shared Grammar      grammar.py · shared_grammar_model.py
+   Transformer PathEncoder ([CLS] token, multi-modal fusion)
+   MergeScorer · BridgeHead · multitask training (merge + atomicity + bridge)
+
+        ▼
+4. Global Assembly     assembly.py · shared_grammar_model.py
+   SparseGATLayer · GlobalAssemblyGAT
+   Score edges with soft-F1 surrogate → trained end-to-end on line-graph F1
+
+        ▼
+5. Evaluation          line_graph.py
+   Synapse line-graph F1  (primary scalar throughout)
+```
 
 ## Quick start
 
-Create and activate a local virtual environment:
-
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e .[dev]
+python3 -m venv .venv && source .venv/bin/activate
+pip install --upgrade pip
+pip install -e ".[dev]"
+pytest                            # 284 tests
 ```
 
-Run one benchmark batch:
+Run one synthetic benchmark:
 
 ```bash
 python -m neuronauts.run
 ```
 
-Run the regression test:
+Run with a trained grammar checkpoint:
 
 ```bash
-python -m unittest discover -s tests -p 'test_*.py'
+python -m neuronauts.run \
+  --shared-grammar-checkpoint models/shared_grammar_smoke.pt
 ```
 
-Install optional membrane-model dependencies when you want learned membrane preprocessing:
+## Training on real MICrONS data
+
+The recommended training path uses `scripts/train.py`, which handles box caching, grammar training, and optional GAT training in one CLI.
+
+### 1. Build a box cache
+
+Random spatial sampling (no static tables needed):
 
 ```bash
-python -m pip install -e .[membrane]
+python scripts/train.py build-dataset \
+  --cache-dir data/boxes \
+  --n-boxes 50 \
+  --min-synapses 15
 ```
 
-Install optional topology-model dependencies when you want to train the
-attention-based global validator:
+Or from a pre-downloaded nucleus table (see *Static data* below):
 
 ```bash
-python -m pip install -e .[topology]
+python scripts/train.py build-dataset \
+  --cache-dir data/boxes \
+  --n-boxes 50 \
+  --counts-tsv run_logs/synapse_root_counts_static.tsv \
+  --nucleus-csv data/microns_static/v1078/nucleus_detection_v0.csv
 ```
 
-To start the autonomous loop, point Codex at [program.md](/Users/wgray13/projects/neuronauts/program.md).
-
-## Project layout
-
-```text
-neuronauts/
-  agent.py
-  fetch.py
-  fields.py
-  grammar.py
-  line_graph.py
-  merge.py
-  run.py
-  vectorized.py
-docs/
-  whitepaper.md
-scripts/
-  cache_membrane_volume.py
-  codex_optimize.py
-  export_topology_dataset.py
-  export_merge_dataset.py
-  gemini_researcher.py
-  iterative_loop.py
-  export_assembly_ranking_dataset.py
-  train_assembly_ranker.py
-  run_research_cycle.py
-  train_shared_grammar.py
-  train_topology_model.py
-  train_membrane_unet.py
-tests/
-  test_run.py
-```
-
-## Codex Optimization Loop
-
-The primary `autoresearch`-style loop is:
+### 2. Train grammar (fast — no simulation required)
 
 ```bash
-python scripts/codex_optimize.py --repeat-until-interrupt
+python scripts/train.py train \
+  --cache-dir data/boxes \
+  --grammar-output models/shared_grammar.pt \
+  --epochs 30
 ```
 
-That script:
-
-- asks Codex to make one focused edit to the primary local model surface
-- runs the regression test
-- runs fixed real-data validation on the same boxes every iteration
-- keeps or reverts the edit based on fixed-validation F1
-- logs each proposal under `run_logs/codex_optimize/`
-- appends a shared experiment record to `run_logs/research_ledger.jsonl`
-- refreshes a sortable leaderboard at `run_logs/research_ledger.leaderboard.tsv`
-
-The default learned-model target is [grammar.py](/Users/wgray13/projects/neuronauts/neuronauts/grammar.py).
-`run.py` remains the experiment harness and evaluation entrypoint.
-
-One optimizer iteration is one patch/evaluate/keep-or-revert cycle. There is no
-required wall-clock loop around unchanged code.
-
-Useful options:
+### 3. Train grammar + GAT (adds agent simulation)
 
 ```bash
-python scripts/codex_optimize.py --iterations 1
-python scripts/codex_optimize.py --log-dir run_logs/codex_session_a
-python scripts/codex_optimize.py --improvement-threshold 0.0005
-python scripts/codex_optimize.py --ledger-path run_logs/research_ledger.jsonl
+python scripts/train.py train \
+  --cache-dir data/boxes \
+  --grammar-output models/shared_grammar.pt \
+  --gat-output models/gat.pt \
+  --epochs 30 \
+  --train-gat \
+  --gat-every-n-epochs 5
 ```
 
-The optional Gemini loop writes to the same ledger, so Codex and Gemini runs can
-be compared in one place instead of split across incompatible logs.
-
-View the shared ledger directly:
+### 4. One-shot: build + train
 
 ```bash
-python scripts/view_research_ledger.py --limit 20
-python scripts/view_research_ledger.py --source codex --min-holdout-f1 0.20
-python scripts/view_research_ledger.py --json --sort-by val_f1 --limit 5
+python scripts/train.py run \
+  --cache-dir data/boxes \
+  --n-boxes 50 \
+  --grammar-output models/shared_grammar.pt \
+  --epochs 30
 ```
 
-## Repeated Evaluation Monitor
+### Static data (offline synapse counts)
 
-This is not the optimizer. It just reruns the same benchmark command and logs
-stability/runtime for a fixed code/config snapshot:
+Download static MICrONS synapse/nucleus tables without CAVE authentication:
 
 ```bash
-python scripts/iterative_loop.py --minutes 5 --repeat-until-interrupt
+python -m neuronauts.synapse_root_counts_static \
+  --version 1078 \
+  --static-dir data/microns_static \
+  --output run_logs/synapse_root_counts_static.tsv
 ```
 
-Useful options:
+## Install extras
 
 ```bash
-python scripts/iterative_loop.py --minutes 5 --python .venv/bin/python
-python scripts/iterative_loop.py --minutes 5 --log-dir run_logs/loop_a
-python scripts/iterative_loop.py --minutes 5 --benchmark-mode fixed_validation --cases 5
-python scripts/iterative_loop.py --minutes 5 --iterations 3
+pip install -e ".[membrane]"   # 2.5D membrane U-Net (InstanceNorm2d)
+pip install -e ".[topology]"   # torch grammar + GAT training
 ```
 
-Each monitoring iteration writes:
+## Membrane U-Net (2.5D)
 
-- `iteration_XXX/summary.tsv`: per-run metrics within that iteration
-- `iteration_XXX/iteration_stats.json`: aggregate metrics for that iteration
-- `iteration_summary.tsv`: one row per 5-minute iteration with mean/best/min F1, mean precision, and mean recall
+The current U-Net fuses a central Z-slice with ±2 neighbouring slices as extra input channels, providing 3D context at 2D inference cost.
 
-That makes it straightforward to inspect stability and runtime, but it is
-secondary to the patch/evaluate/keep-or-revert loop above.
-
-Plotting example:
-
-```bash
-python scripts/plot_iterations.py run_logs/loop_a/iteration_summary.tsv --output run_logs/loop_a/iteration_metrics.png
-```
-
-## Membrane U-Net
-
-For a first-pass learned membrane signal, train the included small 2D U-Net on the external tif dataset repo:
+Train on an external tif dataset:
 
 ```bash
 python scripts/train_membrane_unet.py \
-  --dataset-dir /path/to/unet_image_segmentation/data \
+  --dataset-dir /path/to/unet_data \
   --output models/membrane_unet.pt
 ```
 
-Then fetch one MICRONS box, predict membranes slice-wise, and cache the result:
+Cache predictions for a real box:
 
 ```bash
 python scripts/cache_membrane_volume.py \
   --checkpoint models/membrane_unet.pt \
   --center-nm 1153592,793592,655640 \
-  --side-um 6.0 \
-  --mip 2 \
   --cache-dir cache/membranes
 ```
 
-Real-data runs can then use the cache automatically:
+## Shared grammar training (offline datasets)
+
+Export datasets from real boxes and train independently:
 
 ```bash
-python -m neuronauts.run \
-  --data-mode real \
-  --membrane-source auto \
-  --membrane-cache-dir cache/membranes
-```
+# Merge supervision (synapse-cluster pairs, no simulation)
+python scripts/export_merge_dataset.py \
+  --output data/merge_dataset.npz --box-indices 0,1,2
 
-## Topology Learning
-
-The current inner learning loop exports multi-branch synapse-cluster examples
-from MICRONS/CAVE root consistency and trains an attention-based arbor
-validator over padded branch embeddings.
-
-Export a dataset from fixed real validation boxes:
-
-```bash
+# Topology / atomicity supervision (no simulation)
 python scripts/export_topology_dataset.py \
-  --output data/topology_dataset_smoke.npz \
-  --box-indices 0,1,2 \
-  --membrane-source auto \
-  --max-branches 32
+  --output data/topology_dataset.npz --box-indices 0,1,2
+
+# Train shared grammar
+python scripts/train_shared_grammar.py \
+  --merge-dataset data/merge_dataset.npz \
+  --topology-dataset data/topology_dataset.npz \
+  --output models/shared_grammar.pt
 ```
 
-Train the topology model:
+## Assembly hypothesis reranker
 
 ```bash
-python scripts/train_topology_model.py \
-  --dataset data/topology_dataset_smoke.npz \
-  --output models/topology_atomicity_smoke.pt
-```
-
-The accompanying test plan is in
-[docs/global_validation_dataset.md](/Users/wgray13/projects/neuronauts/docs/global_validation_dataset.md)
-and
-[docs/topology_learning_test_plan.md](/Users/wgray13/projects/neuronauts/docs/topology_learning_test_plan.md).
-
-## Merge Learning
-
-The repo now also has a first local merge-supervision export path. It emits
-pairwise fragment-sequence examples where positives come from subfragments of
-the same rooted cluster and negatives come from nearby distinct roots.
-
-```bash
-.venv/bin/python scripts/export_merge_dataset.py \
-  --output data/merge_dataset_smoke.npz \
-  --box-indices 0,1,2
-```
-
-## Shared Grammar Training
-
-The repo now has a first multitask trainer that updates one shared
-`TorchPathEncoder` against both local merge supervision and global atomicity
-supervision.
-
-```bash
-.venv/bin/python scripts/train_shared_grammar.py \
-  --merge-dataset data/merge_dataset_smoke.npz \
-  --topology-dataset data/topology_dataset_smoke.npz \
-  --output models/shared_grammar_smoke.pt
-```
-
-## Canonical Research Cycle
-
-Codex and Gemini can now both drive the same canonical experiment pipeline:
-
-```bash
-.venv/bin/python scripts/run_research_cycle.py \
-  --python-bin .venv/bin/python \
-  --output-dir run_logs/research_cycle_smoke \
-  --quiet
-```
-
-That pipeline runs:
-- merge export
-- topology export
-- shared grammar training
-- assembly hypothesis export
-- reranker training
-- validation
-
-That shared checkpoint can now be used by the runtime merge stage:
-
-```bash
-.venv/bin/python -m neuronauts.run \
-  --shared-grammar-checkpoint models/shared_grammar_smoke.pt
-```
-
-To enable box-scale multi-hypothesis assembly instead of greedy learned merges:
-
-```bash
-.venv/bin/python -m neuronauts.run \
-  --shared-grammar-checkpoint models/shared_grammar_smoke.pt \
-  --beam-width 4 \
-  --beam-max-candidates 24 \
-  --atomicity-score-weight 0.25
-```
-
-## Assembly Ranking
-
-The repo now has a first hypothesis-ranking loop for box-level assemblies. It
-exports multiple assembly hypotheses per box, labels them by true line-graph
-F1, and trains a lightweight reranker.
-
-```bash
-.venv/bin/python scripts/export_assembly_ranking_dataset.py \
-  --output data/assembly_ranking_smoke.npz \
+python scripts/export_assembly_ranking_dataset.py \
+  --output data/assembly_ranking.npz \
   --cases 3 \
   --thresholds=-0.5,0.0,0.5 \
   --beam-widths=1,2,4
 
-.venv/bin/python scripts/train_assembly_ranker.py \
-  --dataset data/assembly_ranking_smoke.npz \
-  --output models/assembly_reranker_smoke.npz
+python scripts/train_assembly_ranker.py \
+  --dataset data/assembly_ranking.npz \
+  --output models/assembly_reranker.npz
 ```
 
-## Running on real data later
-
-The package includes MICrONS-oriented fetch helpers:
+## Visualization
 
 ```python
-from neuronauts.fetch import fetch_volume, fetch_synapses, make_cube_bbox_nm
+from neuronauts.viz import plot_scaffold_groups, plot_bridge_proposals, plot_f1_history
 
-bbox_nm = make_cube_bbox_nm(center_nm=(200_000, 200_000, 20_000), side_um=6.0)
+fig = plot_scaffold_groups(synapses, group_map, title="Scaffold init")
+fig = plot_bridge_proposals(synapses, proposals)
+fig = plot_f1_history(history["val_f1"])
 ```
 
-Those functions depend on optional external packages:
+## Project layout
 
-- `cloud-volume`
-- `caveclient`
+```text
+neuronauts/
+  agent.py                  Agent config and step logic
+  assembly.py               GlobalAssemblyGAT, gat_refine_connectivity,
+                              label_graph_edges
+  assembly_dataset.py       Hypothesis feature extraction
+  dataset_builder.py        BoxCache, select_random_boxes,
+                              select_boxes_from_nucleus_table, build_dataset
+  dijkstra.py               BridgeGraph (Dijkstra bridge proposals)
+  experiment_driver.py      Canonical experiment cycle driver
+  fetch.py                  MICrONS fetch, SynapseTable, SyntheticBenchmark,
+                              skeleton/mesh feature extractors
+  fields.py                 Membrane, exploration, synapse attraction fields
+  grammar.py                TorchPathEncoder (Transformer+CLS), MergeScorer,
+                              PathBatch, build_multimodal_path_sequence
+  hypothesis_reranker.py    Assembly reranker
+  line_graph.py             Synapse line-graph F1 (primary metric)
+  membrane_unet.py          2.5D MembraneUNet (InstanceNorm2d, context slices)
+  merge.py                  MergedNeuron, ConnectivityGraph, union-find merge
+  merge_dataset.py          Local merge example construction
+  run.py                    Main runner, HeuristicConfig, simulate_paths_and_hits
+  shared_grammar_model.py   SharedGrammarModel, BridgeHead, GlobalAssemblyGAT,
+                              GATTrainingConfig, gat_train_step,
+                              train_global_assembly_gat, multitask_train_step
+  synapse_root_counts_static.py  Offline static MICrONS synapse counts
+  topology_dataset.py       Atomicity example construction
+  topology_model.py         AttentionArborValidator
+  training_batches.py       Batch padding utilities
+  vectorized.py             Vectorized agent simulation
+  viz.py                    Matplotlib visualization helpers
 
-Install them only when moving from synthetic to MICrONS data.
+scripts/
+  train.py                  ★ End-to-end training CLI (build-dataset / train / run)
+  cache_membrane_volume.py  Predict + cache membrane for a real box
+  codex_optimize.py         Codex outer-loop optimizer (legacy)
+  export_assembly_ranking_dataset.py
+  export_merge_dataset.py
+  export_topology_dataset.py
+  gemini_researcher.py      Gemini outer-loop optimizer (legacy)
+  iterative_loop.py         Repeated-evaluation monitor
+  plot_iterations.py        Iteration metric plots
+  run_research_cycle.py     Canonical research cycle (export→train→validate)
+  train_assembly_ranker.py
+  train_membrane_unet.py
+  train_shared_grammar.py
+  train_topology_model.py
+  view_research_ledger.py
 
-The current recommended real-data chunk size is approximately `6 x 6 x 6 um`,
-which corresponds to a `bbox_nm` side length of `6000` nm.
+tests/
+  test_assembly.py          Assembly beam search
+  test_assembly_ranking.py  Reranker
+  test_bridge.py            BridgeGraph, BridgeHead, _propose_bridges
+  test_experiment_driver.py
+  test_fetch_geometry.py    Skeleton/mesh feature extractors
+  test_fields.py            Field computation
+  test_gat_assembly.py      _SparseGATLayer, GlobalAssemblyGAT, gat_refine_connectivity
+  test_gat_training.py      label_graph_edges, gat_train_step, train_global_assembly_gat
+  test_grammar_gaps.py      MergeScorer, build_multimodal_path_sequence, etc.
+  test_heuristic_config.py  HeuristicConfig, learned/legacy mode switching
+  test_line_graph.py        Line-graph F1
+  test_membrane_unet.py     2.5D UNet, InstanceNorm, context slices
+  test_merge_learning.py    Merge dataset construction
+  test_research_ledger_viewer.py
+  test_run.py               Integration / oracle regression
+  test_scaffold.py          Scaffold union, seg-ID grouping, viz helpers
+  test_shared_grammar_training.py  multitask_train_step, bridge loss
+  test_topology_learning.py AttentionArborValidator
+
+docs/
+  whitepaper.md             Nature Methods–style paper
+  global_inference_roadmap.md  PR-by-PR implementation log
+  global_validation_layer.md
+  global_validation_dataset.md
+  topology_learning_test_plan.md
+```
+
+## Key design decisions
+
+| Decision | Rationale |
+|---|---|
+| Line-graph F1 as primary scalar | Closest box-scale proxy for downstream connectome correctness |
+| Coordinate-free path descriptors | Reusable across volumes without registration |
+| CAVE scaffold init | Collapses search space ~10× before learned grammar decisions |
+| Transformer + [CLS] token | Global fragment embedding; multi-modal fusion of path, skeleton, mesh |
+| Soft-F1 surrogate loss for GAT | Differentiable approximation of the terminal metric |
+| `HeuristicConfig.learned()` | Spatial thresholds become candidate generators, not hard decisions |
+| 2.5D UNet with InstanceNorm2d | 3D context at 2D inference cost; stable for batch size 1 |
 
 ## References
 
-- Karpathy, A. `autoresearch`. GitHub. <https://github.com/karpathy/autoresearch>
-- Silversmith, W. `cloud-volume`. GitHub. <https://github.com/seung-lab/cloud-volume>
-- CAVEconnectome. `CAVEclient`. GitHub. <https://github.com/CAVEconnectome/CAVEclient>
-- MICrONS Consortium et al. “Functional connectomics spanning multiple areas of mouse visual cortex.” *Nature* (2021). <https://www.nature.com/articles/s41586-021-03778-x>
-- Bae, J. A. et al. “Digital museum of retinal ganglion cells with dense anatomy and physiology.” *Cell* (2024). CAVE-style data infrastructure context. <https://www.cell.com/cell/fulltext/S0092-8674(24)00308-4>
+- MICrONS Consortium et al. Functional connectomics spanning multiple areas of mouse visual cortex. *Nature* 2021. <https://www.nature.com/articles/s41586-021-03778-x>
+- Li, P. H. et al. RoboEM: neurite reconstruction from 3D EM by AI-based direct image-to-trace translation. *Nature Methods* 2024. <https://www.nature.com/articles/s41592-024-02226-5>
+- NEURD: Morphology-based proofreading. *Nature* 2025. <https://www.nature.com/articles/s41586-025-08660-5>
+- Silversmith, W. `cloud-volume`. <https://github.com/seung-lab/cloud-volume>
+- CAVEconnectome. `CAVEclient`. <https://github.com/CAVEconnectome/CAVEclient>
+- Bae, J. A. et al. Digital museum of retinal ganglion cells. *Cell* 2024. <https://www.cell.com/cell/fulltext/S0092-8674(24)00308-4>

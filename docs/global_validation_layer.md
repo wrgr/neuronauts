@@ -1,5 +1,17 @@
 # Global Validation Layer
 
+> **Status: Implemented as PR4 (GlobalAssemblyGAT).**
+> The architecture described in this document has been fully implemented in
+> `neuronauts/assembly.py` (`_SparseGATLayer`, `GlobalAssemblyGAT`,
+> `gat_refine_connectivity`, `label_graph_edges`) and
+> `neuronauts/shared_grammar_model.py` (`gat_train_step`,
+> `train_global_assembly_gat`, `GATTrainingConfig`).
+> Training is end-to-end against synapse line-graph F1 via a differentiable
+> soft-F1 surrogate. Tests: `tests/test_gat_assembly.py`,
+> `tests/test_gat_training.py`. This document is retained as design history.
+
+---
+
 ## Motivation
 
 The current `neuronauts` pipeline is mostly local:

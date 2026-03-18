@@ -189,14 +189,16 @@ class TorchGrammarModuleTest(unittest.TestCase):
 
     def test_torch_grammar_component_round_trip(self):
         model = TorchPathEncoder(output_dim=12)
+        model.eval()
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "path_encoder.pt"
             save_torch_grammar_component(path, model)
             loaded = load_torch_grammar_component(path, TorchPathEncoder)
             x = torch.randn(2, 4, 3)
             mask = torch.tensor([[False, False, False, True], [False, False, True, True]])
-            expected = model(x, mask=mask)
-            actual = loaded(x, mask=mask)
+            with torch.no_grad():
+                expected = model(x, mask=mask)
+                actual = loaded(x, mask=mask)
             torch.testing.assert_close(actual, expected)
 
 

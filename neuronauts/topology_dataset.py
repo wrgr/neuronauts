@@ -15,6 +15,11 @@ from .training_batches import pad_nested_path_sequences
 
 BRANCH_FEATURE_NAME = "branch_embedding"
 
+# Isotropic scaling: convert MIP-2 voxel coords to 32-nm units (1 unit = 32 nm).
+# Keeps feature values in the same numerical range as raw voxel coords (~1–60)
+# while correctly weighting the Z axis at 40/32 = 1.25× relative to XY.
+_SYNAPSE_ISO = np.array([1.0, 1.0, 40.0 / 32.0], dtype=np.float32)
+
 
 @dataclass(frozen=True)
 class ClusterExample:
@@ -70,11 +75,12 @@ def _branch_point_splits(points: np.ndarray, max_branches: int) -> list[np.ndarr
 
 def _branch_sequence_from_points(points: np.ndarray) -> np.ndarray:
     ordered = _ordered_points(points)
-    diffs = np.diff(ordered, axis=0)
+    ordered_nm = ordered * _SYNAPSE_ISO
+    diffs = np.diff(ordered_nm, axis=0)
     edge_len = np.linalg.norm(diffs, axis=1).astype(np.float32, copy=False)
-    centroid = ordered.mean(axis=0, keepdims=True)
-    radius = np.linalg.norm(ordered[1:] - centroid, axis=1).astype(np.float32, copy=False)
-    curvature = _curvature_from_points(ordered)
+    centroid = ordered_nm.mean(axis=0, keepdims=True)
+    radius = np.linalg.norm(ordered_nm[1:] - centroid, axis=1).astype(np.float32, copy=False)
+    curvature = _curvature_from_points(ordered)  # direction-based: scale-independent
     return np.stack([edge_len, radius, curvature], axis=-1).astype(np.float32, copy=False)
 
 

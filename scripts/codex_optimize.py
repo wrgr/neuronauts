@@ -1,5 +1,27 @@
 #!/usr/bin/env python3
-"""Run the primary Codex patch/evaluate/keep-or-revert loop over neuronauts/grammar.py."""
+"""Patch/evaluate/keep-or-revert loop — supports Codex, Claude, and Gemini backends.
+
+This script implements a self-improving loop that proposes edits to a target
+file (default: ``neuronauts/grammar.py``), runs the research cycle, and
+keeps or reverts changes based on line-graph F1.
+
+Supported backends
+------------------
+codex  (default)
+    Uses the ``codex exec --full-auto`` CLI.  Requires the ``codex``
+    executable to be available on PATH (or passed via ``--codex-bin``).
+
+claude
+    Uses the Anthropic Python API (``pip install anthropic``).  Reads the
+    target file, sends a prompt to Claude Sonnet, parses the modified file
+    from the model's response, and writes it back.  Requires either the
+    ``ANTHROPIC_API_KEY`` environment variable or ``--api-key``.
+
+gemini
+    Uses the Google Generative AI Python API (``pip install google-generativeai``).
+    Same approach as the Claude backend.  Requires either
+    ``GOOGLE_API_KEY`` / ``GEMINI_API_KEY`` env-var or ``--api-key``.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +29,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -20,7 +43,6 @@ from neuronauts.experiment_driver import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-TARGET_FILE = REPO_ROOT / "neuronauts" / "grammar.py"
 PROGRAM_FILE = REPO_ROOT / "program.md"
 TEST_CMD = [".venv/bin/python", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"]
 
@@ -36,23 +58,36 @@ def build_cycle_cmd(output_dir: Path) -> list[str]:
         "--quiet",
     ]
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--iterations", type=int, default=None, help="Optional number of optimizer iterations.")
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--iterations", type=int, default=None,
+                        help="Number of optimizer iterations (default: 1 unless --repeat-until-interrupt).")
     parser.add_argument(
         "--repeat-until-interrupt",
         action="store_true",
         help="Keep proposing changes until Ctrl+C.",
     )
-    parser.add_argument("--log-dir", default="run_logs/codex_optimize", help="Directory for optimizer artifacts.")
-    parser.add_argument("--model", default=None, help="Optional Codex model override.")
-    parser.add_argument("--codex-bin", default="codex", help="Codex CLI executable.")
+    parser.add_argument("--log-dir", default="run_logs/codex_optimize",
+                        help="Directory for optimizer artifacts.")
+    parser.add_argument("--model", default=None,
+                        help="LLM model override (e.g. claude-sonnet-4-5, gemini-2.0-flash, o4-mini).")
+    parser.add_argument("--backend", default="codex",
+                        choices=["codex", "claude", "gemini"],
+                        help="LLM backend to use for proposals (default: codex).")
+    parser.add_argument("--api-key", default=None,
+                        help="API key for claude/gemini backends (falls back to env-var).")
+    parser.add_argument("--codex-bin", default="codex",
+                        help="Codex CLI executable path (only used with --backend=codex).")
+    parser.add_argument("--target-file", default="neuronauts/grammar.py",
+                        help="Repo-relative path to the file the optimizer may edit.")
     parser.add_argument(
         "--improvement-threshold",
         type=float,
         default=0.0,
         help="Minimum fixed-validation F1 improvement required to keep a change.",
     )
-    parser.add_argument("--ledger-path", default="run_logs/research_ledger.jsonl", help="Shared experiment ledger path.")
+    parser.add_argument("--ledger-path", default="run_logs/research_ledger.jsonl",
+                        help="Shared experiment ledger path.")
     return parser.parse_args()
 
 

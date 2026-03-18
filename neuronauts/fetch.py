@@ -49,11 +49,37 @@ class VolumeChunk:
 
 @dataclass
 class SynapseTable:
+    """Per-synapse data for one bounding box.
+
+    Core fields (always present)
+    ----------------------------
+    pre_pt, post_pt : float32 [N, 3]
+        Synapse pre- and post-synaptic positions in box-relative voxel coords.
+    pre_root_id, post_root_id : int64 [N]
+        CAVE root IDs — used as ground-truth grouping labels for the line-graph
+        F1 metric.
+    synapse_id : int64 [N]
+        Unique synapse identifiers from the materialization table.
+
+    Scaffold fields (optional, populated when CAVE segment data is available)
+    -------------------------------------------------------------------------
+    pre_seg_id, post_seg_id : int64 [N] or None
+        Per-synapse segment IDs at the time of materialization.  These are the
+        "noisy scaffold" labels: multiple root IDs may share a segment ID
+        (under-merge) or a single root ID may span several segment IDs
+        (fragmentation).  When present they are used by ``_merge_role_groups``
+        to pre-initialize scaffold groups before local agent evidence is
+        applied.  ``None`` when not available (e.g. synthetic benchmarks or
+        older fetch paths).
+    """
+
     pre_pt: np.ndarray
     post_pt: np.ndarray
     pre_root_id: np.ndarray
     post_root_id: np.ndarray
     synapse_id: np.ndarray
+    pre_seg_id: np.ndarray | None = None
+    post_seg_id: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -184,12 +210,26 @@ def fetch_synapses(
         pts_vox = pts_nm / np.array(vox, dtype=np.float32)
         return (pts_vox - bbox_origin_vox).astype(np.float32)
 
+    # Pull segment IDs if present in the materialization table.
+    # Column names vary by datastack version; try common variants gracefully.
+    def _try_seg_id(col: str) -> np.ndarray | None:
+        if col in df.columns:
+            return df[col].values.astype(np.int64)
+        return None
+
+    _pre = _try_seg_id("pre_pt_supervoxel_id")
+    pre_seg_id = _pre if _pre is not None else _try_seg_id("pre_pt_seg_id")
+    _post = _try_seg_id("post_pt_supervoxel_id")
+    post_seg_id = _post if _post is not None else _try_seg_id("post_pt_seg_id")
+
     return SynapseTable(
         pre_pt=pts_to_voxels("pre_pt_position"),
         post_pt=pts_to_voxels("post_pt_position"),
         pre_root_id=df["pre_pt_root_id"].values.astype(np.int64),
         post_root_id=df["post_pt_root_id"].values.astype(np.int64),
         synapse_id=df.index.values.astype(np.int64),
+        pre_seg_id=pre_seg_id,
+        post_seg_id=post_seg_id,
     )
 
 
@@ -268,6 +308,207 @@ def save_cached_membrane(
     return membrane_path
 
 
+def skeleton_tortuosity(
+    points: np.ndarray,
+    *,
+    eps: float = 1e-6,
+) -> float:
+    """Return the tortuosity of a polyline skeleton.
+
+    Tortuosity is defined as the ratio of the arc length (sum of step
+    distances) to the straight-line end-to-end distance.  A perfectly
+    straight path has tortuosity 1.0; a wound path has tortuosity > 1.
+
+    Parameters
+    ----------
+    points:
+        Array of shape ``[N, 3]`` (or ``[N, 2]``) giving the ordered skeleton
+        vertices in voxel or physical units.
+    eps:
+        Small constant added to the denominator to avoid division by zero for
+        degenerate or length-1 paths.
+
+    Returns
+    -------
+    float
+        Tortuosity >= 1.0, or 1.0 for degenerate inputs.
+    """
+    pts = np.asarray(points, dtype=np.float64)
+    if len(pts) < 2:
+        return 1.0
+    step_dists = np.linalg.norm(np.diff(pts, axis=0), axis=-1)
+    arc_length = float(step_dists.sum())
+    end_to_end = float(np.linalg.norm(pts[-1] - pts[0]))
+    return arc_length / max(end_to_end, eps)
+
+
+def skeleton_stepwise_features(
+    points: np.ndarray,
+    *,
+    eps: float = 1e-6,
+) -> np.ndarray:
+    """Compute per-step skeleton features for use with ``TorchPathEncoder``.
+
+    Returns a float32 array of shape ``[T, 3]`` where ``T = len(points) - 1``
+    (one row per edge).  Columns are:
+
+    0. step distance (nm or voxel units, as supplied)
+    1. cumulative arc-length normalised to [0, 1] along the path
+    2. local turning angle in radians (0 for straight, pi for U-turn)
+
+    Parameters
+    ----------
+    points:
+        Ordered skeleton vertices, shape ``[N, 3]``.
+    eps:
+        Stability constant.
+    """
+    pts = np.asarray(points, dtype=np.float32)
+    if len(pts) < 2:
+        return np.zeros((0, 3), dtype=np.float32)
+
+    diffs = np.diff(pts, axis=0).astype(np.float32)
+    step_dists = np.linalg.norm(diffs, axis=-1).astype(np.float32)
+
+    cumulative = np.concatenate([[0.0], np.cumsum(step_dists)]).astype(np.float32)
+    total = cumulative[-1]
+    norm_cum = (cumulative[:-1] / max(total, eps)).astype(np.float32)
+
+    units = diffs / np.clip(step_dists[:, None], eps, None)
+    if len(units) >= 2:
+        cos_angle = np.clip((units[:-1] * units[1:]).sum(axis=-1), -1.0, 1.0)
+        turning = np.arccos(cos_angle).astype(np.float32)
+        # First step has no predecessor; pad with 0.
+        turning = np.concatenate([[0.0], turning]).astype(np.float32)
+    else:
+        turning = np.zeros(len(step_dists), dtype=np.float32)
+
+    return np.stack([step_dists, norm_cum, turning], axis=-1).astype(np.float32)
+
+
+def mesh_volume_surface_ratio(
+    vertices: np.ndarray,
+    faces: np.ndarray,
+    *,
+    eps: float = 1e-6,
+) -> float:
+    """Estimate the volume-to-surface-area ratio of a triangular mesh.
+
+    Uses the divergence theorem to approximate the signed volume enclosed by
+    the mesh.  The absolute value is taken so the sign of face winding does
+    not matter for a near-closed surface.
+
+    Parameters
+    ----------
+    vertices:
+        Float array of shape ``[V, 3]``.
+    faces:
+        Integer array of shape ``[F, 3]`` giving triangle vertex indices.
+    eps:
+        Stability constant for surface area denominator.
+
+    Returns
+    -------
+    float
+        Non-negative volume/area ratio.  Returns 0.0 for degenerate inputs.
+    """
+    verts = np.asarray(vertices, dtype=np.float64)
+    tris = np.asarray(faces, dtype=np.int64)
+
+    if verts.ndim != 2 or verts.shape[1] != 3 or tris.ndim != 2 or tris.shape[1] != 3:
+        return 0.0
+    if len(tris) == 0:
+        return 0.0
+
+    v0 = verts[tris[:, 0]]
+    v1 = verts[tris[:, 1]]
+    v2 = verts[tris[:, 2]]
+
+    cross = np.cross(v1 - v0, v2 - v0)
+    # Signed volume via divergence theorem (1/6 * sum of v0 · (v1 × v2)).
+    signed_vol = float(np.abs((v0 * cross).sum(axis=-1).sum()) / 6.0)
+    # Surface area = half sum of |cross products|.
+    surface = float(np.linalg.norm(cross, axis=-1).sum() / 2.0)
+
+    return signed_vol / max(surface, eps)
+
+
+def mesh_stepwise_features(
+    vertices: np.ndarray,
+    faces: np.ndarray,
+    waypoints: np.ndarray,
+    *,
+    k_nearest: int = 8,
+    eps: float = 1e-6,
+) -> np.ndarray:
+    """Compute per-step mesh features aligned to a set of skeleton waypoints.
+
+    For each waypoint the ``k_nearest`` mesh vertices are gathered and a
+    small local surface patch is characterised by:
+
+    0. mean distance to the ``k`` nearest mesh vertices (local scale proxy)
+    1. local volume/area ratio of the patch's sub-faces
+    2. mean face area of the patch
+
+    Returns a float32 array of shape ``[len(waypoints), 3]``.
+
+    Parameters
+    ----------
+    vertices:
+        Mesh vertex array, shape ``[V, 3]``.
+    faces:
+        Mesh face array, shape ``[F, 3]``.
+    waypoints:
+        Ordered skeleton step positions, shape ``[T, 3]``.
+    k_nearest:
+        Number of mesh vertices to gather per waypoint.
+    eps:
+        Stability constant.
+    """
+    verts = np.asarray(vertices, dtype=np.float32)
+    tris = np.asarray(faces, dtype=np.int64)
+    wps = np.asarray(waypoints, dtype=np.float32)
+    T = len(wps)
+
+    if len(verts) == 0 or len(tris) == 0 or T == 0:
+        return np.zeros((T, 3), dtype=np.float32)
+
+    try:
+        from scipy.spatial import cKDTree as _cKDTree
+    except ImportError:
+        # Fallback: return zeros if scipy is unavailable.
+        return np.zeros((T, 3), dtype=np.float32)
+
+    tree = _cKDTree(verts)
+    k = min(k_nearest, len(verts))
+    dists, neighbor_idx = tree.query(wps, k=k)
+
+    out = np.zeros((T, 3), dtype=np.float32)
+    for t in range(T):
+        nidx = neighbor_idx[t] if k > 1 else np.array([neighbor_idx[t]])
+        ndist = dists[t] if k > 1 else np.array([dists[t]])
+        out[t, 0] = float(ndist.mean())
+
+        # Find faces that touch at least one neighbour.
+        neighbor_set = set(nidx.tolist())
+        patch_faces = tris[
+            np.any(np.isin(tris, list(neighbor_set)), axis=1)
+        ]
+        if len(patch_faces) == 0:
+            continue
+        v0 = verts[patch_faces[:, 0]]
+        v1 = verts[patch_faces[:, 1]]
+        v2 = verts[patch_faces[:, 2]]
+        cross = np.cross(v1 - v0, v2 - v0).astype(np.float64)
+        face_areas = np.linalg.norm(cross, axis=-1) / 2.0
+        surface = float(face_areas.sum())
+        signed_vol = float(np.abs((v0.astype(np.float64) * cross).sum(axis=-1).sum()) / 6.0)
+        out[t, 1] = float(signed_vol / max(surface, eps))
+        out[t, 2] = float(face_areas.mean()) if len(face_areas) else 0.0
+
+    return out
+
+
 def make_test_volume(
     config: SyntheticBenchmarkConfig | None = None,
     seed: int | None = None,
@@ -312,11 +553,19 @@ def make_test_volume(
     pts_pre = np.clip(pts_pre, 5, np.array(shape) - 5).astype(np.float32)
     pts_post = np.clip(pts_post, 5, np.array(shape) - 5).astype(np.float32)
 
+    pre_root_id = (pre_assign + 1).astype(np.int64)
+    post_root_id = (post_assign + 10_001).astype(np.int64)
+
+    # Synthetic scaffold: seg_ids match root_ids exactly (perfect scaffold).
+    # This lets downstream code exercise the scaffold init path without
+    # requiring a live CAVE connection.
     synapses = SynapseTable(
         pre_pt=pts_pre,
         post_pt=pts_post,
-        pre_root_id=(pre_assign + 1).astype(np.int64),
-        post_root_id=(post_assign + 10_001).astype(np.int64),
+        pre_root_id=pre_root_id,
+        post_root_id=post_root_id,
         synapse_id=np.arange(n_synapses, dtype=np.int64),
+        pre_seg_id=pre_root_id.copy(),
+        post_seg_id=post_root_id.copy(),
     )
     return chunk, synapses

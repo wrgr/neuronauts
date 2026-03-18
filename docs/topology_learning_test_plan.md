@@ -1,5 +1,17 @@
 # Topology Learning Test Plan
 
+> **Status: Fully implemented and tested.**
+> All stages of this test plan are complete:
+> - Cluster label derivation: `build_cluster_examples` in `topology_dataset.py`
+> - Feature tensor shapes: validated in `tests/test_topology_learning.py`
+> - Attention-based atomicity model: `AttentionArborValidator` in `topology_model.py`
+> - Shared multitask training: `multitask_train_step` in `shared_grammar_model.py`
+> - End-to-end training with real data: `scripts/train.py`
+> Total tests covering this area: 329 (full suite).
+> This document is retained as a record of the original test plan.
+
+---
+
 ## Goal
 
 Validate the first learned inner loop for Neuronauts:

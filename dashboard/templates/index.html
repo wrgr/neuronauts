@@ -1,0 +1,1012 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Neuronauts Dashboard</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #22263a;
+      --border: #2e3350;
+      --text: #e2e8f0;
+      --muted: #8892a4;
+      --green: #22c55e;
+      --red: #ef4444;
+      --amber: #f59e0b;
+      --blue: #3b82f6;
+      --purple: #a855f7;
+      --cyan: #06b6d4;
+    }
+    body { background: var(--bg); color: var(--text); font-family: 'Inter', system-ui, sans-serif; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+    .card-header { background: var(--surface2); border-bottom: 1px solid var(--border); border-radius: 12px 12px 0 0 !important; padding: 0.75rem 1.25rem; font-weight: 600; letter-spacing: 0.02em; font-size: 0.85rem; text-transform: uppercase; color: var(--muted); }
+    h1 { font-size: 1.5rem; font-weight: 700; }
+    .badge-keep { background: rgba(34,197,94,0.15); color: var(--green); border: 1px solid rgba(34,197,94,0.3); }
+    .badge-revert { background: rgba(239,68,68,0.15); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
+    .badge-running { background: rgba(245,158,11,0.15); color: var(--amber); border: 1px solid rgba(245,158,11,0.3); animation: pulse 1.5s ease-in-out infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+    .metric-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 1rem 1.25rem; }
+    .metric-value { font-size: 1.75rem; font-weight: 700; line-height: 1; }
+    .metric-label { font-size: 0.75rem; color: var(--muted); margin-top: 0.25rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .metric-delta { font-size: 0.75rem; margin-top: 0.25rem; }
+    .step-badge { border-radius: 6px; padding: 0.35rem 0.6rem; font-size: 0.75rem; font-weight: 600; display: flex; align-items: center; gap: 0.4rem; }
+    .step-ok { background: rgba(34,197,94,0.15); color: var(--green); border: 1px solid rgba(34,197,94,0.3); }
+    .step-fail { background: rgba(239,68,68,0.15); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
+    .step-missing { background: rgba(136,146,164,0.1); color: var(--muted); border: 1px solid rgba(136,146,164,0.2); }
+    .ledger-table { font-size: 0.8rem; }
+    .ledger-table th { color: var(--muted); font-weight: 500; text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.05em; border-color: var(--border) !important; }
+    .ledger-table td { border-color: var(--border) !important; vertical-align: middle; }
+    .ledger-table tbody tr:hover { background: var(--surface2); }
+    .hypothesis-cell { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 0.72rem; }
+    .chart-container { position: relative; }
+    #refresh-indicator { font-size: 0.75rem; color: var(--muted); }
+    .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    .dot-green { background: var(--green); }
+    .dot-red { background: var(--red); }
+    .dot-gray { background: var(--muted); }
+    .heatmap-grid { display: grid; gap: 3px; }
+    .heatmap-cell { border-radius: 3px; height: 20px; font-size: 0.6rem; display: flex; align-items: center; justify-content: center; }
+    .cell-ok { background: rgba(34,197,94,0.4); }
+    .cell-fail { background: rgba(239,68,68,0.5); }
+    .cell-missing { background: rgba(136,146,164,0.1); }
+    .heatmap-label { font-size: 0.65rem; color: var(--muted); text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
+  </style>
+</head>
+<body>
+<div class="container-fluid py-3 px-4">
+
+  <!-- Header -->
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <div class="d-flex align-items-center gap-3">
+      <h1 class="mb-0">🧠 Neuronauts</h1>
+      <span id="running-badge" class="badge step-missing d-none">● Live</span>
+    </div>
+    <div class="d-flex align-items-center gap-3">
+      <span id="refresh-indicator">Refreshing in <span id="countdown">15</span>s</span>
+      <button class="btn btn-sm btn-outline-secondary" onclick="fetchData()">↻ Refresh now</button>
+    </div>
+  </div>
+
+  <!-- Top metric cards -->
+  <div class="row g-3 mb-3" id="top-metrics">
+    <div class="col-6 col-md-3">
+      <div class="metric-card">
+        <div class="metric-value text-success" id="m-best-f1">—</div>
+        <div class="metric-label">Best Holdout F1</div>
+        <div class="metric-delta" id="m-best-f1-iter"></div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="metric-card">
+        <div class="metric-value" id="m-latest-f1" style="color:var(--cyan)">—</div>
+        <div class="metric-label">Latest Val F1</div>
+        <div class="metric-delta" id="m-latest-decision"></div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="metric-card">
+        <div class="metric-value" id="m-merge-acc" style="color:var(--purple)">—</div>
+        <div class="metric-label">Merge Accuracy</div>
+        <div class="metric-delta text-secondary">Latest model</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="metric-card">
+        <div class="metric-value" id="m-reranker-corr" style="color:var(--amber)">—</div>
+        <div class="metric-label">Reranker Corr</div>
+        <div class="metric-delta text-secondary">Latest model</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- F1 chart + Precision/Recall chart -->
+  <div class="row g-3 mb-3">
+    <div class="col-12 col-lg-8">
+      <div class="card h-100">
+        <div class="card-header">F1 Progress — All Experiments</div>
+        <div class="card-body chart-container" style="height:300px">
+          <canvas id="f1Chart"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-lg-4">
+      <div class="card h-100">
+        <div class="card-header">Precision vs Recall</div>
+        <div class="card-body chart-container" style="height:300px">
+          <canvas id="prChart"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Model metrics + Pipeline steps heatmap -->
+  <div class="row g-3 mb-3">
+    <div class="col-12 col-lg-7">
+      <div class="card h-100">
+        <div class="card-header">Model Training Metrics</div>
+        <div class="card-body chart-container" style="height:280px">
+          <canvas id="modelChart"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-lg-5">
+      <div class="card h-100">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span>Pipeline Step Heatmap</span>
+          <span class="text-secondary" style="font-size:0.7rem;text-transform:none;letter-spacing:0">iterations × steps</span>
+        </div>
+        <div class="card-body" style="overflow-x:auto; padding: 0.75rem">
+          <div id="heatmap-container"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Latest cycle step status -->
+  <div class="row g-3 mb-3">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header">Latest Pipeline Run — Step Status</div>
+        <div class="card-body">
+          <div class="row g-2" id="step-status-grid"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Visual Snapshots -->
+  <div class="row g-3 mb-3">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header d-flex align-items-center justify-content-between">
+          <span>Visual Snapshots — Raw Data Inspection</span>
+          <div class="d-flex gap-2">
+            <button class="btn btn-sm btn-outline-secondary" onclick="reshuffleVisuals()">↻ Reshuffle samples</button>
+          </div>
+        </div>
+        <div class="card-body">
+
+          <!-- Row 1: merge path grid + merge features -->
+          <div class="row g-3 mb-3">
+            <div class="col-12 col-lg-7">
+              <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:0.75rem">
+                <div class="d-flex align-items-center justify-content-between mb-1">
+                  <span style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Agent Path Pairs — Merge Dataset</span>
+                  <span style="font-size:0.7rem;color:var(--muted)">blue=left · orange=right · green border=MERGE · red=NO-MERGE</span>
+                </div>
+                <img id="img-merge-paths" src="/api/plot/merge_paths.png?seed=0" alt="merge paths"
+                  style="width:100%;border-radius:6px;cursor:pointer" onclick="cycleVisual('img-merge-paths', '/api/plot/merge_paths.png')"
+                  title="Click to see a different random sample" />
+              </div>
+            </div>
+            <div class="col-12 col-lg-5">
+              <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:0.75rem">
+                <div style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:0.5rem">Merge Feature Diagnostics</div>
+                <img id="img-merge-features" src="/api/plot/merge_features.png" alt="merge features"
+                  style="width:100%;border-radius:6px" />
+                <div style="font-size:0.7rem;color:var(--muted);margin-top:0.4rem">
+                  Left: endpoint distance by label — if distributions overlap heavily, merge signal is weak.
+                  Right scatter: path length vs distance.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Row 2: topology branches + assembly dist + f1 history -->
+          <div class="row g-3">
+            <div class="col-12 col-lg-4">
+              <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:0.75rem">
+                <div class="d-flex align-items-center justify-content-between mb-1">
+                  <span style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Topology — Branch Samples</span>
+                  <span style="font-size:0.7rem;color:var(--muted)">green=ATOMIC · red=NON-ATOMIC</span>
+                </div>
+                <img id="img-topology" src="/api/plot/topology_branches.png?seed=0" alt="topology branches"
+                  style="width:100%;border-radius:6px;cursor:pointer" onclick="cycleVisual('img-topology', '/api/plot/topology_branches.png')"
+                  title="Click to see a different random sample" />
+              </div>
+            </div>
+            <div class="col-12 col-lg-4">
+              <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:0.75rem">
+                <div style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:0.5rem">Assembly Hypothesis F1 Distribution</div>
+                <img id="img-assembly" src="/api/plot/assembly_dist.png" alt="assembly dist"
+                  style="width:100%;border-radius:6px" />
+                <div style="font-size:0.7rem;color:var(--muted);margin-top:0.4rem">
+                  Right panel: reranker predicted score vs true F1 — should be tightly correlated.
+                </div>
+              </div>
+            </div>
+            <div class="col-12 col-lg-4">
+              <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:0.75rem">
+                <div style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:0.5rem">F1 History (viz.py)</div>
+                <img id="img-f1history" src="/api/plot/f1_history.png" alt="f1 history"
+                  style="width:100%;border-radius:6px" />
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Data Snapshots -->
+  <div class="row g-3 mb-3">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header d-flex align-items-center justify-content-between">
+          <span>Data Snapshots — Sanity Checks</span>
+          <span id="sanity-flags-summary"></span>
+        </div>
+        <div class="card-body">
+
+          <!-- Sanity flag banners -->
+          <div id="sanity-flags" class="mb-3"></div>
+
+          <div class="row g-3">
+            <!-- TP/FP/FN stacked bar -->
+            <div class="col-12 col-lg-5">
+              <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:0.75rem">
+                <div style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:0.5rem">TP / FP / FN per run</div>
+                <div class="chart-container" style="height:200px"><canvas id="tpfpfnChart"></canvas></div>
+              </div>
+            </div>
+
+            <!-- Training losses chart -->
+            <div class="col-12 col-lg-4">
+              <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:0.75rem">
+                <div style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:0.5rem">Training Loss Components</div>
+                <div class="chart-container" style="height:200px"><canvas id="lossChart"></canvas></div>
+              </div>
+            </div>
+
+            <!-- Dataset stats cards -->
+            <div class="col-12 col-lg-3">
+              <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:0.75rem;height:100%">
+                <div style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:0.75rem">Dataset Stats</div>
+                <div id="dataset-stat-cards"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="row g-3 mt-1">
+            <!-- Keep/Revert rate per iteration -->
+            <div class="col-12 col-lg-6">
+              <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:0.75rem">
+                <div style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:0.5rem">Keep vs Revert Rate per Iteration</div>
+                <div class="chart-container" style="height:160px"><canvas id="decisionChart"></canvas></div>
+              </div>
+            </div>
+
+            <!-- Reranker MSE / Corr per iteration -->
+            <div class="col-12 col-lg-6">
+              <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:0.75rem">
+                <div style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:0.5rem">Reranker ρ & MSE (log) per Iteration Cycle</div>
+                <div class="chart-container" style="height:160px"><canvas id="rerankerChart"></canvas></div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Research Ledger table -->
+  <div class="row g-3 mb-4">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span>Research Ledger</span>
+          <span id="ledger-count" class="text-secondary" style="font-size:0.75rem;text-transform:none;letter-spacing:0"></span>
+        </div>
+        <div class="card-body p-0" style="overflow-x:auto">
+          <table class="table table-dark table-hover ledger-table mb-0">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Iter</th>
+                <th>Time</th>
+                <th>Decision</th>
+                <th>Val F1</th>
+                <th>Holdout F1</th>
+                <th>Precision</th>
+                <th>Recall</th>
+                <th>Merge Acc</th>
+                <th>Atom Acc</th>
+                <th>Reranker ρ</th>
+                <th>Note / Hypothesis</th>
+              </tr>
+            </thead>
+            <tbody id="ledger-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const PIPELINE_STEPS = [
+  "export_merge","export_topology","train_shared","export_assembly",
+  "train_reranker","validate_selection","validate_holdout"
+];
+const STEP_LABELS = {
+  export_merge: "Export Merge",
+  export_topology: "Export Topology",
+  train_shared: "Train Grammar",
+  export_assembly: "Export Assembly",
+  train_reranker: "Train Reranker",
+  validate_selection: "Val Selection",
+  validate_holdout: "Val Holdout",
+};
+
+let charts = {};
+let countdownVal = 15;
+let countdownTimer = null;
+
+// ── Chart defaults ──────────────────────────────────────────────────────────
+Chart.defaults.color = '#8892a4';
+Chart.defaults.borderColor = '#2e3350';
+Chart.defaults.font.family = 'Inter, system-ui, sans-serif';
+Chart.defaults.font.size = 11;
+
+function makeLineChart(id, datasets, labels, options = {}) {
+  const ctx = document.getElementById(id).getContext('2d');
+  if (charts[id]) charts[id].destroy();
+  charts[id] = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'top', labels: { boxWidth: 10, padding: 12 } },
+        tooltip: { callbacks: { label: (c) => ` ${c.dataset.label}: ${typeof c.raw === 'number' ? c.raw.toFixed(4) : c.raw}` } },
+        ...options.plugins,
+      },
+      scales: {
+        x: { grid: { color: '#2e3350' }, ticks: { maxRotation: 45, maxTicksLimit: 20 } },
+        y: { grid: { color: '#2e3350' }, beginAtZero: true, ...options.y },
+        ...(options.y2 ? { y2: { position: 'right', grid: { drawOnChartArea: false }, ...options.y2 } } : {}),
+      },
+    },
+  });
+}
+
+// ── Data fetching ────────────────────────────────────────────────────────────
+async function fetchData() {
+  try {
+    const res = await fetch('/api/data');
+    const data = await res.json();
+    render(data);
+  } catch (e) {
+    console.error('Fetch error:', e);
+  }
+  resetCountdown();
+}
+
+function resetCountdown() {
+  countdownVal = 15;
+  document.getElementById('countdown').textContent = countdownVal;
+  if (countdownTimer) clearInterval(countdownTimer);
+  countdownTimer = setInterval(() => {
+    countdownVal--;
+    document.getElementById('countdown').textContent = countdownVal;
+    if (countdownVal <= 0) { fetchData(); }
+  }, 1000);
+}
+
+// ── Render ───────────────────────────────────────────────────────────────────
+function render(data) {
+  const { ledger, models, latest_cycle, step_timeline, dataset_stats, training_losses, is_running } = data;
+
+  // Running badge
+  const badge = document.getElementById('running-badge');
+  if (is_running) {
+    badge.classList.remove('d-none', 'step-missing');
+    badge.classList.add('badge-running');
+    badge.textContent = '● Live';
+  } else {
+    badge.classList.add('d-none');
+  }
+
+  renderTopMetrics(ledger, models);
+  renderF1Chart(ledger);
+  renderPRChart(ledger);
+  renderModelChart(ledger);
+  renderStepHeatmap(step_timeline, data.pipeline_steps);
+  renderLatestSteps(latest_cycle, data.step_labels);
+  renderSanityFlags(ledger);
+  renderTpFpFnChart(ledger);
+  renderLossChart(training_losses || []);
+  renderDatasetStats(dataset_stats || {});
+  renderDecisionChart(ledger);
+  renderRerankerChart(training_losses || []);
+  renderLedgerTable(ledger);
+  refreshStaticPlots();
+}
+
+function fmt(v, digits = 4) {
+  if (v == null || v === undefined) return '—';
+  return typeof v === 'number' ? v.toFixed(digits) : v;
+}
+
+function renderTopMetrics(ledger, models) {
+  if (!ledger.length) return;
+
+  // Best holdout F1
+  const best = ledger.reduce((a, b) => ((b.holdout_f1 || 0) > (a.holdout_f1 || 0) ? b : a));
+  document.getElementById('m-best-f1').textContent = fmt(best.holdout_f1);
+  document.getElementById('m-best-f1-iter').textContent = `Iter ${best.iteration}`;
+
+  // Latest entry
+  const latest = ledger[ledger.length - 1];
+  document.getElementById('m-latest-f1').textContent = fmt(latest.val_f1);
+  const decEl = document.getElementById('m-latest-decision');
+  decEl.textContent = latest.decision || '—';
+  decEl.className = 'metric-delta ' + (latest.decision === 'keep' ? 'text-success' : latest.decision === 'revert' ? 'text-danger' : 'text-secondary');
+
+  // Model metrics — pick shared grammar smoke (or latest available)
+  const sharedKey = Object.keys(models).find(k => k.includes('shared_grammar') && !k.includes('unit'));
+  if (sharedKey) {
+    const m = models[sharedKey];
+    document.getElementById('m-merge-acc').textContent = fmt(m.merge_accuracy, 3);
+  }
+  const rerankerKey = Object.keys(models).find(k => k.includes('assembly_reranker') && !k.includes('unit'));
+  if (rerankerKey) {
+    const m = models[rerankerKey];
+    document.getElementById('m-reranker-corr').textContent = fmt(m.corr, 4);
+  }
+}
+
+function renderF1Chart(ledger) {
+  if (!ledger.length) return;
+
+  const labels = ledger.map((e, i) => `#${i + 1} i${e.iteration}`);
+
+  // Point colors by decision
+  const keepColor = 'rgba(34,197,94,0.9)';
+  const revertColor = 'rgba(239,68,68,0.9)';
+  const pointColors = ledger.map(e => e.decision === 'keep' ? keepColor : revertColor);
+
+  const datasets = [
+    {
+      label: 'Val F1',
+      data: ledger.map(e => e.val_f1 ?? null),
+      borderColor: '#3b82f6',
+      backgroundColor: 'rgba(59,130,246,0.12)',
+      pointBackgroundColor: pointColors,
+      pointBorderColor: pointColors,
+      pointRadius: 5,
+      pointHoverRadius: 7,
+      tension: 0.3,
+      fill: true,
+    },
+    {
+      label: 'Holdout F1',
+      data: ledger.map(e => e.holdout_f1 ?? null),
+      borderColor: '#22c55e',
+      backgroundColor: 'rgba(34,197,94,0.08)',
+      pointBackgroundColor: pointColors,
+      pointBorderColor: pointColors,
+      pointRadius: 5,
+      pointHoverRadius: 7,
+      tension: 0.3,
+      borderDash: [5, 3],
+      fill: true,
+    },
+  ];
+
+  makeLineChart('f1Chart', datasets, labels, {
+    plugins: {
+      tooltip: {
+        callbacks: {
+          label: (c) => ` ${c.dataset.label}: ${fmt(c.raw)}`,
+          afterBody: (items) => {
+            const idx = items[0].dataIndex;
+            const e = ledger[idx];
+            return [`Decision: ${e.decision || '—'}`, e.note ? `Note: ${e.note}` : ''].filter(Boolean);
+          },
+        },
+      },
+    },
+  });
+}
+
+function renderPRChart(ledger) {
+  if (!ledger.length) return;
+  const labels = ledger.map((e, i) => `#${i + 1}`);
+  makeLineChart('prChart', [
+    {
+      label: 'Precision',
+      data: ledger.map(e => e.precision ?? null),
+      borderColor: '#a855f7',
+      backgroundColor: 'rgba(168,85,247,0.12)',
+      tension: 0.3,
+      fill: true,
+      pointRadius: 3,
+    },
+    {
+      label: 'Recall',
+      data: ledger.map(e => e.recall ?? null),
+      borderColor: '#f59e0b',
+      backgroundColor: 'rgba(245,158,11,0.08)',
+      tension: 0.3,
+      fill: true,
+      pointRadius: 3,
+    },
+  ], labels);
+}
+
+function renderModelChart(ledger) {
+  if (!ledger.length) return;
+  const labels = ledger.map((e, i) => `#${i + 1} i${e.iteration}`);
+  const ctx = document.getElementById('modelChart').getContext('2d');
+  if (charts['modelChart']) charts['modelChart'].destroy();
+
+  charts['modelChart'] = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Merge Accuracy',
+          data: ledger.map(e => e.merge_accuracy ?? null),
+          borderColor: '#a855f7',
+          backgroundColor: 'rgba(168,85,247,0.1)',
+          tension: 0.3,
+          fill: true,
+          pointRadius: 3,
+          yAxisID: 'y',
+        },
+        {
+          label: 'Atomicity Accuracy',
+          data: ledger.map(e => e.atomicity_accuracy ?? null),
+          borderColor: '#06b6d4',
+          backgroundColor: 'rgba(6,182,212,0.08)',
+          tension: 0.3,
+          fill: true,
+          pointRadius: 3,
+          yAxisID: 'y',
+        },
+        {
+          label: 'Reranker ρ',
+          data: ledger.map(e => e.reranker_corr ?? null),
+          borderColor: '#f59e0b',
+          tension: 0.3,
+          pointRadius: 3,
+          borderDash: [4, 2],
+          yAxisID: 'y2',
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'top', labels: { boxWidth: 10, padding: 12 } },
+        tooltip: { callbacks: { label: (c) => ` ${c.dataset.label}: ${fmt(c.raw)}` } },
+      },
+      scales: {
+        x: { grid: { color: '#2e3350' }, ticks: { maxRotation: 45, maxTicksLimit: 20 } },
+        y: { grid: { color: '#2e3350' }, min: 0.7, max: 1.0, position: 'left', title: { display: true, text: 'Accuracy', color: '#8892a4', font: { size: 10 } } },
+        y2: { grid: { drawOnChartArea: false }, min: 0.97, max: 1.0, position: 'right', title: { display: true, text: 'Corr', color: '#8892a4', font: { size: 10 } } },
+      },
+    },
+  });
+}
+
+function renderStepHeatmap(stepTimeline, pipelineSteps) {
+  const container = document.getElementById('heatmap-container');
+  if (!stepTimeline.length) { container.innerHTML = '<p class="text-secondary small">No iteration data.</p>'; return; }
+
+  // Group by iteration
+  const iters = [...new Set(stepTimeline.map(r => r.iteration))].sort();
+  const steps = pipelineSteps || PIPELINE_STEPS;
+
+  const colWidth = Math.max(28, Math.floor((container.offsetWidth - 80) / iters.length));
+
+  let html = `<div style="display:flex;gap:4px">`;
+  // Step label column
+  html += `<div style="display:flex;flex-direction:column;gap:3px;min-width:80px">
+    <div style="height:18px"></div>`;
+  for (const step of steps) {
+    html += `<div class="heatmap-label" style="height:20px;line-height:20px" title="${STEP_LABELS[step] || step}">${STEP_LABELS[step] || step}</div>`;
+  }
+  html += `</div>`;
+
+  // One column per iteration
+  for (const iter of iters) {
+    const iterNum = iter.replace('iteration_', '');
+    html += `<div style="display:flex;flex-direction:column;gap:3px;min-width:${colWidth}px">`;
+    html += `<div style="font-size:0.6rem;color:#8892a4;text-align:center;height:18px">${iterNum}</div>`;
+    for (const step of steps) {
+      const row = stepTimeline.find(r => r.iteration === iter && r.step === step);
+      const status = row ? row.status : 'missing';
+      const cls = status === 'ok' ? 'cell-ok' : status === 'fail' ? 'cell-fail' : 'cell-missing';
+      const rc = row ? (row.returncode !== null ? `rc=${row.returncode}` : '—') : '—';
+      html += `<div class="heatmap-cell ${cls}" title="${step} ${iter}: ${rc}"></div>`;
+    }
+    html += `</div>`;
+  }
+  html += `</div>`;
+  container.innerHTML = html;
+}
+
+function renderLatestSteps(latest_cycle, stepLabels) {
+  const grid = document.getElementById('step-status-grid');
+  if (!latest_cycle) { grid.innerHTML = '<p class="text-secondary small col-12">No cycle data available.</p>'; return; }
+
+  const steps = latest_cycle.steps || {};
+  const labels = stepLabels || STEP_LABELS;
+
+  let html = '';
+  for (const step of PIPELINE_STEPS) {
+    const info = steps[step];
+    const rc = info ? info.returncode : null;
+    let cls, icon, label;
+    if (rc === null || rc === undefined) { cls = 'step-missing'; icon = '○'; }
+    else if (rc === 0) { cls = 'step-ok'; icon = '✓'; }
+    else { cls = 'step-fail'; icon = '✗'; }
+    label = labels[step] || step;
+    html += `<div class="col-6 col-md-4 col-lg-3">
+      <div class="step-badge ${cls}">
+        <span>${icon}</span>
+        <span>${label}</span>
+        ${rc !== null && rc !== 0 ? `<span class="ms-auto" style="opacity:.7">rc=${rc}</span>` : ''}
+      </div>
+    </div>`;
+  }
+  // Also show val/holdout metrics if present
+  const m = latest_cycle.metrics || {};
+  if (m.val_f1 !== undefined) {
+    html += `<div class="col-12 mt-2">
+      <small class="text-secondary">
+        Val F1: <strong class="text-info">${fmt(m.val_f1)}</strong>
+        &nbsp;·&nbsp; Holdout F1: <strong class="text-success">${fmt(m.holdout_f1 ?? m.val_f1)}</strong>
+        &nbsp;·&nbsp; Precision: <strong>${fmt(m.precision, 3)}</strong>
+        &nbsp;·&nbsp; Recall: <strong>${fmt(m.recall, 3)}</strong>
+        ${m.tp !== undefined ? `&nbsp;·&nbsp; TP/FP/FN: ${m.tp}/${m.fp}/${m.fn}` : ''}
+      </small>
+    </div>`;
+  }
+  grid.innerHTML = html;
+}
+
+function renderLedgerTable(ledger) {
+  const tbody = document.getElementById('ledger-body');
+  document.getElementById('ledger-count').textContent = `${ledger.length} entries`;
+
+  const rows = [...ledger].reverse().map((e, i) => {
+    const realIdx = ledger.length - i;
+    const decCls = e.decision === 'keep' ? 'text-success' : e.decision === 'revert' ? 'text-danger' : '';
+    const ts = e.timestamp ? new Date(e.timestamp).toLocaleString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '—';
+    const note = e.note || '';
+    // Strip markdown link from hypothesis
+    const hyp = (e.hypothesis || '').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+    const summary = note || hyp;
+    return `<tr>
+      <td class="text-secondary">${realIdx}</td>
+      <td>${e.iteration ?? '—'}</td>
+      <td class="text-secondary">${ts}</td>
+      <td><span class="${decCls} fw-semibold">${e.decision || '—'}</span></td>
+      <td>${fmt(e.val_f1)}</td>
+      <td>${fmt(e.holdout_f1)}</td>
+      <td>${fmt(e.precision, 3)}</td>
+      <td>${fmt(e.recall, 3)}</td>
+      <td>${fmt(e.merge_accuracy, 3)}</td>
+      <td>${fmt(e.atomicity_accuracy, 3)}</td>
+      <td>${fmt(e.reranker_corr, 4)}</td>
+      <td class="hypothesis-cell" title="${summary}">${summary}</td>
+    </tr>`;
+  });
+  tbody.innerHTML = rows.join('');
+}
+
+// ── Visual Snapshots ─────────────────────────────────────────────────────────
+let visualSeeds = {};
+
+function cycleVisual(imgId, baseUrl) {
+  const seed = (visualSeeds[imgId] || 0) + 1;
+  visualSeeds[imgId] = seed;
+  const img = document.getElementById(imgId);
+  img.style.opacity = '0.4';
+  img.src = `${baseUrl}?seed=${seed}&t=${Date.now()}`;
+  img.onload = () => { img.style.opacity = '1'; };
+}
+
+function reshuffleVisuals() {
+  const ts = Date.now();
+  const seed = Math.floor(Math.random() * 1000);
+  [
+    ['img-merge-paths', '/api/plot/merge_paths.png'],
+    ['img-topology', '/api/plot/topology_branches.png'],
+  ].forEach(([id, url]) => {
+    const img = document.getElementById(id);
+    if (img) { img.style.opacity = '0.4'; img.src = `${url}?seed=${seed}&t=${ts}`; img.onload = () => { img.style.opacity = '1'; }; }
+  });
+}
+
+function refreshStaticPlots() {
+  const ts = Date.now();
+  ['img-merge-features', 'img-assembly', 'img-f1history'].forEach(id => {
+    const img = document.getElementById(id);
+    if (img) {
+      const base = img.src.split('?')[0];
+      img.src = `${base}?t=${ts}`;
+    }
+  });
+}
+
+// ── Data Snapshots ────────────────────────────────────────────────────────────
+
+function renderSanityFlags(ledger) {
+  const flags = [];
+  if (!ledger.length) return;
+  const latest = ledger[ledger.length - 1];
+
+  if (latest.val_f1 === 0 || latest.val_f1 < 0.001)
+    flags.push({ level: 'danger', msg: 'Val F1 is effectively 0 — model may have collapsed' });
+  if (latest.recall < 0.005)
+    flags.push({ level: 'danger', msg: `Recall = ${fmt(latest.recall, 4)} — model is almost never correct; check merge threshold or agent coverage` });
+  if (latest.precision > 0.9 && latest.recall < 0.05)
+    flags.push({ level: 'warning', msg: `High precision (${fmt(latest.precision,3)}) but very low recall (${fmt(latest.recall,3)}) — overly conservative merging` });
+  if (latest.merge_accuracy && latest.merge_accuracy < 0.6)
+    flags.push({ level: 'danger', msg: `Merge accuracy = ${fmt(latest.merge_accuracy,3)} — model is barely better than chance` });
+  if (latest.reranker_corr && latest.reranker_corr < 0.9)
+    flags.push({ level: 'warning', msg: `Reranker correlation = ${fmt(latest.reranker_corr,4)} — reranker may be unreliable` });
+
+  // Check for stagnation: last 5 val_f1 values all identical
+  if (ledger.length >= 5) {
+    const last5 = ledger.slice(-5).map(e => e.val_f1);
+    if (last5.every(v => v === last5[0]))
+      flags.push({ level: 'warning', msg: `Val F1 has been stuck at ${fmt(last5[0])} for the last ${last5.length} runs — optimizer may be stalled` });
+  }
+
+  // Mostly reverting
+  if (ledger.length >= 4) {
+    const last6 = ledger.slice(-6);
+    const revertRate = last6.filter(e => e.decision === 'revert').length / last6.length;
+    if (revertRate >= 0.8)
+      flags.push({ level: 'warning', msg: `${Math.round(revertRate*100)}% of recent decisions are reverts — hypothesis generator may need recalibration` });
+  }
+
+  const container = document.getElementById('sanity-flags');
+  const summary = document.getElementById('sanity-flags-summary');
+  if (!flags.length) {
+    container.innerHTML = '<div style="color:var(--green);font-size:0.8rem">✓ No anomalies detected in latest run</div>';
+    summary.innerHTML = '';
+    return;
+  }
+
+  const dangerCount = flags.filter(f => f.level === 'danger').length;
+  const warnCount = flags.filter(f => f.level === 'warning').length;
+  summary.innerHTML = [
+    dangerCount ? `<span class="badge badge-revert me-1">${dangerCount} critical</span>` : '',
+    warnCount ? `<span class="badge badge-running">${warnCount} warning</span>` : '',
+  ].join('');
+
+  container.innerHTML = flags.map(f => {
+    const bg = f.level === 'danger' ? 'rgba(239,68,68,0.1)' : 'rgba(245,158,11,0.1)';
+    const border = f.level === 'danger' ? 'rgba(239,68,68,0.3)' : 'rgba(245,158,11,0.3)';
+    const color = f.level === 'danger' ? 'var(--red)' : 'var(--amber)';
+    const icon = f.level === 'danger' ? '✗' : '⚠';
+    return `<div style="background:${bg};border:1px solid ${border};border-radius:6px;padding:0.4rem 0.75rem;margin-bottom:0.35rem;font-size:0.8rem;color:${color}">${icon} ${f.msg}</div>`;
+  }).join('');
+}
+
+function renderTpFpFnChart(ledger) {
+  if (!ledger.length) return;
+  // Only entries that have tp/fp/fn
+  const entries = ledger.filter(e => e.tp !== undefined);
+  if (!entries.length) return;
+
+  const labels = entries.map((e, i) => `#${ledger.indexOf(e)+1}`);
+  const ctx = document.getElementById('tpfpfnChart').getContext('2d');
+  if (charts['tpfpfnChart']) charts['tpfpfnChart'].destroy();
+  charts['tpfpfnChart'] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'TP', data: entries.map(e => e.tp ?? 0), backgroundColor: 'rgba(34,197,94,0.7)', stack: 'a' },
+        { label: 'FP', data: entries.map(e => e.fp ?? 0), backgroundColor: 'rgba(239,68,68,0.6)', stack: 'a' },
+        { label: 'FN', data: entries.map(e => e.fn ?? 0), backgroundColor: 'rgba(245,158,11,0.5)', stack: 'a' },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'top', labels: { boxWidth: 10, padding: 10, font: { size: 10 } } },
+        tooltip: {
+          callbacks: {
+            afterBody: (items) => {
+              const e = entries[items[0].dataIndex];
+              const total = (e.tp||0) + (e.fp||0) + (e.fn||0);
+              const p = total ? ((e.tp||0)/((e.tp||0)+(e.fp||0))).toFixed(3) : '—';
+              const r = total ? ((e.tp||0)/((e.tp||0)+(e.fn||0))).toFixed(3) : '—';
+              return [`P=${p}  R=${r}  F1=${fmt(e.val_f1)}`];
+            },
+          },
+        },
+      },
+      scales: {
+        x: { grid: { color: '#2e3350' }, stacked: true, ticks: { font: { size: 9 } } },
+        y: { grid: { color: '#2e3350' }, stacked: true, title: { display: true, text: 'count', color: '#8892a4', font: { size: 9 } } },
+      },
+    },
+  });
+}
+
+function renderLossChart(trainingLosses) {
+  if (!trainingLosses.length) return;
+  const valid = trainingLosses.filter(r => r.loss !== null);
+  if (!valid.length) return;
+
+  const labels = valid.map(r => r.iteration.replace('iteration_', 'i').replace('baseline_cycle', 'base'));
+  const ctx = document.getElementById('lossChart').getContext('2d');
+  if (charts['lossChart']) charts['lossChart'].destroy();
+  charts['lossChart'] = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Total', data: valid.map(r => r.loss), borderColor: '#e2e8f0', tension: 0.3, pointRadius: 3, borderWidth: 1.5 },
+        { label: 'Merge', data: valid.map(r => r.merge_loss), borderColor: '#a855f7', tension: 0.3, pointRadius: 3, borderWidth: 1.5, borderDash: [4,2] },
+        { label: 'Atomicity', data: valid.map(r => r.atomicity_loss), borderColor: '#06b6d4', tension: 0.3, pointRadius: 3, borderWidth: 1.5, borderDash: [4,2] },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'top', labels: { boxWidth: 8, padding: 8, font: { size: 9 } } },
+        tooltip: { callbacks: { label: (c) => ` ${c.dataset.label}: ${c.raw !== null ? c.raw.toFixed(4) : '—'}` } },
+      },
+      scales: {
+        x: { grid: { color: '#2e3350' }, ticks: { maxRotation: 45, font: { size: 9 } } },
+        y: { grid: { color: '#2e3350' }, title: { display: true, text: 'loss', color: '#8892a4', font: { size: 9 } } },
+      },
+    },
+  });
+}
+
+function renderDatasetStats(datasetStats) {
+  const container = document.getElementById('dataset-stat-cards');
+  if (!datasetStats) { container.innerHTML = '<p class="text-secondary small">No data.</p>'; return; }
+
+  const items = [
+    { key: 'merge', label: 'Merge Dataset', color: '#a855f7' },
+    { key: 'topology', label: 'Topology Dataset', color: '#06b6d4' },
+    { key: 'assembly', label: 'Assembly Dataset', color: '#f59e0b' },
+  ];
+
+  let html = '';
+  for (const { key, label, color } of items) {
+    const s = datasetStats[key];
+    if (!s) continue;
+    const posRate = s.pos_rate !== undefined ? (s.pos_rate * 100).toFixed(1) + '%' : '—';
+    const posWarn = s.pos_rate !== undefined && (s.pos_rate < 0.1 || s.pos_rate > 0.9);
+    html += `<div style="border-left:3px solid ${color};padding:0.35rem 0.5rem 0.35rem 0.75rem;margin-bottom:0.5rem;background:rgba(255,255,255,0.02);border-radius:0 4px 4px 0">
+      <div style="font-size:0.75rem;font-weight:600;color:${color}">${label}</div>
+      <div style="font-size:0.72rem;color:var(--text)">
+        ${s.n ? `<span title="total examples">n=${s.n}</span>` : ''}
+        ${s.pos_rate !== undefined ? `&nbsp;·&nbsp; <span style="color:${posWarn?'var(--amber)':'inherit'}" title="positive label rate">${posRate} positive${posWarn?' ⚠':''}</span>` : ''}
+        ${s.mean_f1 !== undefined ? `&nbsp;·&nbsp; mean F1=${s.mean_f1.toFixed(3)}` : ''}
+      </div>
+      ${s.seq_len ? `<div style="font-size:0.68rem;color:var(--muted)">seq_len=${s.seq_len} feat_dim=${s.feat_dim}</div>` : ''}
+      ${s.shape ? `<div style="font-size:0.68rem;color:var(--muted)">shape=[${s.shape.join('×')}]</div>` : ''}
+    </div>`;
+  }
+  container.innerHTML = html || '<p class="text-secondary small">No dataset files found.</p>';
+}
+
+function renderDecisionChart(ledger) {
+  if (!ledger.length) return;
+
+  // Group by iteration number
+  const iterMap = {};
+  for (const e of ledger) {
+    const k = `i${e.iteration}`;
+    if (!iterMap[k]) iterMap[k] = { keep: 0, revert: 0 };
+    if (e.decision === 'keep') iterMap[k].keep++;
+    else if (e.decision === 'revert') iterMap[k].revert++;
+  }
+  const labels = Object.keys(iterMap).sort((a,b) => parseInt(a.slice(1))-parseInt(b.slice(1)));
+
+  const ctx = document.getElementById('decisionChart').getContext('2d');
+  if (charts['decisionChart']) charts['decisionChart'].destroy();
+  charts['decisionChart'] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Keep', data: labels.map(k => iterMap[k].keep), backgroundColor: 'rgba(34,197,94,0.7)', stack: 'a' },
+        { label: 'Revert', data: labels.map(k => iterMap[k].revert), backgroundColor: 'rgba(239,68,68,0.6)', stack: 'a' },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { position: 'top', labels: { boxWidth: 8, padding: 8, font: { size: 9 } } } },
+      scales: {
+        x: { grid: { color: '#2e3350' }, stacked: true, ticks: { font: { size: 9 } } },
+        y: { grid: { color: '#2e3350' }, stacked: true, ticks: { stepSize: 1 } },
+      },
+    },
+  });
+}
+
+function renderRerankerChart(trainingLosses) {
+  const valid = trainingLosses.filter(r => r.reranker_corr !== null);
+  if (!valid.length) return;
+
+  const labels = valid.map(r => r.iteration.replace('iteration_', 'i').replace('baseline_cycle', 'base'));
+  const ctx = document.getElementById('rerankerChart').getContext('2d');
+  if (charts['rerankerChart']) charts['rerankerChart'].destroy();
+  charts['rerankerChart'] = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Corr ρ',
+          data: valid.map(r => r.reranker_corr),
+          borderColor: '#f59e0b',
+          tension: 0.3,
+          pointRadius: 4,
+          yAxisID: 'y',
+        },
+        {
+          label: 'MSE (log10)',
+          data: valid.map(r => r.reranker_mse !== null ? Math.log10(r.reranker_mse) : null),
+          borderColor: '#ef4444',
+          tension: 0.3,
+          pointRadius: 4,
+          borderDash: [4, 2],
+          yAxisID: 'y2',
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'top', labels: { boxWidth: 8, padding: 8, font: { size: 9 } } },
+        tooltip: {
+          callbacks: {
+            label: (c) => {
+              if (c.dataset.label === 'MSE (log10)') {
+                const raw = valid[c.dataIndex]?.reranker_mse;
+                return ` MSE: ${raw !== null ? raw.toExponential(3) : '—'}`;
+              }
+              return ` ρ: ${c.raw !== null ? c.raw.toFixed(5) : '—'}`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: { grid: { color: '#2e3350' }, ticks: { font: { size: 9 }, maxRotation: 45 } },
+        y: { grid: { color: '#2e3350' }, min: 0.95, max: 1.0, position: 'left', ticks: { font: { size: 9 } } },
+        y2: { grid: { drawOnChartArea: false }, position: 'right', ticks: { font: { size: 9 } } },
+      },
+    },
+  });
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+fetchData();
+</script>
+</body>
+</html>
