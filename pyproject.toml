@@ -30,6 +30,16 @@ membrane = [
     "torch",
     "tifffile",
 ]
+claude = [
+    "anthropic>=0.25",
+]
+gemini = [
+    "google-generativeai>=0.5",
+]
+llm = [
+    "anthropic>=0.25",
+    "google-generativeai>=0.5",
+]
 
 [project.scripts]
 neuronauts = "neuronauts.run:main"

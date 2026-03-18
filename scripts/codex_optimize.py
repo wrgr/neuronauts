@@ -151,6 +151,7 @@ def build_prompt(
     program_text: str,
     baseline_metrics: dict[str, float | int | None],
     recent_summary: list[dict[str, object]],
+    target_file: str = "neuronauts/grammar.py",
 ) -> str:
     summary_lines = []
     for row in recent_summary[-5:]:
@@ -171,7 +172,7 @@ Read and follow this research brief:
 {program_text}
 
 Hard constraints for this iteration:
-- Edit only neuronauts/grammar.py.
+- Edit only {target_file}.
 - Make exactly one focused experiment change.
 - Do not edit any other files.
 - Do not add shims, wrappers, or new abstractions.
@@ -187,12 +188,204 @@ Recent optimizer history:
 {recent_text}
 
 Task:
-1. Inspect neuronauts/grammar.py.
+1. Inspect {target_file}.
 2. Make one targeted change that is likely to improve real MICrONS fixed-validation performance.
-3. Stop after editing neuronauts/grammar.py.
+3. Stop after editing {target_file}.
 
 Do not run long benchmark loops yourself; the wrapper script will evaluate and decide whether to keep or revert your change.
 """
+
+
+# ---------------------------------------------------------------------------
+# LLM Backend Proposal Functions
+# ---------------------------------------------------------------------------
+
+def _build_file_edit_prompt(base_prompt: str, target_file: Path) -> str:
+    """Extend the base prompt with the current file content and output instructions."""
+    file_content = target_file.read_text(encoding="utf-8")
+    return f"""{base_prompt}
+
+Current content of {target_file.name}:
+```python
+{file_content}
+```
+
+Instructions for your response:
+1. Write a single concise sentence describing the ONE change you are making.
+2. Output the COMPLETE modified file inside a ```python ... ``` block.
+   Include every line — do not abbreviate or use ellipsis.
+3. Output ONLY the description sentence and the code block. No other prose.
+
+Response format:
+<one-line description>
+```python
+# ... complete modified file ...
+```
+"""
+
+
+def _extract_code_block(response_text: str) -> str | None:
+    """Return the first ```python ... ``` block content, or None."""
+    match = re.search(r"```(?:python)?\n(.*?)```", response_text, re.DOTALL)
+    return match.group(1) if match else None
+
+
+def _extract_first_sentence(response_text: str) -> str:
+    """Return the first non-empty, non-code-fence line as the recommendation."""
+    for line in response_text.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("```"):
+            return stripped
+    return "no recommendation text"
+
+
+def run_proposal_codex(
+    codex_bin: str,
+    prompt: str,
+    iteration_dir: Path,
+    *,
+    model: str | None = None,
+    env: dict | None = None,
+) -> tuple[int, str]:
+    """Run ``codex exec --full-auto`` with *prompt* piped to stdin.
+
+    Returns ``(returncode, recommendation_text)``.  The codex process edits
+    the target file itself; we just read back its last-message file.
+    """
+    codex_cmd = [codex_bin, "exec", "--full-auto", "--skip-git-repo-check",
+                 "-C", str(REPO_ROOT)]
+    if model:
+        codex_cmd.extend(["--model", model])
+    codex_cmd.extend(["-o", str(iteration_dir / "codex_last_message.txt"), "-"])
+
+    proc = subprocess.run(
+        codex_cmd,
+        cwd=REPO_ROOT,
+        env=env,
+        input=prompt,
+        text=True,
+        capture_output=True,
+    )
+    write_text(iteration_dir / "codex_stdout.log", proc.stdout)
+    write_text(iteration_dir / "codex_stderr.log", proc.stderr)
+
+    recommendation = "no recommendation text"
+    last_msg = iteration_dir / "codex_last_message.txt"
+    if last_msg.exists():
+        recommendation = extract_recommendation(last_msg.read_text(encoding="utf-8"))
+
+    return proc.returncode, recommendation
+
+
+def run_proposal_claude(
+    prompt: str,
+    target_file: Path,
+    iteration_dir: Path,
+    *,
+    model: str | None = None,
+    api_key: str | None = None,
+) -> tuple[int, str]:
+    """Call Anthropic Claude to propose a file edit.
+
+    Returns ``(returncode, recommendation_text)``.  On success, *target_file*
+    is overwritten with the model's suggested content.
+    """
+    try:
+        import anthropic
+    except ImportError:
+        raise SystemExit("anthropic package required: pip install anthropic  "
+                         "(or: pip install -e '.[claude]')")
+
+    resolved_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+    client = anthropic.Anthropic(api_key=resolved_key)
+    effective_model = model or "claude-sonnet-4-5"
+
+    full_prompt = _build_file_edit_prompt(prompt, target_file)
+    write_text(iteration_dir / "codex_prompt.txt", full_prompt)
+
+    try:
+        message = client.messages.create(
+            model=effective_model,
+            max_tokens=8096,
+            messages=[{"role": "user", "content": full_prompt}],
+        )
+        response_text = message.content[0].text
+        write_text(iteration_dir / "codex_stdout.log", response_text)
+        write_text(iteration_dir / "codex_stderr.log", "")
+
+        new_content = _extract_code_block(response_text)
+        recommendation = _extract_first_sentence(response_text)
+        write_text(iteration_dir / "codex_last_message.txt", recommendation)
+
+        if new_content is None:
+            write_text(iteration_dir / "codex_stderr.log",
+                       "ERROR: no ```python``` block found in Claude response")
+            return 1, "no code block in claude response"
+
+        target_file.write_text(new_content, encoding="utf-8")
+        return 0, recommendation
+
+    except Exception as exc:
+        write_text(iteration_dir / "codex_stderr.log", str(exc))
+        write_text(iteration_dir / "codex_last_message.txt", f"claude api error: {exc}")
+        return 1, f"claude api error: {exc}"
+
+
+def run_proposal_gemini(
+    prompt: str,
+    target_file: Path,
+    iteration_dir: Path,
+    *,
+    model: str | None = None,
+    api_key: str | None = None,
+) -> tuple[int, str]:
+    """Call Google Gemini to propose a file edit.
+
+    Returns ``(returncode, recommendation_text)``.  On success, *target_file*
+    is overwritten with the model's suggested content.
+    """
+    try:
+        import google.generativeai as genai
+    except ImportError:
+        raise SystemExit("google-generativeai package required: "
+                         "pip install google-generativeai  "
+                         "(or: pip install -e '.[gemini]')")
+
+    resolved_key = (
+        api_key
+        or os.environ.get("GOOGLE_API_KEY")
+        or os.environ.get("GEMINI_API_KEY")
+    )
+    if resolved_key:
+        genai.configure(api_key=resolved_key)
+
+    effective_model = model or "gemini-2.0-flash"
+    full_prompt = _build_file_edit_prompt(prompt, target_file)
+    write_text(iteration_dir / "codex_prompt.txt", full_prompt)
+
+    try:
+        model_obj = genai.GenerativeModel(effective_model)
+        response = model_obj.generate_content(full_prompt)
+        response_text = response.text
+        write_text(iteration_dir / "codex_stdout.log", response_text)
+        write_text(iteration_dir / "codex_stderr.log", "")
+
+        new_content = _extract_code_block(response_text)
+        recommendation = _extract_first_sentence(response_text)
+        write_text(iteration_dir / "codex_last_message.txt", recommendation)
+
+        if new_content is None:
+            write_text(iteration_dir / "codex_stderr.log",
+                       "ERROR: no ```python``` block found in Gemini response")
+            return 1, "no code block in gemini response"
+
+        target_file.write_text(new_content, encoding="utf-8")
+        return 0, recommendation
+
+    except Exception as exc:
+        write_text(iteration_dir / "codex_stderr.log", str(exc))
+        write_text(iteration_dir / "codex_last_message.txt", f"gemini api error: {exc}")
+        return 1, f"gemini api error: {exc}"
 
 
 def main() -> int:
@@ -200,7 +393,13 @@ def main() -> int:
     if not args.repeat_until_interrupt and args.iterations is None:
         args.iterations = 1
 
-    codex_bin = resolve_executable(args.codex_bin)
+    # Resolve the target file (always relative to repo root).
+    target_file = REPO_ROOT / args.target_file
+
+    # Only resolve the codex binary when the codex backend is selected.
+    codex_bin: str | None = None
+    if args.backend == "codex":
+        codex_bin = resolve_executable(args.codex_bin)
 
     log_dir = REPO_ROOT / args.log_dir
     ledger_path = REPO_ROOT / args.ledger_path
@@ -217,7 +416,8 @@ def main() -> int:
         "started_at_epoch": time.time(),
         "iterations": args.iterations,
         "repeat_until_interrupt": args.repeat_until_interrupt,
-        "target_file": str(TARGET_FILE),
+        "backend": args.backend,
+        "target_file": str(target_file),
         "program_file": str(PROGRAM_FILE),
         "validation_cmd": build_cycle_cmd(log_dir / "baseline_cycle"),
         "test_cmd": TEST_CMD,
@@ -248,7 +448,7 @@ def main() -> int:
             fn=baseline_metrics["fn"] or 0,
         )
     )
-    print(f"Logs: {log_dir}")
+    print(f"Backend: {args.backend}  |  Logs: {log_dir}")
 
     try:
         while True:
@@ -261,7 +461,7 @@ def main() -> int:
             accepted_before = dict(baseline_metrics)
             accepted_before_summary = dict(baseline_summary)
             candidate_summary = dict(baseline_summary)
-            run_before = TARGET_FILE.read_text(encoding="utf-8")
+            run_before = target_file.read_text(encoding="utf-8")
             run_before_hash = hash_text(run_before)
             write_text(iteration_dir / "target_before.py", run_before)
 
@@ -269,36 +469,36 @@ def main() -> int:
                 program_text=PROGRAM_FILE.read_text(encoding="utf-8"),
                 baseline_metrics=baseline_metrics,
                 recent_summary=history,
+                target_file=args.target_file,
             )
             write_text(iteration_dir / "prompt.txt", prompt)
 
-            codex_cmd = [codex_bin, "exec", "--full-auto", "--skip-git-repo-check", "-C", str(REPO_ROOT)]
-            if args.model:
-                codex_cmd.extend(["--model", args.model])
-            codex_cmd.extend(["-o", str(iteration_dir / "codex_last_message.txt"), "-"])
-
-            print(f"\n=== Optimizer Iteration {iteration_idx:03d} ===")
+            print(f"\n=== Optimizer Iteration {iteration_idx:03d} ({args.backend}) ===")
             print(f"Accepted baseline F1: {baseline_metrics['val_f1'] or 0.0:.4f}")
-            print("Running Codex proposal...")
-            codex_proc = subprocess.run(
-                codex_cmd,
-                cwd=REPO_ROOT,
-                env=env,
-                input=prompt,
-                text=True,
-                capture_output=True,
-            )
-            write_text(iteration_dir / "codex_stdout.log", codex_proc.stdout)
-            write_text(iteration_dir / "codex_stderr.log", codex_proc.stderr)
-            recommendation_text = ""
-            last_message_path = iteration_dir / "codex_last_message.txt"
-            if last_message_path.exists():
-                recommendation_text = extract_recommendation(last_message_path.read_text(encoding="utf-8"))
-                print(f"Codex recommendation: {recommendation_text}")
-            else:
-                recommendation_text = "missing codex_last_message.txt"
+            print(f"Running {args.backend} proposal...")
 
-            run_after = TARGET_FILE.read_text(encoding="utf-8")
+            # ── Dispatch to the appropriate backend ────────────────────────
+            if args.backend == "codex":
+                proposal_rc, recommendation_text = run_proposal_codex(
+                    codex_bin, prompt, iteration_dir,
+                    model=args.model, env=env,
+                )
+            elif args.backend == "claude":
+                proposal_rc, recommendation_text = run_proposal_claude(
+                    prompt, target_file, iteration_dir,
+                    model=args.model, api_key=args.api_key,
+                )
+            elif args.backend == "gemini":
+                proposal_rc, recommendation_text = run_proposal_gemini(
+                    prompt, target_file, iteration_dir,
+                    model=args.model, api_key=args.api_key,
+                )
+            else:
+                raise SystemExit(f"Unknown backend: {args.backend!r}")
+
+            print(f"Recommendation: {recommendation_text}")
+
+            run_after = target_file.read_text(encoding="utf-8")
             run_after_hash = hash_text(run_after)
             write_text(iteration_dir / "target_after.py", run_after)
             write_text(
@@ -306,13 +506,13 @@ def main() -> int:
                 diff_text(iteration_dir / "target_before.py", iteration_dir / "target_after.py", REPO_ROOT),
             )
 
-            if codex_proc.returncode != 0:
-                note = f"codex exec failed rc={codex_proc.returncode}"
-                TARGET_FILE.write_text(run_before, encoding="utf-8")
+            if proposal_rc != 0:
+                note = f"{args.backend} proposal failed rc={proposal_rc}"
+                target_file.write_text(run_before, encoding="utf-8")
                 decision = "revert"
                 candidate_metrics = baseline_metrics.copy()
             elif run_after == run_before:
-                note = "no change to neuronauts/grammar.py"
+                note = f"no change to {args.target_file}"
                 decision = "revert"
                 candidate_metrics = baseline_metrics.copy()
             else:
@@ -321,7 +521,7 @@ def main() -> int:
                 write_text(iteration_dir / "test.log", test_proc.stdout + test_proc.stderr)
                 if test_proc.returncode != 0:
                     note = f"tests failed rc={test_proc.returncode}"
-                    TARGET_FILE.write_text(run_before, encoding="utf-8")
+                    target_file.write_text(run_before, encoding="utf-8")
                     decision = "revert"
                     candidate_metrics = baseline_metrics.copy()
                 else:
@@ -330,7 +530,7 @@ def main() -> int:
                     write_text(iteration_dir / "candidate_validation.log", candidate_eval.stdout + candidate_eval.stderr)
                     if candidate_eval.returncode != 0:
                         note = f"validation failed rc={candidate_eval.returncode}"
-                        TARGET_FILE.write_text(run_before, encoding="utf-8")
+                        target_file.write_text(run_before, encoding="utf-8")
                         decision = "revert"
                         candidate_metrics = baseline_metrics.copy()
                         candidate_summary = baseline_summary
@@ -346,9 +546,9 @@ def main() -> int:
                             baseline_metrics = candidate_metrics
                             baseline_summary = candidate_summary
                         else:
-                            TARGET_FILE.write_text(run_before, encoding="utf-8")
+                            target_file.write_text(run_before, encoding="utf-8")
 
-            current_run = TARGET_FILE.read_text(encoding="utf-8")
+            current_run = target_file.read_text(encoding="utf-8")
             current_hash = hash_text(current_run)
             delta_f1 = (candidate_metrics["val_f1"] or 0.0) - (accepted_before["val_f1"] or 0.0)
             accepted_compact = summarize_research_cycle(accepted_before_summary)
@@ -366,8 +566,8 @@ def main() -> int:
                 ledger_path,
                 build_ledger_entry(
                     candidate_summary,
-                    source="codex",
-                    target_file=str(TARGET_FILE.relative_to(REPO_ROOT)),
+                    source=args.backend,
+                    target_file=str(target_file.relative_to(REPO_ROOT)),
                     hypothesis=recommendation_text,
                     decision=decision,
                     note=note,
