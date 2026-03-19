@@ -1,3 +1,18 @@
+---
+title: "Neuronauts v2: Scaffolded Global Grammar for End-to-End Connectome Inference"
+author: "Neuronauts"
+date: "March 2025"
+documentclass: article
+fontsize: 11pt
+geometry:
+  - margin=1in
+  - letterpaper
+numbersections: true
+toc: true
+toc-depth: 3
+colorlinks: true
+---
+
 # Neuronauts v2: Scaffolded Global Grammar for End-to-End Connectome Inference
 
 ## Plain Language Summary
@@ -55,34 +70,34 @@ The full data and control flow:
 
 ```
   MICrONS EM (S3/CloudVolume)          CAVE synapse table
-              │                                │
-              └──────── fetch.py ─────────────┘
+              |                                |
+              +-------- fetch.py --------------+
                     VolumeChunk + SynapseTable
-                              │
-              ┌───────────────┼───────────────┐
-              │               │               │
+                              |
+              +---------------+---------------+
+              |               |               |
          fields.py      dataset_builder   (cached to disk)
       membrane field      .BoxCache
-              │
+              |
        vectorized.py
-    700 agents × 450 steps
+    700 agents x 450 steps
     path_arr [700, 450, 3]
     synapse_hits [700, N_syn]
-              │
+              |
          run.py
-    _scaffold_union_from_seg_ids()     ← CAVE seg-IDs, ~10× reduction
-              │
-    _merge_role_groups()               ← grammar scores + beam search
+    _scaffold_union_from_seg_ids()     <- CAVE seg-IDs, ~10x reduction
+              |
+    _merge_role_groups()               <- grammar scores + beam search
        SharedGrammarModel.score_merge()
-              │
+              |
     _build_graph()
-    → ConnectivityGraph
-              │
+    -> ConnectivityGraph
+              |
     (optional) gat_refine_connectivity()
        GlobalAssemblyGAT
-              │
+              |
     line_graph.evaluate()
-    → F1 / precision / recall
+    -> F1 / precision / recall
 ```
 
 ### 2.1 Perception Layer
@@ -136,7 +151,7 @@ In regions where the EM is corrupted or agent simulation fails to establish conn
 **Training.** The GAT training loop is grounded directly in the terminal metric:
 
 1. `label_graph_edges` assigns binary labels to each edge in a `ConnectivityGraph` using majority-vote root-ID matching — the direct per-edge analogue of line-graph F1.
-2. `gat_train_step` minimises `(1 − w) × BCE + w × (1 − soft_F1)` where `soft_F1 = 2TP / (2TP + FP + FN + ε)` is differentiable through sigmoid probabilities. The path encoder is frozen during GAT training.
+2. `gat_train_step` minimises `(1 − w) × BCE + w × (1 − soft_F1)` where `soft_F1 = 2TP / (2TP + FP + FN + e)` is differentiable through sigmoid probabilities. The path encoder is frozen during GAT training.
 3. Agent simulation is required (~20–60 s/box on CPU); use `--gat-every-n-epochs 5` to amortise this cost.
 
 **Inference.** `gat_refine_connectivity` encodes all neurons, runs GAT message passing, scores each synapse edge, and returns a refined graph containing only edges above the configured threshold.
@@ -198,9 +213,11 @@ Binary cross-entropy over multi-branch cluster embeddings. Positive: a cluster w
 
 ### 4.4 GAT Soft-F1 Loss
 
-`(1 − w) × BCE(logits, labels) + w × (1 − 2TP / (2TP + FP + FN + ε))` where `w = 0.5`. Soft-F1 operates on sigmoid probabilities so gradients flow through TP, FP, FN counts. This directly aligns GAT optimisation with the terminal line-graph metric. Requires agent simulation.
+`(1 − w) × BCE(logits, labels) + w × (1 − 2TP / (2TP + FP + FN + e))` where `w = 0.5`. Soft-F1 operates on sigmoid probabilities so gradients flow through TP, FP, FN counts. This directly aligns GAT optimisation with the terminal line-graph metric. Requires agent simulation.
 
 ## 5. Evaluation
+
+**Shift to line-graph evaluation.** Most connectomics pipelines evaluate at the segmentation level (merge AUC, per-neuron synapse precision/recall) or at the trace level (path accuracy). Neuronauts shifts evaluation to the **synapse line graph**: synapses are nodes, and an edge connects two synapses iff they share the same pre- or post-synaptic neuron. This formulation directly targets connectome topology — which synapses belong together — rather than proxy metrics. NEURD and similar tools report synapse precision/recall over manually proofread neurons; we optimise for line-graph F1 over synapse pairs, the closest box-scale proxy for downstream connectivity correctness.
 
 The primary evaluation metric is **synapse line-graph F1**:
 
@@ -241,17 +258,105 @@ All five planned architectural components are implemented and tested (329+ unit/
 4. Add a held-out test set (currently validation and training boxes are from the same pool).
 5. Evaluate per-neuron F1 distribution in addition to mean F1.
 
-## 7. Related Work
+## 7. Methods Summary
 
-**RoboEM** [Li et al., *Nature Methods* 2024] is close in spirit at the local tracing level. The distinction here is that Neuronauts is organised around synapse-object topology and connectome correctness, and the training target is line-graph F1 rather than trace accuracy.
+This section summarises the core algorithms in explicit form.
 
-**NEURD** [*Nature* 2025] is highly relevant for morphology-rich validation. The main difference is that Neuronauts treats topological correctness of the induced connectome as the primary objective, with morphology serving as evidence rather than the end goal.
+### 7.1 Scaffold Union-Find
 
-**Auto-proof and edit-imitation systems** provide important local supervision ideas. The additional move here is to unify them with global root-consistency supervision, scaffold initialization from CAVE, and a GAT trained end-to-end on the terminal metric.
+**Input:** Agent–synapse hit matrix `synapse_hits[agent_i, syn_j]`, synapse table with `pre_pt_supervoxel_id`, `post_pt_supervoxel_id`.
 
-**Graph-based global inference.** The GlobalAssemblyGAT is adjacent to graph-based agglomeration pipelines. The distinction is that node features are learned path-encoder embeddings rather than hand-crafted geometric descriptors, and the training signal comes directly from synapse line-graph F1 rather than a surrogate segmentation metric.
+**Algorithm:**
+1. For each agent, collect the set of supervoxel IDs at visited synapses (pre and post).
+2. Initialize union-find with each agent as its own set.
+3. For each pair of agents sharing at least one supervoxel on the same polarity side, union their sets.
+4. Output: partition of agents into scaffold groups.
 
-## 8. Conclusion
+**Complexity:** O(N × M) for N agents, M synapses per agent; in practice ~10× reduction in group count.
+
+### 7.2 Merge Scoring and Beam Search
+
+**Input:** Scaffold groups, path arrays, grammar model.
+
+**Algorithm:**
+1. Encode each scaffold group’s representative path(s) with the Transformer PathEncoder.
+2. For each candidate merge pair (within `MERGE_RADIUS`, above `MERGE_OVERLAP_THRESHOLD`), compute `s = MergeScorer(emb_i, emb_j)`.
+3. Run beam search: repeatedly merge the highest-scoring compatible pair until no pair exceeds threshold or beam is full.
+4. Output: merged neuron clusters.
+
+### 7.3 Line-Graph F1 Definition
+
+**True edges:** For each synapse pair (i, j), add edge iff they share the same `pre_root_id` or the same `post_root_id`.
+
+**Predicted edges:** For each synapse pair (i, j), add edge iff both are assigned to the same pre-neuron and/or same post-neuron in the `ConnectivityGraph`.
+
+**F1 = 2·TP / (2·TP + FP + FN)** over these edge sets.
+
+### 7.4 Design Choices and Rationale
+
+| Choice | Rationale |
+|--------|------------|
+| Line-graph F1 as primary scalar | Closest box-scale proxy for downstream connectome correctness; directly measurable from CAVE root IDs. |
+| Coordinate-free path descriptors | Reusable across volumes; avoids registration; geometry captured by edge_len, radius, curvature. |
+| CAVE scaffold init | Exploits existing annotations; collapses search space before learned decisions. |
+| Transformer + [CLS] token | Global fragment embedding; multi-modal fusion without hand-designed pooling. |
+| Soft-F1 surrogate for GAT | Differentiable approximation of terminal metric; gradients align with F1. |
+| HeuristicConfig.learned() | Spatial thresholds generate candidates; learned models make final accept/reject. |
+
+## 8. Related Work and Positioning
+
+We position Neuronauts explicitly relative to the connectomics ecosystem.
+
+### 8.1 Relationship to Infrastructure and Data
+
+| Tool / System | Role | Neuronauts Relationship |
+|---------------|------|-------------------------|
+| **CAVE** | Annotation versioning, synapse tables, root IDs, materialization | **Consumes.** We treat CAVE root IDs and synapse tables as inputs. We do not replace CAVE; we refine connectivity inferred from it. |
+| **CloudVolume / Neuroglancer** | EM imagery, segmentation meshes, viewing | **Consumes.** We fetch EM chunks via CloudVolume. Neuroglancer is for human inspection; we are inference-only. |
+| **MICrONS / Minnie65** | Ground-truth dataset | **Trains and evaluates on.** Synapse line-graph F1 is computed against CAVE root IDs as the working ground truth. |
+
+### 8.2 Relationship to Segmentation and Tracing
+
+| Tool / Approach | What it optimises | Neuronauts relationship |
+|-----------------|-------------------|--------------------------|
+| **Flood-filling networks (FFN)** | Pixel-wise segmentation accuracy, merge/split at voxel level | **Complementary.** FFN produces the segmentation that CAVE versions. We operate downstream: given segments and synapses, we refine which synapses belong to which neuron. We do not re-segment. |
+| **RoboEM** | Trace completion, neurite path accuracy | **Different objective.** RoboEM optimises trace correctness; we optimise connectome correctness (synapse line-graph F1). Our paths are evidence for merge decisions, not the end product. |
+| **NEURD** | Morphology-based proofreading | **Different target.** NEURD uses morphology as the primary signal. We treat morphology (path geometry) as one input; the primary target is connectivity topology. |
+| **2.5D / 3D U-Nets** | Membrane prediction | **Optional input.** We use membrane fields to guide agents; we can use a 2.5D U-Net or fall back to Sobel. Membrane quality is not our terminal metric. |
+
+### 8.3 Relationship to Proofreading and Edit Imitation
+
+| Tool / Approach | What it does | Neuronauts relationship |
+|-----------------|--------------|--------------------------|
+| **Auto-proof, edit imitation** | Learn from proofreader merge/split decisions | **Aligned but extended.** We could consume such labels as additional merge supervision. Our main addition is global root-consistency supervision, scaffold init, and end-to-end F1 training. |
+| **Graph-based agglomeration** | Merge segments using hand-crafted or learned affinity | **Similar structure, different features and target.** Our nodes are scaffold groups; features are learned path embeddings; training target is synapse line-graph F1, not segmentation metric. |
+
+### 8.4 Detailed Comparison: NEURD, Guided Proofreading, and Neuronauts
+
+| Dimension | NEURD | Guided Proofreading (Edit Imitation) | Neuronauts v2 |
+|-----------|-------|--------------------------------------|---------------|
+| **Input** | Whole-neuron 3D meshes + synapses | Segmentation boundaries, large context around borders | EM volume chunks (~6 um) + CAVE synapse table |
+| **Representation** | Skeleton decomposed into non-branching segments; directed tree graph over mesh | Raw segmentation + CNN receptive field | Agent paths (450 steps) encoded as sequences; scaffold groups |
+| **Logic** | Heuristic graph rules (graph filters) — interpretable, hand-crafted | Learned CNN trained on expert yes/no decisions | Learned Transformer + GAT; grammar scores, beam search, soft-F1 |
+| **Training signal** | None (rule-based); parameters tuned from proofreader feedback | Imitation of expert merge/split decisions (local proxy) | Synapse line-graph F1 (terminal connectome metric) |
+| **Scope** | Whole neuron, entire mesh | Local boundary regions | Box-scale; one 6 um cube at a time |
+| **Merge vs split** | Merge errors only; strips erroneous subgraphs (no extension) | Both; split classifier + inverted merge classifier | Merge decisions over scaffold groups; no explicit split correction |
+| **Output** | Cleaned mesh, annotated graph, synapses reassigned | Corrected segmentation boundaries | Connectivity graph (neurons, synapse ownership) |
+| **Evaluation** | Synapse precision/recall vs manual proofreading | Variation of information, correction speed | Line-graph F1 over synapse pairs |
+| **Design philosophy** | Conservative: high precision, accept false negatives | Speed up human workflow (7.5x) via suggestions | End-to-end: train directly on connectome correctness |
+
+**NEURD vs Neuronauts.** NEURD operates on complete neuron meshes, decomposes them into morphology-rich graphs (spine density, width jumps, branching angles), and applies heuristic rules to identify merge errors. It is morphology-first: features are computed from mesh geometry, and the goal is to produce a cleaned, morphology-annotated neuron suitable for downstream analysis. Neuronauts, by contrast, operates on small EM boxes with no mesh requirement. Our paths are lightweight traces through the volume; we use CAVE supervoxel IDs to collapse the search space before any learned decision. The terminal target is synapse line-graph F1 — a direct measure of connectome correctness — not synapse precision/recall over manually proofread neurons. NEURD's strength is scale (whole MICrONS/H01 volumes) and interpretability (human-tunable rules); Neuronauts' strength is end-to-end learning against the scientific objective.
+
+**Guided Proofreading (Edit Imitation) vs Neuronauts.** Systems such as Guided Proofreading (Haehn et al., CVPR 2018) and related "auto-proof" or edit-imitation approaches train a CNN to imitate expert merge/split decisions at segmentation boundaries. The training target is "would a human accept this edit?" — a local proxy that can drift from connectome correctness when proofreaders are inconsistent or when the scientific goal (connectome accuracy) differs from the immediate task (acceptable merge). Neuronauts could consume such labels as additional merge supervision (same-root vs different-root pairs from proofread data), but our primary signal is global: CAVE root consistency and line-graph F1. We also use scaffold initialization to reduce the problem size before learning, and a GAT trained on the terminal metric to make globally consistent decisions. Edit imitation is complementary: we could add proofreader-accepted merges as positives and proofreader-rejected merges as negatives to our merge loss.
+
+### 8.5 What Neuronauts Is Not
+
+- **Not a replacement for CAVE or Neuroglancer.** It is a refinement layer over CAVE outputs.
+- **Not a general-purpose segmenter.** It does not produce voxel-level segmentation.
+- **Not a morphology-first system.** Morphology is evidence; connectivity correctness is the objective.
+- **Not trained on trace accuracy alone.** Trace quality matters only as input to merge and graph assembly.
+
+## 9. Conclusion
 
 Neuronauts v2 implements a complete end-to-end connectome inference platform grounded in a single thesis: the correctness of the induced connectome — not local segmentation quality — is the right training target. The system starts from CAVE segmentations as a noisy scaffold (reducing search space ~10× for free), encodes neural path geometry in an isotropic coordinate-free representation shared across all tasks, and trains every component against synapse line-graph F1.
 
@@ -261,9 +366,11 @@ The architecture is complete. The next milestone is establishing and improving a
 
 1. MICrONS Consortium et al. Functional connectomics spanning multiple areas of mouse visual cortex. *Nature* 2021. <https://www.nature.com/articles/s41586-021-03778-x>
 2. Li, P. H. et al. RoboEM: neurite reconstruction from 3D EM by AI-based direct image-to-trace translation. *Nature Methods* 2024. <https://www.nature.com/articles/s41592-024-02226-5>
-3. NEURD: Morphology-based connectome proofreading. *Nature* 2025. <https://www.nature.com/articles/s41586-025-08660-5>
-4. Silversmith, W. `cloud-volume`. <https://github.com/seung-lab/cloud-volume>
-5. CAVEconnectome. `CAVEclient`. <https://github.com/CAVEconnectome/CAVEclient>
-6. Bae, J. A. et al. Digital museum of retinal ganglion cells with dense anatomy and physiology. *Cell* 2024. <https://www.cell.com/cell/fulltext/S0092-8674(24)00308-4>
-7. Veličković, P. et al. Graph Attention Networks. *ICLR* 2018. <https://arxiv.org/abs/1710.10903>
-8. Vaswani, A. et al. Attention Is All You Need. *NeurIPS* 2017. <https://arxiv.org/abs/1706.03762>
+3. Reimer, J. et al. NEURD: automated proofreading and feature extraction for connectomics. *Nature* 2025. <https://www.nature.com/articles/s41586-025-08660-5>
+4. Haehn, D. et al. Guided proofreading of automatic segmentations for connectomics. *CVPR* 2018. <https://openaccess.thecvf.com/content_cvpr_2018/html/Haehn_Guided_Proofreading_of_CVPR_2018_paper.html>
+5. Silversmith, W. `cloud-volume`. <https://github.com/seung-lab/cloud-volume>
+6. CAVEconnectome. `CAVEclient`. <https://github.com/CAVEconnectome/CAVEclient>
+7. Bae, J. A. et al. Digital museum of retinal ganglion cells with dense anatomy and physiology. *Cell* 2024. <https://www.cell.com/cell/fulltext/S0092-8674(24)00308-4>
+8. Veličković, P. et al. Graph Attention Networks. *ICLR* 2018. <https://arxiv.org/abs/1710.10903>
+9. Vaswani, A. et al. Attention Is All You Need. *NeurIPS* 2017. <https://arxiv.org/abs/1706.03762>
+10. Whitney, M. et al. CAVE: Connectome Annotation Versioning Engine. *Nature Methods* 2025. <https://www.nature.com/articles/s41592-024-02426-z>

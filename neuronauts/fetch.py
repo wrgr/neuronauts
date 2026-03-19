@@ -162,6 +162,7 @@ def fetch_volume(
 def fetch_synapses(
     bbox_nm: Tuple[Tuple, Tuple],
     mip: int = 2,
+    version: int | None = None,
     datastack: str = MICRONS_DATASTACK,
     cave_server: str = CAVE_SERVER,
     token: Optional[str] = None,
@@ -173,6 +174,8 @@ def fetch_synapses(
         raise ImportError("pip install caveclient") from exc
 
     client = CAVEclient(datastack, server_address=cave_server, auth_token=token)
+    if version is not None:
+        client.version = version
     (x0, y0, z0), (x1, y1, z1) = bbox_nm
     syn_vox = np.array(SYNAPSE_VOXEL_SIZE_NM, dtype=np.float32)
     bbox_synapse_units = [

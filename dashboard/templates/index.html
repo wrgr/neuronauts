@@ -72,6 +72,20 @@
     </div>
   </div>
 
+  <!-- v2 Training Flow Banner -->
+  <div class="mb-3 p-3" style="background: linear-gradient(135deg, rgba(6,182,212,0.12), rgba(168,85,247,0.08)); border: 1px solid rgba(6,182,212,0.3); border-radius: 10px;">
+    <div class="d-flex align-items-center gap-2 mb-1">
+      <span style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--cyan)">v2 Primary Path</span>
+      <code class="small" style="color:var(--muted)">scripts/train.py</code>
+    </div>
+    <div style="font-size:0.82rem;color:var(--text);line-height:1.5">
+      <strong>Grammar + GAT training</strong> on real MICrONS boxes: <code>python scripts/train.py build-dataset --cache-dir data/boxes --n-boxes 100</code>
+      then <code>python scripts/train.py train --cache-dir data/boxes --grammar-output models/shared_grammar.pt --gat-output models/gat.pt --epochs 50 --train-gat</code>.
+      Logs: <code>run_logs/train_log.tsv</code>
+    </div>
+    <div id="v2-train-summary" class="mt-2" style="font-size:0.75rem;color:var(--muted)"></div>
+  </div>
+
   <!-- Top metric cards -->
   <div class="row g-3 mb-3" id="top-metrics">
     <div class="col-6 col-md-3">

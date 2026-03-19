@@ -94,8 +94,26 @@ def build_merge_examples(
     synapses: SynapseTable,
     *,
     min_fragment_size: int = 2,
-    max_negative_pairs_per_role: int = 32,
+    max_negative_pairs_per_role: int | None = None,
+    max_positives_per_role: int = 512,
+    max_roots_for_negatives: int = 100,
+    seed: int = 0,
 ) -> list[MergeExample]:
+    """Build merge (positive) and non-merge (negative) synapse-pair examples.
+
+    Parameters
+    ----------
+    max_positives_per_role:
+        Cap on same-root positive examples per role (pre/post) before
+        generating negatives.  Prevents wasted work in large boxes with
+        thousands of root-id groups.
+    max_roots_for_negatives:
+        Cap the candidate-group pool for negative-pair generation to this
+        many randomly-sampled root groups before the O(n²) distance sort.
+        Keeps negative generation O(max_roots²) regardless of box size.
+        With 100 groups the loop runs ≤ 4,950 iterations instead of millions.
+    """
+    rng = np.random.default_rng(seed)
     examples: list[MergeExample] = []
     role_specs = [
         ("pre", synapses.pre_pt, synapses.pre_root_id),
@@ -104,9 +122,13 @@ def build_merge_examples(
 
     for role, points, root_ids in role_specs:
         groups = _root_groups(root_ids)
+        group_items = list(groups.items())
 
-        # Positives: two subfragments from the same rooted cluster.
-        for root_id, indices in groups.items():
+        # Positives: one split per same-root cluster, capped early.
+        n_pos = 0
+        for root_id, indices in group_items:
+            if n_pos >= max_positives_per_role:
+                break
             if len(indices) < max(4, min_fragment_size * 2):
                 continue
             split = _split_same_root(indices, points)
@@ -129,9 +151,31 @@ def build_merge_examples(
                     right_sequence=right_seq,
                 )
             )
+            n_pos += 1
 
         # Negatives: nearby but distinct rooted clusters.
-        candidate_groups = [(int(root_id), indices) for root_id, indices in groups.items() if len(indices) >= min_fragment_size]
+        #
+        # IMPORTANT: keep negative sampling roughly balanced with positives.
+        # A hard-coded small cap (e.g. 32) yields a degenerate dataset for large
+        # boxes (hundreds of positives per role but only a few negatives), which
+        # can produce misleadingly perfect accuracy/BCE.
+        neg_cap = max_negative_pairs_per_role
+        if neg_cap is None:
+            neg_cap = max(1, n_pos)
+        # Subsample candidate groups first to avoid O(n_roots²) blowup in
+        # large boxes.  Hard negatives (closest centroids) are still preferred
+        # within the subsample.
+        candidate_groups = [
+            (int(root_id), indices)
+            for root_id, indices in group_items
+            if len(indices) >= min_fragment_size
+        ]
+        if len(candidate_groups) > max_roots_for_negatives:
+            chosen = rng.choice(
+                len(candidate_groups), size=max_roots_for_negatives, replace=False
+            )
+            candidate_groups = [candidate_groups[i] for i in chosen]
+
         pairs = []
         for i in range(len(candidate_groups)):
             for j in range(i + 1, len(candidate_groups)):
@@ -142,8 +186,8 @@ def build_merge_examples(
                 dist = float(np.linalg.norm(centroid_a - centroid_b))
                 pairs.append((dist, root_a, root_b, idx_a, idx_b))
         pairs.sort(key=lambda item: item[0])
-        if max_negative_pairs_per_role > 0:
-            pairs = pairs[:max_negative_pairs_per_role]
+        if neg_cap > 0:
+            pairs = pairs[:neg_cap]
 
         for _, root_a, root_b, idx_a, idx_b in pairs:
             left_idx = idx_a[: max(min_fragment_size, min(len(idx_a), len(idx_a)))]
@@ -172,7 +216,7 @@ def build_merge_examples_for_box(
     box: RealBoxSpec,
     *,
     min_fragment_size: int = 2,
-    max_negative_pairs_per_role: int = 32,
+    max_negative_pairs_per_role: int | None = None,
 ) -> list[MergeExample]:
     synapses = fetch_synapses(box.bbox_nm, mip=box.mip)
     return build_merge_examples(

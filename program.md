@@ -75,6 +75,53 @@ negative) and topology/atomicity examples. Approximately 0.3 s/box on CPU.
 The `--gat-every-n-epochs 5` flag amortizes this cost by training the GAT every
 5 grammar epochs rather than every epoch.
 
+### Train from v117 cache (comparison to latest)
+
+When your box cache was built with `--cave-version 117`, train so that **labels**
+are in the latest materialization (1412). That way merge/atomicity/GAT supervision
+compares v117 segmentation to the current synapse set.
+
+**1. Check the cache** (optional — confirm roots are v117):
+
+```bash
+BASE_CACHE_DIR="data/boxes_v117"   # or wherever you built with --cave-version 117
+python -c "
+import json, sys
+path = sys.argv[1]
+idx = json.load(open(path))
+vers = {r.get('root_id_version') for r in idx if r.get('root_id_version') is not None}
+print('root_id_version in cache:', vers or 'none set (assume 117 if built with --cave-version 117)')
+" "$BASE_CACHE_DIR/index.json"
+```
+
+**2. Build the root-ID mapping table** (one-time, needs network):
+
+```bash
+python scripts/train.py remap-roots \
+  --cache-dir "$BASE_CACHE_DIR" \
+  --base-version 117 \
+  --target-version 1412 \
+  --output "$BASE_CACHE_DIR/root_remap_v117_to_v1412.tsv"
+```
+
+**3. Train using the v117 cache with labels in latest (1412) space:**
+
+```bash
+python scripts/train.py train \
+  --cache-dir "$BASE_CACHE_DIR" \
+  --base-version 117 \
+  --target-version 1412 \
+  --root-remap-tsv "$BASE_CACHE_DIR/root_remap_v117_to_v1412.tsv" \
+  --grammar-output models/shared_grammar_real.pt \
+  --gat-output models/gat_real.pt \
+  --epochs 30
+```
+
+Training will load each box’s v117 roots, apply the precomputed mapping to 1412,
+drop synapses that vanish (mapped to 0), and build merge/atomicity/GAT labels
+from the **mapped** root IDs. So you are training against the latest synapse set
+while keeping box geometry from the v117 pull.
+
 ## Key Files
 
 | File | Purpose |
@@ -94,12 +141,27 @@ The `--gat-every-n-epochs 5` flag amortizes this cost by training the GAT every
 - positives: subfragments from the same CAVE root cluster (spatial split at PCA midpoint)
 - negatives: nearby fragments from different root IDs
 - source: cached synapse tables, no simulation required
+- versioning: root IDs are assumed to live at a configurable ``--base-version``
+  (default 1412).  When ``--target-version`` differs, root IDs are mapped
+  forward via ``chunkedgraph.get_latest_roots`` before supervision is
+  constructed so labels always correspond to the target materialization.
+- cache alignment: run ``scripts/train.py build-dataset`` with ``--cave-version``
+  matching ``--base-version`` so cached ``pre_root_id``/``post_root_id`` are in
+  the expected label space.
+- recompute connectivity: when you change the root-ID mapping, you should
+  rebuild any cached per-box derived supervision (at minimum: mask synapses
+  that vanish under the mapping and recompute per-box ``n_positive_pairs``).
+  Use ``scripts/train.py remap-cache-roots`` to produce a target-version
+  cache where training targets are consistent.
 
 ### 2. Global atomicity supervision
 
 - positive: synapse cluster where all synapses share one root on the relevant side
 - negative: cluster formed by merging two distinct roots
 - source: cached synapse tables, no simulation required
+- versioning: the same ``base_version → target_version`` mapping is applied as
+  for merge supervision; clusters that involve roots which vanish under the
+  mapping (mapped to 0) are currently dropped from training.
 
 ### 3. Self-supervised bridge loss
 

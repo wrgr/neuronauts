@@ -131,9 +131,12 @@ def _atomic_examples_for_role(
     encoder: PathEncoder,
     min_cluster_size: int,
     max_branches: int,
+    max_examples: int = 256,
 ) -> list[ClusterExample]:
     examples = []
     for root_id, indices in _root_groups(root_ids).items():
+        if len(examples) >= max_examples:
+            break
         if len(indices) < min_cluster_size:
             continue
         cluster_points = points[indices]
@@ -165,10 +168,16 @@ def _non_atomic_examples_for_role(
     max_negative_pairs_per_role: int,
     max_branches: int,
     rng: np.random.Generator,
+    max_roots_for_negatives: int = 100,
 ) -> list[ClusterExample]:
     groups = [(root_id, indices) for root_id, indices in _root_groups(root_ids).items() if len(indices) >= min_cluster_size]
     if len(groups) < 2:
         return []
+
+    # Subsample before O(n²) distance computation so large boxes don't stall.
+    if len(groups) > max_roots_for_negatives:
+        chosen = rng.choice(len(groups), size=max_roots_for_negatives, replace=False)
+        groups = [groups[i] for i in chosen]
 
     centroids = {int(root_id): points[indices].mean(axis=0) for root_id, indices in groups}
     pairs = []

@@ -13,7 +13,26 @@ class PathSequenceBatch:
     mask: np.ndarray
 
 
-def pad_path_sequences(sequences: list[np.ndarray], *, feature_dim: int = 3) -> PathSequenceBatch:
+def _downsample_steps(seq: np.ndarray, max_steps: int) -> np.ndarray:
+    """Downsample a path sequence to at most max_steps rows.
+
+    Uses deterministic linear indexing (keeps endpoints) to avoid blowing up
+    Transformer positional encodings on very large fragments in big boxes.
+    """
+    seq = np.asarray(seq, dtype=np.float32)
+    steps = int(seq.shape[0])
+    if steps <= max_steps:
+        return seq
+    idx = np.linspace(0, steps - 1, num=max_steps, dtype=np.int64)
+    return seq[idx]
+
+
+def pad_path_sequences(
+    sequences: list[np.ndarray],
+    *,
+    feature_dim: int = 3,
+    max_steps_cap: int = 512,
+) -> PathSequenceBatch:
     """Pad variable-length path descriptor sequences to a dense batch.
 
     Each input sequence is expected to be shaped ``(steps, feature_dim)``.
@@ -25,6 +44,8 @@ def pad_path_sequences(sequences: list[np.ndarray], *, feature_dim: int = 3) -> 
             mask=np.zeros((0, 0), dtype=bool),
         )
 
+    # Cap max length to keep the Transformer encoder stable.
+    sequences = [_downsample_steps(sequence, max_steps_cap) for sequence in sequences]
     max_steps = max(sequence.shape[0] for sequence in sequences)
     x = np.zeros((len(sequences), max_steps, feature_dim), dtype=np.float32)
     mask = np.ones((len(sequences), max_steps), dtype=bool)
@@ -48,6 +69,7 @@ def pad_nested_path_sequences(
     *,
     max_items: int | None = None,
     feature_dim: int = 3,
+    max_steps_cap: int = 512,
 ) -> NestedPathSequenceBatch:
     """Pad a batch of variable-length lists of variable-length sequences."""
     if not items:
@@ -61,7 +83,10 @@ def pad_nested_path_sequences(
     max_steps = 0
     for group in items:
         for sequence in group[:item_cap]:
-            max_steps = max(max_steps, int(np.asarray(sequence).shape[0]))
+            max_steps = max(
+                max_steps,
+                int(_downsample_steps(sequence, max_steps_cap).shape[0]),
+            )
 
     x = np.zeros((len(items), item_cap, max_steps, feature_dim), dtype=np.float32)
     sequence_mask = np.ones((len(items), item_cap, max_steps), dtype=bool)
@@ -69,7 +94,7 @@ def pad_nested_path_sequences(
 
     for batch_idx, group in enumerate(items):
         for item_idx, sequence in enumerate(group[:item_cap]):
-            seq = np.asarray(sequence, dtype=np.float32)
+            seq = _downsample_steps(sequence, max_steps_cap)
             steps = seq.shape[0]
             x[batch_idx, item_idx, :steps, : seq.shape[1]] = seq
             sequence_mask[batch_idx, item_idx, :steps] = False

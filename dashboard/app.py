@@ -1,7 +1,11 @@
 """
-Neuronauts performance dashboard.
+Neuronauts v2 performance dashboard.
 Run with: .venv/bin/python dashboard/app.py
 Then open http://localhost:5050
+
+Primary training path (v2): scripts/train.py
+  build-dataset → train (grammar + GAT)
+Legacy v1 pipeline: run_research_cycle (export_merge, export_topology, …)
 """
 import glob
 import json
@@ -115,17 +119,42 @@ def read_latest_cycle():
     return None
 
 
+def read_v2_train_log():
+    """Read v2 training log (scripts/train.py) if present."""
+    path = PROJECT_ROOT / "run_logs" / "train_log.tsv"
+    if not path.exists():
+        return None
+    rows = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().strip().splitlines()
+        if len(lines) < 2:
+            return None
+        header = lines[0].split("\t")
+        for line in lines[1:]:
+            vals = line.split("\t")
+            if len(vals) >= len(header):
+                rows.append(dict(zip(header, vals)))
+    except Exception:
+        return None
+    return {"header": header, "rows": rows} if rows else None
+
+
 def detect_running():
-    """Heuristic: check if any stdout log was written in the last 60 s."""
+    """Heuristic: check if any stdout log or v2 train log was written in the last 60 s."""
     patterns = [
         str(PROJECT_ROOT / "run_logs" / "latest" / "*.stdout.log"),
         str(PROJECT_ROOT / "run_logs" / "codex_optimize" / "iteration_*" / "accepted_loop" / "*.stdout.log"),
     ]
+    paths_to_check = list(glob.glob(pattern) for pattern in patterns)
+    train_log = PROJECT_ROOT / "run_logs" / "train_log.tsv"
+    if train_log.exists():
+        paths_to_check.append([str(train_log)])
     now = time.time()
-    for pattern in patterns:
-        for log in glob.glob(pattern):
+    for path_list in paths_to_check:
+        for log in path_list:
             try:
-                if now - os.path.getmtime(log) < 60:
+                if Path(log).exists() and now - os.path.getmtime(log) < 60:
                     return True
             except OSError:
                 pass
@@ -632,6 +661,7 @@ def api_data():
 
     dataset_stats = read_dataset_stats()
     training_losses = read_training_losses()
+    v2_train_log = read_v2_train_log()
 
     return jsonify({
         "ledger": ledger,
@@ -640,6 +670,7 @@ def api_data():
         "step_timeline": step_timeline,
         "dataset_stats": dataset_stats,
         "training_losses": training_losses,
+        "v2_train_log": v2_train_log,
         "is_running": is_running,
         "pipeline_steps": PIPELINE_STEPS,
         "step_labels": STEP_LABELS,

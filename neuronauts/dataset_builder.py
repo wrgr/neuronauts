@@ -2,31 +2,35 @@
 
 Usage
 -----
-Quick start — build a cache of 20 boxes with ≥ 15 synapses each::
+Quick start — CAVE-only, bigger boxes (recommended)::
 
-    from neuronauts.dataset_builder import BoxCache, build_dataset, select_random_boxes
-    boxes  = select_random_boxes(n=20)
-    cache  = BoxCache("data/boxes")
-    records = build_dataset(boxes, cache, min_synapses=15, verbose=True)
+    python scripts/train.py build-dataset \\
+        --cache-dir data/boxes30 \\
+        --n-boxes 80 \\
+        --box-side-um 30 \\
+        --min-positive-pairs 5 \\
+        --no-em
 
-Or seed from a local nucleus table (produced by synapse_root_counts_static.py)::
+This fetches only synapse tables from CAVE (no EM volume download) and
+filters for boxes that contain at least 5 same-root-id synapse pairs —
+guaranteeing the grammar has real positive examples to learn from.
 
-    records = build_dataset(
-        select_boxes_from_nucleus_table(
-            counts_tsv="run_logs/synapse_root_counts_static.tsv",
-            nucleus_csv="data/microns_static/v1078/nucleus_detection_v0.csv",
-            n=40,
-        ),
-        cache,
-    )
+Or with the Python API::
+
+    from neuronauts.dataset_builder import BoxCache, build_dataset, select_synapse_seeded_boxes
+    specs   = select_synapse_seeded_boxes(n=80, box_side_um=30)
+    cache   = BoxCache("data/boxes30")
+    records = build_dataset(specs, cache, no_em=True, min_positive_pairs=5, verbose=True)
 
 Data format
 -----------
 Each box is persisted as two files under ``cache_dir/``::
 
-    <hash>.npz   — volume, pre_pt, post_pt, pre_root_id, post_root_id,
+    <hash>.npz   — [volume,] pre_pt, post_pt, pre_root_id, post_root_id,
                    synapse_id, [pre_seg_id, post_seg_id]
-    <hash>.json  — metadata (center_nm, side_um, mip, n_synapses, …)
+                   (volume is absent for CAVE-only / --no-em boxes)
+    <hash>.json  — metadata (center_nm, side_um, mip, n_synapses,
+                   n_positive_pairs, has_volume, …)
 
 An ``index.json`` in the root of the cache dir lists all records so the
 cache can be loaded without scanning the filesystem.
@@ -81,6 +85,16 @@ class BoxRecord:
     used to name the on-disk files.  All numeric fields are stored in the
     companion ``<hash>.json`` file so the cache can be reconstructed from
     the index without loading the heavy ``.npz`` arrays.
+
+    Attributes
+    ----------
+    n_positive_pairs:
+        Number of same-root-id synapse pairs (pre-side + post-side combined).
+        0 means unknown (boxes cached before this field was added).
+    has_volume:
+        False for CAVE-only boxes built with ``no_em=True`` / ``--no-em``.
+        Grammar training works fine without the volume; only GAT/agent
+        simulation requires it.
     """
 
     box_hash: str
@@ -88,6 +102,9 @@ class BoxRecord:
     side_um: float
     mip: int
     n_synapses: int
+    n_positive_pairs: int = 0
+    has_volume: bool = True
+    root_id_version: int | None = None
 
     def to_spec(self) -> RealBoxSpec:
         return RealBoxSpec(
@@ -148,8 +165,17 @@ class BoxCache:
         return len(self._index)
 
     def all_records(self) -> list[BoxRecord]:
-        """Return all cached box records."""
-        return [BoxRecord(**entry) for entry in self._index]
+        """Return all cached box records.
+
+        Supplies default values for fields added after the initial cache was
+        built so old caches remain readable.
+        """
+        _defaults = {
+            "n_positive_pairs": 0,
+            "has_volume": True,
+            "root_id_version": None,
+        }
+        return [BoxRecord(**{**_defaults, **entry}) for entry in self._index]
 
     def contains(self, spec: RealBoxSpec) -> bool:
         return any(entry["box_hash"] == spec.cache_key for entry in self._index)
@@ -159,6 +185,8 @@ class BoxCache:
         spec: RealBoxSpec,
         volume: VolumeChunk,
         synapses: SynapseTable,
+        n_positive_pairs: int = 0,
+        root_id_version: int | None = None,
     ) -> BoxRecord:
         """Persist a (volume, synapses) pair.  Returns the new record.
 
@@ -167,8 +195,10 @@ class BoxCache:
         """
         box_hash = spec.cache_key
         if self.contains(spec):
+            _defaults = {"n_positive_pairs": 0, "has_volume": True}
             existing = next(
-                BoxRecord(**e) for e in self._index if e["box_hash"] == box_hash
+                BoxRecord(**{**_defaults, **e})
+                for e in self._index if e["box_hash"] == box_hash
             )
             return existing
 
@@ -194,6 +224,9 @@ class BoxCache:
             "voxel_size_nm": list(volume.voxel_size_nm),
             "volume_shape": list(volume.data.shape),
             "n_synapses": int(len(synapses.pre_pt)),
+            "n_positive_pairs": n_positive_pairs,
+            "has_volume": True,
+            "root_id_version": root_id_version,
         }
         self._meta_path(box_hash).write_text(
             json.dumps(meta, indent=2), encoding="utf-8"
@@ -205,22 +238,105 @@ class BoxCache:
             side_um=spec.side_um,
             mip=spec.mip,
             n_synapses=int(len(synapses.pre_pt)),
+            n_positive_pairs=n_positive_pairs,
+            has_volume=True,
+            root_id_version=root_id_version,
+        )
+        self._index.append(asdict(record))
+        self._save_index()
+        return record
+
+    def save_synapse_only(
+        self,
+        spec: RealBoxSpec,
+        synapses: SynapseTable,
+        n_positive_pairs: int = 0,
+        root_id_version: int | None = None,
+    ) -> BoxRecord:
+        """Persist synapse table only — no EM volume (CAVE-only mode).
+
+        Grammar training works entirely from synapse geometry and root IDs;
+        the EM volume is only needed for agent simulation (GAT training).
+        Skipping the volume fetch makes data collection ~10× faster and
+        allows much larger box sizes without memory pressure.
+        """
+        box_hash = spec.cache_key
+        if self.contains(spec):
+            _defaults = {"n_positive_pairs": 0, "has_volume": False}
+            existing = next(
+                BoxRecord(**{**_defaults, **e})
+                for e in self._index if e["box_hash"] == box_hash
+            )
+            return existing
+
+        arrays: dict[str, np.ndarray] = {
+            "pre_pt":      synapses.pre_pt,
+            "post_pt":     synapses.post_pt,
+            "pre_root_id": synapses.pre_root_id,
+            "post_root_id":synapses.post_root_id,
+            "synapse_id":  synapses.synapse_id,
+        }
+        if synapses.pre_seg_id is not None:
+            arrays["pre_seg_id"] = synapses.pre_seg_id
+        if synapses.post_seg_id is not None:
+            arrays["post_seg_id"] = synapses.post_seg_id
+
+        np.savez_compressed(self._npz_path(box_hash), **arrays)
+
+        meta = {
+            "center_nm": list(spec.center_nm),
+            "side_um": spec.side_um,
+            "mip": spec.mip,
+            "n_synapses": int(len(synapses.pre_pt)),
+            "n_positive_pairs": n_positive_pairs,
+            "has_volume": False,
+            "root_id_version": root_id_version,
+        }
+        self._meta_path(box_hash).write_text(
+            json.dumps(meta, indent=2), encoding="utf-8"
+        )
+
+        record = BoxRecord(
+            box_hash=box_hash,
+            center_nm=tuple(spec.center_nm),
+            side_um=spec.side_um,
+            mip=spec.mip,
+            n_synapses=int(len(synapses.pre_pt)),
+            n_positive_pairs=n_positive_pairs,
+            has_volume=False,
+            root_id_version=root_id_version,
         )
         self._index.append(asdict(record))
         self._save_index()
         return record
 
     def load(self, record: BoxRecord) -> tuple[VolumeChunk, SynapseTable]:
-        """Load a (VolumeChunk, SynapseTable) pair from disk."""
+        """Load a (VolumeChunk, SynapseTable) pair from disk.
+
+        For CAVE-only boxes (``record.has_volume is False``) the returned
+        ``VolumeChunk`` has an empty ``data`` array.  Grammar training ignores
+        the volume; only GAT/agent-simulation steps need a real volume.
+        """
         npz = np.load(self._npz_path(record.box_hash), allow_pickle=False)
         meta = json.loads(self._meta_path(record.box_hash).read_text(encoding="utf-8"))
 
-        volume = VolumeChunk(
-            data=npz["volume"],
-            voxel_size_nm=tuple(meta["voxel_size_nm"]),
-            bbox_voxels=((0, 0, 0), tuple(meta["volume_shape"])),
-            mip=record.mip,
-        )
+        if "volume" in npz and meta.get("has_volume", True):
+            volume = VolumeChunk(
+                data=npz["volume"],
+                voxel_size_nm=tuple(meta["voxel_size_nm"]),
+                bbox_voxels=((0, 0, 0), tuple(meta["volume_shape"])),
+                mip=record.mip,
+            )
+        else:
+            # Synapse-only box: return a stub volume so callers don't need
+            # to special-case the return type.
+            volume = VolumeChunk(
+                data=np.zeros((0, 0, 0), dtype=np.uint8),
+                voxel_size_nm=(32.0, 32.0, 40.0),
+                bbox_voxels=((0, 0, 0), (0, 0, 0)),
+                mip=record.mip,
+            )
+
         synapses = SynapseTable(
             pre_pt=npz["pre_pt"],
             post_pt=npz["post_pt"],
@@ -302,6 +418,7 @@ def select_synapse_seeded_boxes(
     sample_limit: int = 2000,
     datastack: str = MICRONS_DATASTACK,
     cave_server: str = CAVE_SERVER,
+    cave_version: int | None = None,
 ) -> list[RealBoxSpec]:
     """Pick box centres from real CAVE synapse positions.
 
@@ -339,6 +456,8 @@ def select_synapse_seeded_boxes(
 
     rng = np.random.default_rng(seed)
     client = CAVEclient(datastack, server_address=cave_server, auth_token=token)
+    if cave_version is not None:
+        client.version = cave_version
 
     # Pull a spatial sample from the synapse table.  Using synapse_query with
     # no bounding box may be refused for very large tables; fall back to
@@ -495,6 +614,31 @@ def select_boxes_from_nucleus_table(
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def count_positive_pairs(synapses: SynapseTable) -> int:
+    """Count same-root-id synapse pairs (pre-side + post-side combined).
+
+    A positive pair (y_ij = 1) is any two synapses that share the same
+    pre_root_id or the same post_root_id — i.e. they are on the same neuron
+    on at least one side.  This is the quantity the merge head is trained on.
+
+    Boxes with few positive pairs give the grammar almost no positive
+    examples to learn from; use ``min_positive_pairs`` in ``build_dataset``
+    to filter them out.
+    """
+    from collections import Counter
+
+    total = 0
+    for root_ids in (synapses.pre_root_id, synapses.post_root_id):
+        for n in Counter(root_ids).values():
+            if n >= 2:
+                total += n * (n - 1) // 2
+    return total
+
+
+# ---------------------------------------------------------------------------
 # Dataset builder
 # ---------------------------------------------------------------------------
 
@@ -504,28 +648,35 @@ def build_dataset(
     *,
     min_synapses: int = 10,
     max_synapses: int = 300,
+    min_positive_pairs: int = 0,
+    no_em: bool = False,
     token: str | None = None,
+    cave_version: int | None = None,
     verbose: bool = True,
 ) -> list[BoxRecord]:
     """Fetch each box spec from MICrONS and persist to *cache*.
 
-    Already-cached boxes are skipped.  Boxes with fewer than ``min_synapses``
-    or more than ``max_synapses`` synapse pairs are skipped and not cached
-    (they would either produce trivially easy examples or overwhelm the
-    simulation budget).
-
-    Requires network access to the CloudVolume EM source and to CAVE for
-    synapses.
+    Already-cached boxes are skipped.  Boxes failing the synapse or
+    positive-pair filters are skipped and not cached.
 
     Parameters
     ----------
     specs:
-        Box specs to fetch (from ``select_random_boxes`` or
-        ``select_boxes_from_nucleus_table``).
+        Box specs to fetch (from any ``select_*`` helper).
     cache:
         Destination ``BoxCache``.
     min_synapses / max_synapses:
-        Synapse-count filter applied *after* fetching.
+        Total synapse-count filter applied after fetching.
+    min_positive_pairs:
+        Minimum number of same-root-id synapse pairs required.  Boxes below
+        this threshold contain almost no positive training examples and should
+        be discarded.  Recommended: 5 for 30 µm boxes, 2 for 15 µm boxes.
+        Default 0 keeps all boxes (backward-compatible).
+    no_em:
+        If True, skip the EM volume fetch and store only the synapse table.
+        Grammar training requires only synapse geometry and root IDs, so this
+        is safe for all grammar-only workflows.  Makes data collection ~10×
+        faster and allows much larger boxes without memory pressure.
     token:
         Optional CAVE auth token (not required for public minnie65 access).
     verbose:
@@ -533,32 +684,44 @@ def build_dataset(
 
     Returns
     -------
-    List of ``BoxRecord`` for every box now present in the cache (including
-    previously cached boxes that matched the filter).
+    List of ``BoxRecord`` for every usable box now present in the cache
+    (including previously cached boxes that pass the filters).
     """
     records: list[BoxRecord] = []
     n_skip_cached = 0
     n_skip_synapse = 0
+    n_skip_pairs = 0
     n_fetched = 0
 
     for i, spec in enumerate(specs):
         if cache.contains(spec):
             existing = next(r for r in cache.all_records() if r.box_hash == spec.cache_key)
-            if min_synapses <= existing.n_synapses <= max_synapses:
+            passes = (
+                min_synapses <= existing.n_synapses <= max_synapses
+                and existing.n_positive_pairs >= min_positive_pairs
+            )
+            if passes:
                 records.append(existing)
             n_skip_cached += 1
             continue
 
         if verbose:
+            em_tag = "" if no_em else " + EM"
             print(
                 f"  [{i+1}/{len(specs)}] fetching center={spec.center_nm} "
-                f"side={spec.side_um}µm …",
+                f"side={spec.side_um}µm{em_tag} …",
                 end=" ",
                 flush=True,
             )
 
         try:
-            synapses = fetch_synapses(spec.bbox_nm, mip=spec.mip, token=token)
+            # fetch_synapses will set CAVEclient.version when passed.
+            synapses = fetch_synapses(
+                spec.bbox_nm,
+                mip=spec.mip,
+                token=token,
+                version=cave_version,
+            )
             n_syn = int(len(synapses.pre_pt))
 
             if n_syn < min_synapses or n_syn > max_synapses:
@@ -567,13 +730,36 @@ def build_dataset(
                 n_skip_synapse += 1
                 continue
 
-            volume = fetch_volume(spec.bbox_nm, mip=spec.mip)
-            record = cache.save(spec, volume, synapses)
+            n_pos = count_positive_pairs(synapses)
+            if n_pos < min_positive_pairs:
+                if verbose:
+                    print(f"skip (n_synapses={n_syn}, positive_pairs={n_pos} < {min_positive_pairs})")
+                n_skip_pairs += 1
+                continue
+
+            if no_em:
+                record = cache.save_synapse_only(
+                    spec,
+                    synapses,
+                    n_positive_pairs=n_pos,
+                    root_id_version=cave_version,
+                )
+                if verbose:
+                    print(f"ok (n_synapses={n_syn}, positive_pairs={n_pos})")
+            else:
+                volume = fetch_volume(spec.bbox_nm, mip=spec.mip)
+                record = cache.save(
+                    spec,
+                    volume,
+                    synapses,
+                    n_positive_pairs=n_pos,
+                    root_id_version=cave_version,
+                )
+                if verbose:
+                    print(f"ok (n_synapses={n_syn}, positive_pairs={n_pos}, shape={volume.data.shape})")
+
             records.append(record)
             n_fetched += 1
-
-            if verbose:
-                print(f"ok (n_synapses={n_syn}, shape={volume.data.shape})")
 
         except Exception as exc:
             logger.warning("Failed to fetch %s: %s", spec.center_nm, exc)
@@ -583,7 +769,9 @@ def build_dataset(
     if verbose:
         print(
             f"\nDataset build complete: {n_fetched} new, "
-            f"{n_skip_cached} already cached, {n_skip_synapse} skipped by synapse count. "
+            f"{n_skip_cached} already cached, "
+            f"{n_skip_synapse} skipped (synapse count), "
+            f"{n_skip_pairs} skipped (too few positive pairs). "
             f"Total usable records: {len(records)}"
         )
     return records
@@ -598,11 +786,14 @@ def load_dataset(
     *,
     min_synapses: int = 0,
     max_synapses: int = 999_999,
+    min_positive_pairs: int = 0,
 ) -> tuple[BoxCache, list[BoxRecord]]:
-    """Load an existing cache and return (cache, records) filtered by synapse count."""
+    """Load an existing cache and return (cache, records) filtered by synapse count
+    and positive-pair count."""
     cache = BoxCache(cache_dir)
     records = [
         r for r in cache.all_records()
         if min_synapses <= r.n_synapses <= max_synapses
+        and r.n_positive_pairs >= min_positive_pairs
     ]
     return cache, records
