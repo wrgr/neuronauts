@@ -110,6 +110,39 @@ python scripts/train.py run \
   --epochs 30
 ```
 
+### 5. Proofread-core example: v117 geometry, latest labels
+
+Build a synapse-only cache from proofread roots inside the proofread core, using
+`v117` root IDs:
+
+```bash
+python scripts/train.py build-dataset \
+  --cache-dir data/proofread_core_v117 \
+  --strategy proofread-core \
+  --cave-version 117 \
+  --proofread-n-roots 50 \
+  --proofread-radius-um 40 \
+  --proofread-min-anchor-synapses 50
+```
+
+Then map those cached roots forward and train against the latest materialization:
+
+```bash
+python scripts/train.py remap-roots \
+  --cache-dir data/proofread_core_v117 \
+  --base-version 117 \
+  --target-version 1412 \
+  --output data/proofread_core_v117/root_remap_v117_to_v1412.tsv
+
+python scripts/train.py train \
+  --cache-dir data/proofread_core_v117 \
+  --base-version 117 \
+  --target-version 1412 \
+  --root-remap-tsv data/proofread_core_v117/root_remap_v117_to_v1412.tsv \
+  --grammar-output models/shared_grammar_real.pt \
+  --epochs 30
+```
+
 ### Static data (offline synapse counts)
 
 Download static MICrONS synapse/nucleus tables without CAVE authentication:

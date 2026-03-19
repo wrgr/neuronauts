@@ -80,11 +80,23 @@ def _require_torch():
         ) from exc
 
 
-def _grammar_batch_from_synapses(synapses, device, *, max_merge=256, max_topo=128):
+def _grammar_batch_from_synapses(
+    synapses,
+    device,
+    *,
+    max_merge=256,
+    max_topo=128,
+    max_negative_pairs_per_role=64,
+    topo_balanced=True,
+):
     """Build merge + topology batches from a SynapseTable (no simulation).
 
     Returns ``(merge_batch, topo_batch)`` or ``(None, None)`` if the synapse
     table is too sparse to produce any examples.
+
+    When ``topo_balanced=True`` (default), topology examples are stratified so
+    we take roughly equal numbers of atomic (label=1) and non-atomic (label=0)
+    examples. This avoids the "predict-1-always" shortcut when pos_frac is high.
     """
     import torch
     from neuronauts.merge_dataset import build_merge_examples, examples_to_arrays
@@ -96,7 +108,11 @@ def _grammar_batch_from_synapses(synapses, device, *, max_merge=256, max_topo=12
     # Balanced merge examples (negatives scale with positives), then shuffle so
     # the per-box cap doesn't accidentally select all-positives.
     merge_examples = build_merge_examples(synapses)
-    topo_examples = build_cluster_examples(synapses, membrane_field=None)  # membrane ignored
+    topo_examples = build_cluster_examples(
+        synapses,
+        membrane_field=None,  # membrane ignored
+        max_negative_pairs_per_role=max_negative_pairs_per_role,
+    )
 
     if not merge_examples or not topo_examples:
         return None, None
@@ -111,7 +127,43 @@ def _grammar_batch_from_synapses(synapses, device, *, max_merge=256, max_topo=12
     else:
         merge_examples = [merge_examples[i] for i in rng.permutation(len(merge_examples))]
 
-    if len(topo_examples) > max_topo:
+    # Stratified topology sampling: take roughly equal pos/neg to avoid trivial
+    # majority prediction (e.g. pos_frac ~0.9 → predict-1 yields 90% acc).
+    if topo_balanced:
+        pos = [i for i, ex in enumerate(topo_examples) if ex.label == 1]
+        neg = [i for i, ex in enumerate(topo_examples) if ex.label == 0]
+        rng.shuffle(pos)
+        rng.shuffle(neg)
+        n_each = min(len(pos), len(neg), max_topo // 2)
+        if n_each > 0:
+            idx = list(pos[:n_each]) + list(neg[:n_each])
+            if len(topo_examples) > max_topo:
+                remainder = [i for i in range(len(topo_examples)) if i not in idx]
+                rng.shuffle(remainder)
+                idx.extend(remainder[: max_topo - len(idx)])
+            else:
+                # Oversample minority to balance when we have few examples.
+                need = max_topo - len(idx)
+                if need > 0:
+                    majority = pos if len(pos) >= len(neg) else neg
+                    minority = neg if len(pos) >= len(neg) else pos
+                    pool_maj = majority[n_each:]
+                    need_maj = min(need // 2, len(pool_maj))
+                    need_min = need - need_maj
+                    idx.extend(pool_maj[:need_maj])
+                    if need_min > 0 and minority:
+                        idx.extend(
+                            list(rng.choice(minority, size=min(need_min, max_topo - len(idx)), replace=True))
+                        )
+            idx = idx[:max_topo]
+            rng.shuffle(idx)
+            topo_examples = [topo_examples[i] for i in idx]
+        elif len(topo_examples) > max_topo:
+            idx = rng.permutation(len(topo_examples))[:max_topo]
+            topo_examples = [topo_examples[i] for i in idx]
+        else:
+            topo_examples = [topo_examples[i] for i in rng.permutation(len(topo_examples))]
+    elif len(topo_examples) > max_topo:
         idx = rng.permutation(len(topo_examples))[:max_topo]
         topo_examples = [topo_examples[i] for i in idx]
     else:
@@ -247,6 +299,79 @@ def cmd_build_dataset(args: argparse.Namespace) -> int:
             box_side_um=args.box_side_um,
             seed=args.seed,
         )
+    elif strategy == "proofread-core":
+        try:
+            from experiments.root_neighborhood_dataset import (
+                build_root_neighborhood_cache,
+                sample_proofread_roots,
+            )
+        except ImportError as exc:
+            raise SystemExit(
+                "proofread-core dataset building requires optional dependencies "
+                "(notably caveclient and pandas). Install the project extras "
+                "used for MICrONS data access, then retry."
+            ) from exc
+
+        if not getattr(args, "no_em", False):
+            print(
+                "[proofread-core] using synapse-only cache entries; "
+                "--no-em is implied for this strategy."
+            )
+        if args.box_side_um != 6.0:
+            print(
+                "[proofread-core] ignoring --box-side-um; "
+                "use --proofread-radius-um to control neighborhood size."
+            )
+
+        root_ids: list[int]
+        if getattr(args, "proofread_roots_tsv", None):
+            import csv
+
+            with open(args.proofread_roots_tsv, "r", encoding="utf-8", newline="") as fh:
+                reader = csv.DictReader(fh, delimiter="\t")
+                if reader.fieldnames is None or "root_id" not in reader.fieldnames:
+                    raise SystemExit(
+                        "--proofread-roots-tsv must include a 'root_id' column. "
+                        f"Found: {reader.fieldnames}"
+                    )
+                root_ids = [int(row["root_id"]) for row in reader if row.get("root_id")]
+            print(
+                f"[proofread-core] loaded {len(root_ids)} proofread roots from "
+                f"{args.proofread_roots_tsv}"
+            )
+        else:
+            print(
+                f"[proofread-core] sampling {args.proofread_n_roots} proofread roots "
+                f"at materialization v{args.cave_version} …"
+            )
+            root_ids = sample_proofread_roots(
+                datastack=args.proofread_datastack,
+                version=args.cave_version,
+                n_roots=args.proofread_n_roots,
+                seed=args.seed,
+                token=args.cave_token,
+                require_dendrite=args.proofread_require_dendrite,
+                require_axon=args.proofread_require_axon,
+            )
+
+        build_root_neighborhood_cache(
+            cache_dir=args.cache_dir,
+            datastack=args.proofread_datastack,
+            version=args.cave_version,
+            root_ids=root_ids,
+            radius_um=args.proofread_radius_um,
+            mip=2,
+            token=args.cave_token,
+            anchor_side=args.proofread_anchor_side,
+            min_anchor_synapses=args.proofread_min_anchor_synapses,
+            max_synapses=args.max_synapses,
+            seed=args.seed,
+            verbose=True,
+            per_root_timeout_s=args.proofread_per_root_timeout_s,
+        )
+        refreshed = BoxCache(args.cache_dir)
+        print(f"\nDone.  {len(refreshed)} usable proofread-core boxes in cache.")
+        return 0
     elif strategy == "random":
         print(
             f"Randomly sampling {args.n_boxes} box positions from Minnie65 …\n"
@@ -456,6 +581,10 @@ def cmd_train(args: argparse.Namespace) -> int:  # noqa: C901
                 synapses, device,
                 max_merge=args.max_merge_per_box,
                 max_topo=args.max_topo_per_box,
+                max_negative_pairs_per_role=getattr(
+                    args, "max_negative_pairs_per_role", 64
+                ),
+                topo_balanced=not getattr(args, "no_topo_balanced", False),
             )
             if merge_batch is not None:
                 # Debug: print label balance for merge and topology (first train box each epoch).
@@ -472,6 +601,9 @@ def cmd_train(args: argparse.Namespace) -> int:  # noqa: C901
                     grammar_model, grammar_optimizer,
                     merge_batch=merge_batch,
                     topology_batch=topo_batch,
+                    atomicity_loss_weight=getattr(
+                        args, "atomicity_loss_weight", 1.0
+                    ),
                 )
                 epoch_merge_accs.append(grammar_metrics.get("merge_accuracy", 0.0))
                 epoch_topo_accs.append(grammar_metrics.get("atomicity_accuracy", 0.0))
@@ -812,13 +944,15 @@ def _add_dataset_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--strategy", default="synapse-seeded",
-        choices=["synapse-seeded", "random"],
+        choices=["synapse-seeded", "random", "proofread-core"],
         help=(
             "Box selection strategy.  'synapse-seeded' (default) queries CAVE "
             "for real synapse positions and uses those as box centres — every "
             "box is guaranteed to be inside annotated neuropil.  'random' "
             "uniformly samples the full dataset extent and skips empty boxes "
-            "(expect many 'skip' messages)."
+            "(expect many 'skip' messages).  'proofread-core' samples "
+            "proofread anchor roots and caches their local synapse "
+            "neighborhoods for grammar training."
         ),
     )
     parser.add_argument(
@@ -858,6 +992,64 @@ def _add_dataset_args(parser: argparse.ArgumentParser) -> None:
         default=1412,
         help="Materialization version used when caching synapse/root IDs.",
     )
+    parser.add_argument(
+        "--proofread-datastack",
+        default="minnie65_public",
+        help="Datastack used when strategy=proofread-core.",
+    )
+    parser.add_argument(
+        "--proofread-n-roots",
+        type=int,
+        default=25,
+        help="Number of proofread anchor roots to sample when strategy=proofread-core.",
+    )
+    parser.add_argument(
+        "--proofread-roots-tsv",
+        default=None,
+        help="Optional TSV with a root_id column to seed strategy=proofread-core.",
+    )
+    parser.add_argument(
+        "--proofread-radius-um",
+        type=float,
+        default=40.0,
+        help="Neighborhood radius in microns when strategy=proofread-core.",
+    )
+    parser.add_argument(
+        "--proofread-anchor-side",
+        choices=["both", "pre", "post"],
+        default="both",
+        help="Keep anchor-root synapses on both sides, or only pre/post, for strategy=proofread-core.",
+    )
+    parser.add_argument(
+        "--proofread-min-anchor-synapses",
+        type=int,
+        default=50,
+        help="Minimum anchor-root synapses required per neighborhood for strategy=proofread-core.",
+    )
+    parser.add_argument(
+        "--proofread-per-root-timeout-s",
+        type=int,
+        default=180,
+        help="Per-root synapse-fetch timeout in seconds for strategy=proofread-core.",
+    )
+    parser.add_argument(
+        "--proofread-require-dendrite",
+        action="store_true",
+        default=True,
+        help="Require dendrite proofreading when sampling roots for strategy=proofread-core.",
+    )
+    parser.add_argument(
+        "--no-proofread-require-dendrite",
+        dest="proofread_require_dendrite",
+        action="store_false",
+        help="Disable dendrite-proofread filtering for strategy=proofread-core.",
+    )
+    parser.add_argument(
+        "--proofread-require-axon",
+        action="store_true",
+        default=False,
+        help="Also require axon proofreading when sampling roots for strategy=proofread-core.",
+    )
 
 
 def _add_train_args(parser: argparse.ArgumentParser) -> None:
@@ -887,6 +1079,21 @@ def _add_train_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--max-topo-per-box", type=int, default=128,
         help="Cap on topology examples per box per step.",
+    )
+    parser.add_argument(
+        "--max-negative-pairs-per-role", type=int, default=64,
+        help=(
+            "Max negative (non-atomic) pairs per pre/post role when building "
+            "topology examples. Higher values improve class balance (default 64)."
+        ),
+    )
+    parser.add_argument(
+        "--no-topo-balanced", action="store_true",
+        help="Disable stratified topology sampling (use raw pos/neg ratio).",
+    )
+    parser.add_argument(
+        "--atomicity-loss-weight", type=float, default=1.0,
+        help="Weight for atomicity/topology loss relative to merge loss.",
     )
     parser.add_argument(
         "--train-gat", action="store_true",
@@ -982,13 +1189,23 @@ def parse_args(argv=None) -> argparse.Namespace:
     # dataset-specific
     p_run.add_argument("--n-boxes",     type=int,   default=50)
     p_run.add_argument("--box-side-um", type=float, default=6.0)
-    p_run.add_argument("--strategy",            default="synapse-seeded", choices=["synapse-seeded", "random"])
+    p_run.add_argument("--strategy",            default="synapse-seeded", choices=["synapse-seeded", "random", "proofread-core"])
     p_run.add_argument("--no-em",               action="store_true")
     p_run.add_argument("--min-positive-pairs",  type=int, default=0)
     p_run.add_argument("--counts-tsv",          default=None)
     p_run.add_argument("--nucleus-csv",         default=None)
     p_run.add_argument("--cave-token",          default=None)
     p_run.add_argument("--cave-version",       type=int, default=1412)
+    p_run.add_argument("--proofread-datastack", default="minnie65_public")
+    p_run.add_argument("--proofread-n-roots",   type=int, default=25)
+    p_run.add_argument("--proofread-roots-tsv", default=None)
+    p_run.add_argument("--proofread-radius-um", type=float, default=40.0)
+    p_run.add_argument("--proofread-anchor-side", choices=["both", "pre", "post"], default="both")
+    p_run.add_argument("--proofread-min-anchor-synapses", type=int, default=50)
+    p_run.add_argument("--proofread-per-root-timeout-s", type=int, default=180)
+    p_run.add_argument("--proofread-require-dendrite", action="store_true", default=True)
+    p_run.add_argument("--no-proofread-require-dendrite", dest="proofread_require_dendrite", action="store_false")
+    p_run.add_argument("--proofread-require-axon", action="store_true", default=False)
     # train-specific
     p_run.add_argument("--grammar-output",      default="models/shared_grammar_real.pt")
     p_run.add_argument("--gat-output",          default="models/gat_real.pt")
@@ -997,6 +1214,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     p_run.add_argument("--val-fraction",        type=float, default=0.15)
     p_run.add_argument("--max-merge-per-box",   type=int,   default=256)
     p_run.add_argument("--max-topo-per-box",    type=int,   default=128)
+    p_run.add_argument("--max-negative-pairs-per-role", type=int, default=64)
+    p_run.add_argument("--no-topo-balanced",    action="store_true")
+    p_run.add_argument("--atomicity-loss-weight", type=float, default=1.0)
     p_run.add_argument("--train-gat",           action="store_true")
     p_run.add_argument("--gat-every-n-epochs",  type=int,   default=5)
     p_run.add_argument("--gat-soft-f1-weight",  type=float, default=0.5)

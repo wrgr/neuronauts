@@ -75,7 +75,19 @@ negative) and topology/atomicity examples. Approximately 0.3 s/box on CPU.
 The `--gat-every-n-epochs 5` flag amortizes this cost by training the GAT every
 5 grammar epochs rather than every epoch.
 
-### Train from v117 cache (comparison to latest)
+### Train from proofread-core v117 cache (comparison to latest)
+
+To build a cache focused on proofread anchors in the proofread core:
+
+```bash
+python scripts/train.py build-dataset \
+  --cache-dir data/proofread_core_v117 \
+  --strategy proofread-core \
+  --cave-version 117 \
+  --proofread-n-roots 50 \
+  --proofread-radius-um 40 \
+  --proofread-min-anchor-synapses 50
+```
 
 When your box cache was built with `--cave-version 117`, train so that **labels**
 are in the latest materialization (1412). That way merge/atomicity/GAT supervision
@@ -183,6 +195,23 @@ Supporting diagnostics (not training targets):
 - atomicity accuracy
 - bridge prediction MSE / cosine similarity
 - GAT edge precision / recall / F1
+
+## Design Principle: Dataset-Centric Optimization
+
+Unlike most ML, connectomics has **one big experiment** (Minnie65) that is very
+painful to produce and make sense of. Generalization to other datasets is nice,
+but the primary value is: *can we correctly interpret this connectome?*
+
+- **Overfitting to Minnie65 is desirable.** A model that fits this dataset
+  extremely well, even if it does not transfer, is incredibly useful.
+- **Train for capacity.** Use larger models, longer training, dataset-specific
+  tuning. Don't stop early mainly to avoid overfitting.
+- **Validate within Minnie65.** Held-out regions/boxes of the same volume matter;
+  cross-dataset transfer is secondary.
+- **A limited result is still valuable.** A model that works well only on this
+  volume would be a major outcome.
+- **The real risk is overfitting to noise or artifacts** in the training split,
+  not to the structure of the volume.
 
 ## What Is Actually Complete
 
