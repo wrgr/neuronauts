@@ -214,6 +214,27 @@ def _non_atomic_examples_for_role(
     return examples
 
 
+def inspect_topology_batch_balance(examples: list[ClusterExample]) -> dict[str, float | int]:
+    """Inspect class balance for topology/atomicity examples.
+
+    Returns
+    -------
+    dict with keys: n, n_atomic, n_non_atomic, pos_frac
+    Useful for diagnosing flat topology accuracy (e.g. pos_frac ~0.9 → predict-1 yields 90%).
+    """
+    if not examples:
+        return {"n": 0, "n_atomic": 0, "n_non_atomic": 0, "pos_frac": float("nan")}
+    n = len(examples)
+    n_atomic = sum(1 for ex in examples if ex.label == 1)
+    n_non_atomic = n - n_atomic
+    return {
+        "n": n,
+        "n_atomic": n_atomic,
+        "n_non_atomic": n_non_atomic,
+        "pos_frac": n_atomic / n if n else float("nan"),
+    }
+
+
 def build_cluster_examples(
     synapses: SynapseTable,
     membrane_field: np.ndarray,

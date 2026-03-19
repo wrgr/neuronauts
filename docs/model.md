@@ -68,6 +68,71 @@ Grammar training can run **without agent simulation** — it uses cached synapse
 
 ---
 
+## Grammar Embeddings as Node Features
+
+The GAT consumes **node features** produced by the shared path encoder. Here is the full flow from raw path points to embeddings.
+
+### 1. Path points to feature sequence
+
+Each MergedNeuron has `path_points` — a (K, 3) array of 3D voxel coordinates along the neurite trace. These are converted to a **per-step feature sequence** `[T, 3]` where T = K-1:
+
+```
+path_points [K, 3]  -->  _path_seq_from_pts  -->  seq [T, 3]
+```
+
+Per-step features (in physical nm, Z scaled for anisotropy):
+
+- **edge_len** — length of each segment
+- **radius** — distance from path centroid
+- **curvature** — cumulative turning angle (from unit tangent changes)
+
+Defined in `assembly.py` `_path_seq_from_pts`; matches `run.py` `_path_sequence_from_points` so the encoder sees the same geometry as the merge scorer.
+
+### 2. TorchPathEncoder forward pass
+
+The encoder (`grammar.py` `TorchPathEncoder`) processes batched sequences:
+
+```
+Input:  x [B, T, 3],  mask [B, T]  (True = PAD)
+  |
+  v
+  input_proj:  [B, T, 3] -> [B, T, d_model]
+  |
+  v
+  Prepend [CLS] token, add sinusoidal positional encodings
+  |
+  v
+  TransformerEncoder (2 layers, 4 heads, d_model=64)
+  |
+  v
+  Take [CLS] output at position 0  -->  output_proj  -->  [B, output_dim]
+```
+
+- **output_dim** = 32 (configurable)
+- **max_len** = 512 — long paths are truncated to stay within the positional budget
+- The [CLS] token aggregates the full sequence via attention; no manual pooling
+
+### 3. Box-level GAT usage
+
+In `assembly.py` `_encode_neurons`:
+
+- One MergedNeuron → one path → one embedding `h [embedding_dim]`
+- Neurons with no path points get an all-zero embedding
+- GAT receives `h [N, embedding_dim]` as node features for the box ConnectivityGraph
+
+### 4. Soma graph usage (planned)
+
+For the **soma graph** (`experiments/soma_graph/`), nodes are *neurons* (root IDs), not fragments. Each neuron may have multiple fragments across overlapping boxes or multiple traces:
+
+- Run agents in a neighborhood box per neuron (or use cached fragments)
+- Encode each fragment path with TorchPathEncoder
+- **Pool** per neuron: mean or max over fragment embeddings → one `[embedding_dim]` vector per root
+- Use these as soma graph node features
+
+Currently `build_soma_graph_from_synapses` uses placeholder features (random or zeros). Replacing them with grammar-pooled embeddings is the intended production path.
+
+---
+
 ## Global vs Box-Scale
 
 **Current pipeline:** Box-level (6–30 µm). One box → one ConnectivityGraph → one GAT pass.
@@ -108,7 +173,7 @@ Grammar training can run **without agent simulation** — it uses cached synapse
 - **Validation:** Research cycle → val_f1; keep changes that improve it
 - **Backends:** Codex, Claude, Gemini
 
-The LLM modifies code to improve validation F1 without hard-coded heuristics. The learned object is the grammar/GAT; the LLM is an outer optimizer.
+The LLM modifies code to improve validation F1 without hard-coded heuristics. The LLM patches only `grammar.py`; the GAT and assembly pipeline run during validation but are not modified. The learned object is the grammar; the LLM is an outer optimizer.
 
 ---
 

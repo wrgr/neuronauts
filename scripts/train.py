@@ -458,13 +458,15 @@ def cmd_train(args: argparse.Namespace) -> int:  # noqa: C901
                 max_topo=args.max_topo_per_box,
             )
             if merge_batch is not None:
-                # Debug: print label balance for the first train box each epoch.
+                # Debug: print label balance for merge and topology (first train box each epoch).
                 if idx == int(order[0]):
                     y = merge_batch["y"].detach().cpu().numpy()
                     frac_pos = float(y.mean()) if y.size else float("nan")
+                    y_topo = topo_batch["y"].detach().cpu().numpy()
+                    topo_frac = float(y_topo.mean()) if y_topo.size else float("nan")
                     print(
-                        f"  [debug] epoch {epoch}: merge_batch n={y.size} "
-                        f"pos_frac={frac_pos:.3f}"
+                        f"  [debug] epoch {epoch}: merge_batch n={y.size} pos_frac={frac_pos:.3f} | "
+                        f"topo_batch n={y_topo.size} pos_frac={topo_frac:.3f}"
                     )
                 grammar_metrics = multitask_train_step(
                     grammar_model, grammar_optimizer,

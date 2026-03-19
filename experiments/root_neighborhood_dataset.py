@@ -20,6 +20,8 @@ import csv
 import json
 from dataclasses import dataclass
 from pathlib import Path
+import time
+import multiprocessing as mp
 
 import numpy as np
 import pandas as pd
@@ -33,6 +35,15 @@ from neuronauts.fetch import RealBoxSpec, fetch_synapses
 class AnchorSpec:
     root_id: int
     center_nm: tuple[int, int, int]
+
+
+def _fetch_synapses_worker(q: "mp.Queue", bbox_nm, mip: int, version: int) -> None:
+    """Multiprocessing entrypoint (must be module-level to be picklable on spawn)."""
+    try:
+        syn = fetch_synapses(bbox_nm, mip=mip, version=version)
+        q.put(("ok", syn))
+    except Exception as exc:
+        q.put(("err", repr(exc)))
 
 
 def _client(datastack: str, version: int, token: str | None = None) -> CAVEclient:
@@ -172,6 +183,9 @@ def build_root_neighborhood_cache(
     max_synapses: int = 200_000,
     seed: int = 42,
     verbose: bool = True,
+    per_root_timeout_s: int = 180,
+    max_retries: int = 2,
+    retry_backoff_s: float = 2.0,
 ) -> None:
     """Build a synapse-only BoxCache for root neighborhoods."""
     cache = BoxCache(cache_dir)
@@ -188,6 +202,24 @@ def build_root_neighborhood_cache(
     wrote = 0
     skipped_missing_soma = 0
     skipped_too_few = 0
+    timed_out = 0
+    failed = 0
+
+    def _fetch_synapses_with_timeout(bbox_nm, mip: int, version: int):
+        q: mp.Queue = mp.Queue()
+        p = mp.Process(target=_fetch_synapses_worker, args=(q, bbox_nm, mip, int(version)))
+        p.daemon = True
+        p.start()
+        p.join(timeout=float(per_root_timeout_s))
+        if p.is_alive():
+            p.kill()
+            p.join(timeout=1)
+            return ("timeout", None)
+        try:
+            status, payload = q.get_nowait()
+        except Exception:
+            return ("err", "no result")
+        return (status, payload)
 
     for root_id in root_ids:
         center = centers.get(int(root_id))
@@ -204,8 +236,37 @@ def build_root_neighborhood_cache(
             continue
 
         if verbose:
-            print(f"[CAVE] fetching synapses: root={root_id} center_nm={center} side_um={side_um:g} v{version}")
-        syn = fetch_synapses(spec.bbox_nm, mip=spec.mip, version=version)
+            print(
+                f"[CAVE] fetching synapses: root={root_id} center_nm={center} "
+                f"side_um={side_um:g} v{version} (timeout={per_root_timeout_s}s, retries={max_retries})"
+            )
+
+        syn = None
+        last_err = None
+        for attempt in range(int(max_retries) + 1):
+            status, payload = _fetch_synapses_with_timeout(spec.bbox_nm, mip=spec.mip, version=version)
+            if status == "ok":
+                syn = payload
+                break
+            if status == "timeout":
+                timed_out += 1
+                last_err = "timeout"
+            else:
+                failed += 1
+                last_err = payload
+
+            if attempt < int(max_retries):
+                sleep_s = float(retry_backoff_s) * (2**attempt)
+                if verbose:
+                    print(f"  [W] fetch failed ({last_err}); retrying in {sleep_s:.1f}s…")
+                time.sleep(sleep_s)
+
+        if syn is None:
+            skipped_too_few += 1
+            if verbose:
+                print(f"[W] root {root_id} synapse fetch failed after retries ({last_err}); skipping")
+            continue
+
         if syn is None or len(syn.pre_pt) == 0:
             skipped_too_few += 1
             if verbose:
@@ -292,7 +353,8 @@ def build_root_neighborhood_cache(
             )
 
     print(
-        f"Done. wrote={wrote}, skipped_missing_soma={skipped_missing_soma}, skipped_too_few={skipped_too_few}. "
+        f"Done. wrote={wrote}, skipped_missing_soma={skipped_missing_soma}, skipped_too_few={skipped_too_few}, "
+        f"timed_out={timed_out}, failed_fetches={failed}. "
         f"Cache: {cache_dir}"
     )
 
@@ -365,6 +427,9 @@ def main(argv=None) -> int:
     p_build.add_argument("--anchor-side", choices=["both", "pre", "post"], default="both")
     p_build.add_argument("--min-anchor-synapses", type=int, default=50)
     p_build.add_argument("--max-synapses", type=int, default=200_000)
+    p_build.add_argument("--per-root-timeout-s", type=int, default=180)
+    p_build.add_argument("--max-retries", type=int, default=2)
+    p_build.add_argument("--retry-backoff-s", type=float, default=2.0)
     p_build.add_argument("--require-dendrite", action="store_true", default=True)
     p_build.add_argument("--no-require-dendrite", dest="require_dendrite", action="store_false")
     p_build.add_argument("--require-axon", action="store_true", default=False)
@@ -417,6 +482,9 @@ def main(argv=None) -> int:
             max_synapses=args.max_synapses,
             seed=args.seed,
             verbose=args.verbose,
+            per_root_timeout_s=args.per_root_timeout_s,
+            max_retries=args.max_retries,
+            retry_backoff_s=args.retry_backoff_s,
         )
         prune_incomplete_cache_entries(args.cache_dir)
         return 0
