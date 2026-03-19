@@ -86,6 +86,8 @@ Per-step features (in physical nm, Z scaled for anisotropy):
 - **radius** — distance from path centroid
 - **curvature** — cumulative turning angle (from unit tangent changes)
 
+**Heuristic vs learned:** These per-step features are **heuristic** — hand-designed geometric descriptors. The choice of (edge_len, radius, curvature), their formulas, and the Z-scaling are all fixed by hand. The **TorchPathEncoder** is what is learned: it aggregates this heuristic sequence into embeddings for merge scoring, atomicity, bridge prediction, and GAT node features. So the *input representation* is heuristic; the *aggregation and downstream use* are learned.
+
 Defined in `assembly.py` `_path_seq_from_pts`; matches `run.py` `_path_sequence_from_points` so the encoder sees the same geometry as the merge scorer.
 
 ### 2. TorchPathEncoder forward pass
@@ -130,6 +132,16 @@ For the **soma graph** (`experiments/soma_graph/`), nodes are *neurons* (root ID
 - Use these as soma graph node features
 
 Currently `build_soma_graph_from_synapses` uses placeholder features (random or zeros). Replacing them with grammar-pooled embeddings is the intended production path.
+
+### 5. Fully learned path representation (no heuristics)
+
+To eliminate heuristics entirely, feed **raw path geometry** into the encoder and let it learn its own abstractions:
+
+- **Raw step vectors** — `(Δx, Δy, Δz)` or `(Δx, Δy, Δz) × voxel_size_nm` per segment. The encoder learns which geometric properties matter for merge/atomicity.
+- **Raw positions** — `(x, y, z)` per vertex with positional encoding along the path. The model infers edge length, curvature, etc. from coordinates.
+- **Point cloud encoder** — If local EM context is available, treat the path as a point cloud and use PointNet, PointTransformer, or a voxel CNN over a local neighborhood. Geometry is learned from voxel intensities, not precomputed descriptors.
+
+**Tradeoffs:** A fully learned input avoids bias from human-chosen features and can discover structure we didn't anticipate. Costs: less interpretability, more data and compute, and potential sensitivity to coordinate frame or voxel resolution. The current heuristic input is cheap, interpretable, and already effective; moving to raw inputs is a natural next step if we hit a ceiling.
 
 ---
 
