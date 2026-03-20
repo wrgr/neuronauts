@@ -6,8 +6,9 @@ Build a unified system that goes from EM voxels to connectome using a shared
 learned representation trained end-to-end against synapse line-graph F1.
 
 **Status: v2 fully implemented.** All five architectural layers are complete
-and tested (329 tests). The primary remaining work is training on real MICrONS
-data and driving the learned components with real supervision.
+and tested. The primary remaining work is empirical: train on real MICrONS
+data, validate downstream assembly quality, and use the outer optimization loop
+only after the end-to-end baseline is stable enough to give a reliable signal.
 
 ## Architecture (five layers)
 
@@ -38,14 +39,40 @@ EM volume + CAVE synapses
 
         ▼
 5. Evaluation          line_graph.py
-   Synapse line-graph F1  ← primary scalar for all training and evaluation
+   Synapse line-graph F1  ← terminal metric
+   Sampled-pair line-graph F1  ← cheaper diagnostic with same semantics
 ```
 
 ## Primary Claim
 
 > A learned coordinate-free path representation shared across local merge
 > plausibility, cluster atomicity, bridge prediction, and global graph
-> attention — trained end-to-end against synapse line-graph F1.
+> attention — evaluated by downstream synapse line-graph F1.
+
+## Current Reality Check
+
+The original grammar path over-emphasised hand-authored path summaries
+(`edge_len`, `radius`, `curvature`). That representation is now being
+deprecated as a primary path.
+
+Current preferred feature path:
+
+- `raw_delta3+skeleton`
+- per-step isotropic `(dx, dy, dz)` from ordered path points
+- concatenated with `skeleton_stepwise_features`
+
+Legacy compatibility path:
+
+- `legacy_geom3`
+- retained only for ablations and old checkpoints
+
+Important limitation:
+
+- Grammar training on cached boxes still uses path-like sequences derived from
+  synapse geometry, not full agent traces or full mesh supervision.
+- Therefore local grammar losses are still surrogate objectives.
+- The real acceptance criterion is downstream assembly quality:
+  `val_f1`, `val_sampled_f1`, and eventually held-out real-box evaluation.
 
 ## Primary Training Path
 
@@ -70,6 +97,22 @@ python scripts/train.py train \
 **Grammar training** uses cached synapse tables directly — no agent simulation
 required. Each box contributes merge examples (same-root positive, nearby-different-root
 negative) and topology/atomicity examples. Approximately 0.3 s/box on CPU.
+
+Preferred grammar invocation now includes explicit feature mode:
+
+```bash
+python scripts/train.py train \
+  --cache-dir data/boxes_v117 \
+  --base-version 117 \
+  --target-version 1412 \
+  --root-remap-tsv data/boxes_v117/root_remap_v117_to_v1412.tsv \
+  --max-synapses 100000 \
+  --grammar-output models/shared_grammar_raw_skel.pt \
+  --epochs 50 \
+  --path-feature-mode raw_delta3+skeleton \
+  --val-sim-every-n 5 \
+  --val-sampled-max-pairs 10000
+```
 
 **GAT training** additionally requires agent path simulation (~30 s/box on CPU).
 The `--gat-every-n-epochs 5` flag amortizes this cost by training the GAT every
@@ -145,6 +188,9 @@ while keeping box geometry from the v117 pull.
 | `neuronauts/dataset_builder.py` | `BoxCache`, `select_random_boxes`, `build_dataset` |
 | `scripts/train.py` | ★ Primary training CLI |
 | `neuronauts/line_graph.py` | `evaluate` → line-graph F1 (primary metric) |
+| `docs/minnie_column_paradigm.md` | Minnie Column ROI, spatial bins, tubes, easy/medium/hard |
+| `docs/minnie_column_downloads.md` | EM, seg, meshes, skeletons, synapse tables — what to attach |
+| `experiments/minnie_column/` | Nucleus manifest @1718+, tube synapse fetch (see README) |
 
 ## Supervision Sources
 
@@ -153,6 +199,7 @@ while keeping box geometry from the v117 pull.
 - positives: subfragments from the same CAVE root cluster (spatial split at PCA midpoint)
 - negatives: nearby fragments from different root IDs
 - source: cached synapse tables, no simulation required
+- current preferred path features: `raw_delta3+skeleton`
 - versioning: root IDs are assumed to live at a configurable ``--base-version``
   (default 1412).  When ``--target-version`` differs, root IDs are mapped
   forward via ``chunkedgraph.get_latest_roots`` before supervision is
@@ -190,11 +237,21 @@ while keeping box geometry from the v117 pull.
 
 Primary scalar: **synapse line-graph F1**
 
-Supporting diagnostics (not training targets):
+Supporting diagnostics:
 - local merge accuracy
+- local merge BCE
 - atomicity accuracy
 - bridge prediction MSE / cosine similarity
 - GAT edge precision / recall / F1
+- sampled-pair line-graph F1
+
+Clarification:
+
+- Grammar training is **not** directly optimizing full line-graph F1.
+- Grammar uses local supervised losses.
+- GAT training uses BCE + soft-F1 on graph edges.
+- Full line-graph F1 remains the terminal metric for deciding whether a system
+  change is actually useful.
 
 ## Design Principle: Dataset-Centric Optimization
 
@@ -233,23 +290,79 @@ All items from the global inference roadmap are implemented:
 
 The remaining work is empirical, not architectural:
 
-1. **Run real-data training.** Execute `scripts/train.py run --cache-dir data/boxes --n-boxes 100 --epochs 50 --train-gat` on MICrONS data and measure val F1.
+1. **Finish the current grammar run and then train GAT on top of it.**
+   The immediate goal is end-to-end downstream evaluation, not more local-only
+   feature work.
 
-2. **Diagnosis loop.** If val F1 is not improving, diagnose which component is the bottleneck (merge accuracy? atomicity accuracy? GAT edge precision?) using the per-component diagnostics logged in `run_logs/train_log.tsv`.
+2. **Judge success at the system level.**
+   Compare:
+   - `val_merge_bce`
+   - `val_merge_acc`
+   - `val_f1`
+   - `val_sampled_f1`
+   - held-out real-box results
 
-3. **Model improvements (ranked by expected impact):**
-   - Increase training data: more boxes, longer training, larger `volume_shape` for synthetic GAT data.
-   - Richer path features: feed skeleton tortuosity and mesh volume-surface ratio into `PathBatch.skeleton_feat` and `mesh_feat`.
-   - Pre-train on CAVE edit decisions if available (accepted/rejected merge decisions as additional merge supervision).
-   - Scale the model: larger `d_model`, more Transformer layers, more GAT heads.
-   - Multi-scale inference: run at MIP 1 and MIP 3 in addition to MIP 2.
+3. **If downstream quality improves, promote this stack to the new baseline.**
+   Use that baseline for future GAT tuning and outer-loop optimization.
 
-4. **Evaluation rigor.** Add a held-out test set separate from the validation boxes used for checkpointing. Report per-neuron F1 distribution, not only mean.
+4. **If downstream quality stalls, diagnose translation failure.**
+   Typical failure modes:
+   - local merge improves but graph assembly does not
+   - GAT is not exploiting the improved encoder
+   - full line-graph F1 is too blunt, while sampled-pair F1 shows movement
+   - current cached path sources are still too weak
+
+5. **Only after a stable baseline exists, use the outer optimizer.**
+   `program.md` is the research brief for `scripts/codex_optimize.py` and
+   similar loops. The outer loop should be used to propose small code changes
+   only once the training/evaluation stack is stable enough to provide a
+   meaningful keep/revert signal.
+
+6. **After grammar + GAT baseline is established, add richer morphology.**
+   Next likely modality work:
+   - mesh-aligned features as an additional feature mode
+   - better path sources than synapse-derived pseudo-paths
+   - eventually compare `raw_delta3`, `raw_delta3+skeleton`, and mesh-augmented modes
+
+7. **Evaluation rigor.**
+   Add a held-out test set separate from the validation boxes used for
+   checkpointing. Report per-box and per-neuron distributions, not only means.
+
+## How The Outer Loop Should Use This File
+
+`program.md` is not part of the normal `scripts/train.py` path. It is the
+research brief consumed by `scripts/codex_optimize.py` / Gemini-style outer
+loops.
+
+Given the current state, the outer loop should focus on:
+
+- improving downstream `val_f1` / `val_sampled_f1`, not just local merge acc
+- editing the featureization or grammar internals in small, auditable steps
+- preserving train/infer alignment between:
+  - cached grammar batches
+  - runtime merge scoring
+  - GAT node encoding
+- avoiding changes that reintroduce heuristic-only geometry bottlenecks
+
+Likely safe targets for the outer loop:
+
+- `neuronauts/grammar.py`
+- small featureization changes in `neuronauts/grammar.py`
+- path encoder architecture and regularization
+- merge / atomicity head behavior
+
+Likely unsafe or low-signal outer-loop behavior:
+
+- changing multiple files at once
+- optimizing only local grammar metrics
+- relying on one noisy full-F1 measurement without sampled-pair support
+- reintroducing hard-coded morphology heuristics as the primary representation
 
 ## What To Avoid
 
 - Feature-spreadsheet morphology engineering
 - Optimizing only local merge AUC as the primary target
+- Treating `legacy_geom3` as the preferred input representation
 - Hard-coded spatial thresholds as decision rules (they exist only as candidate generators in `HeuristicConfig.learned()`)
 - Splitting the learned representation across disconnected models
 

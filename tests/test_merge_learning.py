@@ -77,8 +77,8 @@ class MergeLearningDatasetTest(unittest.TestCase):
         self.assertEqual(right_x.ndim, 3)
         self.assertEqual(left_mask.shape[:1], y.shape)
         self.assertEqual(right_mask.shape[:1], y.shape)
-        self.assertEqual(left_x.shape[2], 3)
-        self.assertEqual(right_x.shape[2], 3)
+        self.assertEqual(left_x.shape[2], len(MERGE_FEATURE_NAMES))
+        self.assertEqual(right_x.shape[2], len(MERGE_FEATURE_NAMES))
 
     def test_save_merge_examples_npz(self):
         synapses = SynapseTable(

@@ -13,9 +13,12 @@ from neuronauts.line_graph import (
     LineGraphMetrics,
     build_estimated_line_graph,
     build_true_line_graph,
+    compute_sampled_line_graph_f1,
     compute_line_graph_f1,
     evaluate,
+    evaluate_sampled,
     evaluate_from_root_ids,
+    sample_synapse_pairs,
 )
 from neuronauts.merge import ConnectivityGraph, MergedNeuron
 
@@ -207,6 +210,34 @@ class EvaluateFromRootIdsTest(unittest.TestCase):
         m = evaluate_from_root_ids(est_pre, est_post, true_pre, true_post)
         self.assertAlmostEqual(m.f1, 0.0)
         self.assertEqual(m.fn, 1)
+
+
+class SampledLineGraphMetricsTest(unittest.TestCase):
+    def test_sample_synapse_pairs_caps_pair_count(self):
+        pairs = sample_synapse_pairs(10, max_pairs=7, seed=0)
+        self.assertEqual(len(pairs), 7)
+        self.assertTrue(all(i < j for i, j in pairs))
+
+    def test_compute_sampled_line_graph_f1_matches_full_when_sampling_all_pairs(self):
+        true = {(0, 1), (1, 2)}
+        est = {(0, 1), (2, 3)}
+        full = compute_line_graph_f1(true, est, n_synapses=4)
+        sampled = compute_sampled_line_graph_f1(true, est, n_synapses=4, max_pairs=100)
+        self.assertEqual(sampled.tp, full.tp)
+        self.assertEqual(sampled.fp, full.fp)
+        self.assertEqual(sampled.fn, full.fn)
+        self.assertAlmostEqual(sampled.f1, full.f1)
+
+    def test_evaluate_sampled_returns_metrics(self):
+        neurons = {
+            0: MergedNeuron(neuron_id=0, agent_ids=[0], path_points=np.zeros((1, 3)),
+                            synapse_indices=[0, 1], role="pre"),
+        }
+        graph = ConnectivityGraph(neurons=neurons, edges=[], unresolved_synapse_indices=[])
+        pre = np.array([1, 1, 2], dtype=np.int64)
+        post = np.array([3, 4, 5], dtype=np.int64)
+        m = evaluate_sampled(graph, pre, post, max_pairs=3, seed=1)
+        self.assertIsInstance(m, LineGraphMetrics)
 
 
 if __name__ == "__main__":

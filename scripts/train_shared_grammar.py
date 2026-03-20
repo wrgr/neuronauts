@@ -9,6 +9,11 @@ from pathlib import Path
 
 import numpy as np
 
+from neuronauts.grammar import (
+    DEFAULT_PATH_FEATURE_MODE,
+    LEGACY_PATH_FEATURE_MODE,
+    path_feature_names,
+)
 from neuronauts.shared_grammar_model import (
     SharedGrammarModel,
     SharedTrainingConfig,
@@ -57,8 +62,19 @@ def main() -> int:
     torch.manual_seed(config.seed)
     rng = np.random.default_rng(config.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    input_dim = int(merge["left_x"].shape[-1])
+    feature_names = tuple(merge["feature_names"].tolist()) if "feature_names" in merge.files else ()
+    if feature_names == path_feature_names(DEFAULT_PATH_FEATURE_MODE):
+        path_feature_mode = DEFAULT_PATH_FEATURE_MODE
+    elif feature_names == path_feature_names(LEGACY_PATH_FEATURE_MODE):
+        path_feature_mode = LEGACY_PATH_FEATURE_MODE
+    else:
+        path_feature_mode = DEFAULT_PATH_FEATURE_MODE if input_dim != 3 else LEGACY_PATH_FEATURE_MODE
 
-    model = SharedGrammarModel().to(device)
+    model = SharedGrammarModel(
+        input_dim=input_dim,
+        path_feature_mode=path_feature_mode,
+    ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
 
     merge_size = len(merge["y"])

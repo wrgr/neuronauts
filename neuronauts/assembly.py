@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
+from .grammar import DEFAULT_PATH_FEATURE_MODE, featurize_path_points
 
 if TYPE_CHECKING:
     from .merge import ConnectivityGraph
@@ -93,30 +94,8 @@ _PATH_ISO = np.array([1.0, 1.0, 40.0 / 32.0], dtype=np.float32)
 
 
 def _path_seq_from_pts(points: np.ndarray) -> np.ndarray:
-    """Convert an (K, 3) path-point array to a (K-1, 3) feature sequence.
-
-    The three features per step are edge length (nm), radius from centroid
-    (nm), and cumulative turning angle — matching ``_path_sequence_from_points``
-    in ``run.py`` so that node features are compatible with the shared
-    path encoder.  All length-based features are in physical nanometres so
-    that Z-axis anisotropy (40 nm/vox vs 32 nm/vox in XY) does not distort
-    the learned geometry.
-    """
-    if len(points) < 2:
-        return np.zeros((0, 3), dtype=np.float32)
-    pts_nm = points.astype(np.float32) * _PATH_ISO
-    diffs = np.diff(pts_nm, axis=0)
-    edge_len = np.linalg.norm(diffs, axis=1)
-    centroid = pts_nm.mean(axis=0, keepdims=True)
-    radius = np.linalg.norm(pts_nm[1:] - centroid, axis=1)
-    if len(pts_nm) < 3:
-        curvature = np.zeros(len(edge_len), dtype=np.float32)
-    else:
-        unit = diffs / np.clip(np.linalg.norm(diffs, axis=1, keepdims=True), 1e-6, None)
-        turn = np.linalg.norm(np.diff(unit, axis=0), axis=1)
-        curvature = np.zeros(len(edge_len), dtype=np.float32)
-        curvature[1:] = turn.astype(np.float32)
-    return np.stack([edge_len, radius, curvature], axis=-1).astype(np.float32)
+    """Convert an (K, 3) path-point array to the default shared feature mode."""
+    return featurize_path_points(points, mode=DEFAULT_PATH_FEATURE_MODE, iso_scale=_PATH_ISO)
 
 
 def _encode_neurons(neurons: dict, path_encoder) -> "tuple[list[int], object]":
@@ -134,7 +113,15 @@ def _encode_neurons(neurons: dict, path_encoder) -> "tuple[list[int], object]":
     # Respect the path encoder's positional-encoding budget.
     enc_max_len: int = int(getattr(path_encoder, "max_len", 512))
 
-    seqs = [_path_seq_from_pts(neurons[nid].path_points) for nid in node_ids]
+    path_feature_mode = getattr(path_encoder, "path_feature_mode", DEFAULT_PATH_FEATURE_MODE)
+    seqs = [
+        featurize_path_points(
+            neurons[nid].path_points,
+            mode=path_feature_mode,
+            iso_scale=_PATH_ISO,
+        )
+        for nid in node_ids
+    ]
     # Subsample long paths to stay within the encoder's positional budget.
     seqs = [s[:enc_max_len] if len(s) > enc_max_len else s for s in seqs]
     max_len = max((len(s) for s in seqs), default=1)

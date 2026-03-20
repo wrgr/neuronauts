@@ -142,3 +142,41 @@ class TrainCliProofreadCoreTest(unittest.TestCase):
         self.assertEqual(calls["build"]["radius_um"], 55.0)
         self.assertEqual(calls["build"]["anchor_side"], "pre")
         self.assertEqual(calls["build"]["min_anchor_synapses"], 33)
+
+
+class TrainCliSkeletonGraphTest(unittest.TestCase):
+    def setUp(self):
+        self.mod = _import_train()
+
+    def test_parse_args_accepts_skeleton_graph_source(self):
+        args = self.mod.parse_args(
+            [
+                "train",
+                "--graph-source",
+                "skeleton",
+                "--skeleton-version",
+                "117",
+            ]
+        )
+        self.assertEqual(args.graph_source, "skeleton")
+        self.assertEqual(args.skeleton_version, 117)
+
+    def test_normalize_graph_source_defaults_skeleton_version_to_base(self):
+        args = types.SimpleNamespace(
+            graph_source="skeleton",
+            base_version=117,
+            target_version=1412,
+            skeleton_version=None,
+        )
+        out = self.mod._normalize_graph_source_args(args)
+        self.assertEqual(out.skeleton_version, 117)
+
+    def test_normalize_graph_source_rejects_target_materialization_skeletons(self):
+        args = types.SimpleNamespace(
+            graph_source="skeleton",
+            base_version=117,
+            target_version=1412,
+            skeleton_version=1412,
+        )
+        with self.assertRaises(SystemExit):
+            self.mod._normalize_graph_source_args(args)

@@ -37,6 +37,37 @@ class PathBatch:
     mesh_feat: np.ndarray | None = None
 
 
+# Isotropic scaling: convert MIP-2 voxel coords to 32-nm units (1 unit = 32 nm).
+# This keeps feature values in the same numerical range as raw voxel coords
+# while correctly weighting the Z axis at 40/32 = 1.25× relative to XY.
+PATH_ISO = np.array([1.0, 1.0, 40.0 / 32.0], dtype=np.float32)
+
+LEGACY_PATH_FEATURE_MODE = "legacy_geom3"
+DEFAULT_PATH_FEATURE_MODE = "raw_delta3+skeleton"
+SUPPORTED_PATH_FEATURE_MODES = (
+    LEGACY_PATH_FEATURE_MODE,
+    "raw_delta3",
+    "raw_delta3+skeleton",
+)
+
+
+def path_feature_names(mode: str = DEFAULT_PATH_FEATURE_MODE) -> tuple[str, ...]:
+    if mode == LEGACY_PATH_FEATURE_MODE:
+        return ("edge_len", "radius", "curvature")
+    if mode == "raw_delta3":
+        return ("dx", "dy", "dz")
+    if mode == "raw_delta3+skeleton":
+        return (
+            "dx", "dy", "dz",
+            "skel_step_dist", "skel_norm_arc", "skel_turn",
+        )
+    raise ValueError(f"unsupported path feature mode: {mode}")
+
+
+def path_feature_dim(mode: str = DEFAULT_PATH_FEATURE_MODE) -> int:
+    return len(path_feature_names(mode))
+
+
 def _require_torch():
     try:
         import torch
@@ -448,3 +479,71 @@ def build_multimodal_path_sequence(
         parts.append(arr)
 
     return np.concatenate(parts, axis=-1).astype(np.float32, copy=False)
+
+
+def featurize_path_points(
+    points: np.ndarray,
+    *,
+    mode: str = DEFAULT_PATH_FEATURE_MODE,
+    iso_scale: np.ndarray | None = None,
+) -> np.ndarray:
+    """Convert ordered path points into a per-step feature sequence.
+
+    Parameters
+    ----------
+    points:
+        Ordered path points, shape ``[N, 3]``.
+    mode:
+        Featureization mode. ``"raw_delta3+skeleton"`` is the default and
+        concatenates isotropically-scaled step vectors with stepwise skeleton
+        descriptors. ``"raw_delta3"`` keeps only the step vectors.
+        ``"legacy_geom3"`` preserves the older heuristic
+        ``(edge_len, radius, curvature)`` triplet for ablations and checkpoint
+        compatibility.
+    iso_scale:
+        Optional per-axis isotropic scaling. Defaults to ``PATH_ISO``.
+
+    Returns
+    -------
+    np.ndarray
+        Float32 array of shape ``[T, D]`` where ``T = N - 1``.
+    """
+    pts = np.asarray(points, dtype=np.float32)
+    if len(pts) < 2:
+        return np.zeros((0, path_feature_dim(mode)), dtype=np.float32)
+
+    scale = PATH_ISO if iso_scale is None else np.asarray(iso_scale, dtype=np.float32)
+    pts_iso = pts * scale
+    diffs = np.diff(pts_iso, axis=0).astype(np.float32, copy=False)
+
+    if mode == "raw_delta3":
+        return diffs.astype(np.float32, copy=False)
+
+    if mode == "raw_delta3+skeleton":
+        from .fetch import skeleton_stepwise_features
+
+        skel = skeleton_stepwise_features(pts_iso)
+        if skel.shape[0] != diffs.shape[0]:
+            raise ValueError(
+                f"skeleton_stepwise_features returned length {skel.shape[0]} "
+                f"for {diffs.shape[0]} path steps"
+            )
+        return np.concatenate([diffs, skel], axis=-1).astype(np.float32, copy=False)
+
+    if mode == LEGACY_PATH_FEATURE_MODE:
+        edge_len = np.linalg.norm(diffs, axis=1).astype(np.float32, copy=False)
+        centroid = pts_iso.mean(axis=0, keepdims=True)
+        radius = np.linalg.norm(pts_iso[1:] - centroid, axis=1).astype(np.float32, copy=False)
+        if len(pts_iso) < 3:
+            curvature = np.zeros(len(edge_len), dtype=np.float32)
+        else:
+            unit = diffs / np.clip(np.linalg.norm(diffs, axis=1, keepdims=True), 1e-6, None)
+            turn = np.linalg.norm(np.diff(unit, axis=0), axis=1)
+            curvature = np.zeros(len(edge_len), dtype=np.float32)
+            curvature[1:] = turn.astype(np.float32, copy=False)
+        return np.stack([edge_len, radius, curvature], axis=-1).astype(np.float32, copy=False)
+
+    raise ValueError(
+        f"unsupported path feature mode: {mode}; "
+        f"expected one of {SUPPORTED_PATH_FEATURE_MODES}"
+    )

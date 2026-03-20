@@ -118,3 +118,68 @@ def evaluate_from_root_ids(
     true_edges = build_true_line_graph(true_pre_root_ids, true_post_root_ids)
     est_edges = build_true_line_graph(estimated_pre_root_ids, estimated_post_root_ids)
     return compute_line_graph_f1(true_edges, est_edges, len(true_pre_root_ids))
+
+
+def sample_synapse_pairs(
+    n_synapses: int,
+    *,
+    max_pairs: int,
+    seed: int = 42,
+) -> Set[Tuple[int, int]]:
+    """Sample up to ``max_pairs`` canonical synapse pairs without replacement."""
+    if n_synapses < 2 or max_pairs <= 0:
+        return set()
+
+    total_pairs = n_synapses * (n_synapses - 1) // 2
+    if max_pairs >= total_pairs:
+        return {
+            (i, j)
+            for i in range(n_synapses)
+            for j in range(i + 1, n_synapses)
+        }
+
+    rng = np.random.default_rng(seed)
+    pairs: set[Tuple[int, int]] = set()
+    while len(pairs) < max_pairs:
+        ij = rng.integers(0, n_synapses, size=2)
+        i, j = int(ij[0]), int(ij[1])
+        if i == j:
+            continue
+        pairs.add((min(i, j), max(i, j)))
+    return pairs
+
+
+def compute_sampled_line_graph_f1(
+    true_edges: Set[Tuple[int, int]],
+    estimated_edges: Set[Tuple[int, int]],
+    n_synapses: int,
+    *,
+    max_pairs: int = 10000,
+    seed: int = 42,
+) -> LineGraphMetrics:
+    """Approximate line-graph F1 on a sampled subset of synapse pairs."""
+    sampled_pairs = sample_synapse_pairs(n_synapses, max_pairs=max_pairs, seed=seed)
+    sampled_true = true_edges & sampled_pairs
+    sampled_est = estimated_edges & sampled_pairs
+    return compute_line_graph_f1(sampled_true, sampled_est, n_synapses)
+
+
+def evaluate_sampled(
+    graph: ConnectivityGraph,
+    pre_root_ids: np.ndarray,
+    post_root_ids: np.ndarray,
+    *,
+    max_pairs: int = 10000,
+    seed: int = 42,
+) -> LineGraphMetrics:
+    """Evaluate sampled-pair line-graph F1 as a cheaper diagnostic metric."""
+    n = len(pre_root_ids)
+    true_edges = build_true_line_graph(pre_root_ids, post_root_ids)
+    est_edges = build_estimated_line_graph(graph, n)
+    return compute_sampled_line_graph_f1(
+        true_edges,
+        est_edges,
+        n,
+        max_pairs=max_pairs,
+        seed=seed,
+    )

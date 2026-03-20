@@ -8,14 +8,14 @@ from pathlib import Path
 import numpy as np
 
 from .fetch import RealBoxSpec, SynapseTable, fetch_synapses
+from .grammar import (
+    DEFAULT_PATH_FEATURE_MODE,
+    featurize_path_points,
+    path_feature_names,
+)
 from .training_batches import pad_path_sequences
 
-MERGE_FEATURE_NAMES = ("edge_len", "radius", "curvature")
-
-# Isotropic scaling: convert MIP-2 voxel coords to 32-nm units (1 unit = 32 nm).
-# Keeps feature values in the same numerical range as raw voxel coords (~1–60)
-# while correctly weighting the Z axis at 40/32 = 1.25× relative to XY.
-_SYNAPSE_ISO = np.array([1.0, 1.0, 40.0 / 32.0], dtype=np.float32)
+MERGE_FEATURE_NAMES = path_feature_names(DEFAULT_PATH_FEATURE_MODE)
 
 
 @dataclass(frozen=True)
@@ -48,29 +48,9 @@ def _ordered_points(points: np.ndarray) -> np.ndarray:
     return pts[order].astype(np.float32, copy=False)
 
 
-def _curvature_from_points(points: np.ndarray) -> np.ndarray:
-    if len(points) < 3:
-        return np.zeros(max(0, len(points) - 1), dtype=np.float32)
-    segments = np.diff(points, axis=0).astype(np.float32)
-    seg_norm = np.linalg.norm(segments, axis=1)
-    unit = segments / np.clip(seg_norm[:, None], 1e-6, None)
-    turn = np.linalg.norm(np.diff(unit, axis=0), axis=1)
-    curvature = np.zeros(len(segments), dtype=np.float32)
-    curvature[1:] = turn.astype(np.float32, copy=False)
-    return curvature
-
-
 def _sequence_from_points(points: np.ndarray) -> np.ndarray:
     ordered = _ordered_points(points)
-    if len(ordered) < 2:
-        return np.zeros((0, 3), dtype=np.float32)
-    ordered_nm = ordered * _SYNAPSE_ISO
-    diffs = np.diff(ordered_nm, axis=0)
-    edge_len = np.linalg.norm(diffs, axis=1).astype(np.float32, copy=False)
-    centroid = ordered_nm.mean(axis=0, keepdims=True)
-    radius = np.linalg.norm(ordered_nm[1:] - centroid, axis=1).astype(np.float32, copy=False)
-    curvature = _curvature_from_points(ordered)  # direction-based: scale-independent
-    return np.stack([edge_len, radius, curvature], axis=-1).astype(np.float32, copy=False)
+    return featurize_path_points(ordered, mode=DEFAULT_PATH_FEATURE_MODE)
 
 
 def _split_same_root(indices: list[int], points: np.ndarray) -> tuple[list[int], list[int]] | None:
@@ -93,6 +73,7 @@ def _split_same_root(indices: list[int], points: np.ndarray) -> tuple[list[int],
 def build_merge_examples(
     synapses: SynapseTable,
     *,
+    path_feature_mode: str = DEFAULT_PATH_FEATURE_MODE,
     min_fragment_size: int = 2,
     max_negative_pairs_per_role: int | None = None,
     max_positives_per_role: int = 512,
@@ -135,8 +116,8 @@ def build_merge_examples(
             if split is None:
                 continue
             left_idx, right_idx = split
-            left_seq = _sequence_from_points(points[left_idx])
-            right_seq = _sequence_from_points(points[right_idx])
+            left_seq = featurize_path_points(_ordered_points(points[left_idx]), mode=path_feature_mode)
+            right_seq = featurize_path_points(_ordered_points(points[right_idx]), mode=path_feature_mode)
             if len(left_seq) == 0 or len(right_seq) == 0:
                 continue
             examples.append(
@@ -192,8 +173,8 @@ def build_merge_examples(
         for _, root_a, root_b, idx_a, idx_b in pairs:
             left_idx = idx_a[: max(min_fragment_size, min(len(idx_a), len(idx_a)))]
             right_idx = idx_b[: max(min_fragment_size, min(len(idx_b), len(idx_b)))]
-            left_seq = _sequence_from_points(points[left_idx])
-            right_seq = _sequence_from_points(points[right_idx])
+            left_seq = featurize_path_points(_ordered_points(points[left_idx]), mode=path_feature_mode)
+            right_seq = featurize_path_points(_ordered_points(points[right_idx]), mode=path_feature_mode)
             if len(left_seq) == 0 or len(right_seq) == 0:
                 continue
             examples.append(
@@ -215,12 +196,14 @@ def build_merge_examples(
 def build_merge_examples_for_box(
     box: RealBoxSpec,
     *,
+    path_feature_mode: str = DEFAULT_PATH_FEATURE_MODE,
     min_fragment_size: int = 2,
     max_negative_pairs_per_role: int | None = None,
 ) -> list[MergeExample]:
     synapses = fetch_synapses(box.bbox_nm, mip=box.mip)
     return build_merge_examples(
         synapses,
+        path_feature_mode=path_feature_mode,
         min_fragment_size=min_fragment_size,
         max_negative_pairs_per_role=max_negative_pairs_per_role,
     )
@@ -229,8 +212,13 @@ def build_merge_examples_for_box(
 def examples_to_arrays(
     examples: list[MergeExample],
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    left_batch = pad_path_sequences([example.left_sequence for example in examples], feature_dim=3)
-    right_batch = pad_path_sequences([example.right_sequence for example in examples], feature_dim=3)
+    feature_dim = (
+        int(examples[0].left_sequence.shape[1])
+        if examples and examples[0].left_sequence.ndim == 2
+        else 3
+    )
+    left_batch = pad_path_sequences([example.left_sequence for example in examples], feature_dim=feature_dim)
+    right_batch = pad_path_sequences([example.right_sequence for example in examples], feature_dim=feature_dim)
     y = np.array([example.label for example in examples], dtype=np.int64)
     return left_batch.x, left_batch.mask, right_batch.x, right_batch.mask, y
 
@@ -244,6 +232,16 @@ def save_merge_examples_npz(path: str | Path, examples: list[MergeExample]) -> N
     right_synapse_indices = np.array([np.array(example.right_synapse_indices, dtype=np.int64) for example in examples], dtype=object)
     left_root_ids = np.array([np.array(example.left_root_ids, dtype=np.int64) for example in examples], dtype=object)
     right_root_ids = np.array([np.array(example.right_root_ids, dtype=np.int64) for example in examples], dtype=object)
+    feature_names = (
+        np.array(path_feature_names(DEFAULT_PATH_FEATURE_MODE), dtype=object)
+        if not examples
+        else np.array(
+            path_feature_names(DEFAULT_PATH_FEATURE_MODE)
+            if examples[0].left_sequence.shape[1] == len(path_feature_names(DEFAULT_PATH_FEATURE_MODE))
+            else [f"f{i}" for i in range(examples[0].left_sequence.shape[1])],
+            dtype=object,
+        )
+    )
     np.savez(
         path,
         left_x=left_x,
@@ -256,5 +254,5 @@ def save_merge_examples_npz(path: str | Path, examples: list[MergeExample]) -> N
         right_synapse_indices=right_synapse_indices,
         left_root_ids=left_root_ids,
         right_root_ids=right_root_ids,
-        feature_names=np.array(MERGE_FEATURE_NAMES, dtype=object),
+        feature_names=feature_names,
     )

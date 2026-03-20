@@ -7,7 +7,15 @@ from pathlib import Path
 
 import numpy as np
 
-from neuronauts.grammar import MergeScorer, build_multimodal_path_sequence, build_path_batch
+from neuronauts.grammar import (
+    DEFAULT_PATH_FEATURE_MODE,
+    MergeScorer,
+    build_multimodal_path_sequence,
+    build_path_batch,
+    featurize_path_points,
+    path_feature_dim,
+    path_feature_names,
+)
 from neuronauts.training_batches import pad_nested_path_sequences
 from neuronauts.experiment_driver import parse_validation_metrics
 
@@ -130,6 +138,32 @@ class BuildMultimodalPathSequenceTest(unittest.TestCase):
         np.testing.assert_allclose(seq[:, 0], [2.0, 3.0], atol=1e-6)
         np.testing.assert_allclose(seq[:, 1], [0.1, 0.2], atol=1e-6)
         np.testing.assert_allclose(seq[:, 2], [0.0, 0.5], atol=1e-6)
+
+
+class FeaturizePathPointsTest(unittest.TestCase):
+    def test_default_mode_is_raw_plus_skeleton(self):
+        pts = np.array([[0, 0, 0], [1, 0, 0], [2, 0, 0]], dtype=np.float32)
+        seq = featurize_path_points(pts)
+        self.assertEqual(seq.shape, (2, path_feature_dim(DEFAULT_PATH_FEATURE_MODE)))
+        self.assertEqual(path_feature_names(DEFAULT_PATH_FEATURE_MODE),
+                         ("dx", "dy", "dz", "skel_step_dist", "skel_norm_arc", "skel_turn"))
+
+    def test_raw_delta3_mode_returns_xyz_deltas(self):
+        pts = np.array([[0, 0, 0], [1, 2, 3]], dtype=np.float32)
+        seq = featurize_path_points(pts, mode="raw_delta3")
+        np.testing.assert_allclose(seq, [[1.0, 2.0, 3.75]], atol=1e-5)
+
+    def test_raw_delta3_plus_skeleton_appends_skeleton_features(self):
+        pts = np.array([[0, 0, 0], [1, 0, 0]], dtype=np.float32)
+        seq = featurize_path_points(pts, mode="raw_delta3+skeleton")
+        self.assertEqual(seq.shape, (1, 6))
+        np.testing.assert_allclose(seq[0, :3], [1.0, 0.0, 0.0], atol=1e-5)
+        np.testing.assert_allclose(seq[0, 3:], [1.0, 0.0, 0.0], atol=1e-5)
+
+    def test_legacy_geom3_still_supported(self):
+        pts = np.array([[0, 0, 0], [1, 0, 0]], dtype=np.float32)
+        seq = featurize_path_points(pts, mode="legacy_geom3")
+        self.assertEqual(seq.shape, (1, 3))
 
 
 # ---------------------------------------------------------------------------

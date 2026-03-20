@@ -84,6 +84,7 @@ def _grammar_batch_from_synapses(
     synapses,
     device,
     *,
+    path_feature_mode=None,
     max_merge=256,
     max_topo=128,
     max_negative_pairs_per_role=64,
@@ -99,18 +100,22 @@ def _grammar_batch_from_synapses(
     examples. This avoids the "predict-1-always" shortcut when pos_frac is high.
     """
     import torch
+    from neuronauts.grammar import DEFAULT_PATH_FEATURE_MODE
     from neuronauts.merge_dataset import build_merge_examples, examples_to_arrays
     from neuronauts.topology_dataset import (
         build_cluster_examples,
         examples_to_branch_sequence_arrays,
     )
+    if path_feature_mode is None:
+        path_feature_mode = DEFAULT_PATH_FEATURE_MODE
 
     # Balanced merge examples (negatives scale with positives), then shuffle so
     # the per-box cap doesn't accidentally select all-positives.
-    merge_examples = build_merge_examples(synapses)
+    merge_examples = build_merge_examples(synapses, path_feature_mode=path_feature_mode)
     topo_examples = build_cluster_examples(
         synapses,
         membrane_field=None,  # membrane ignored
+        path_feature_mode=path_feature_mode,
         max_negative_pairs_per_role=max_negative_pairs_per_role,
     )
 
@@ -267,6 +272,25 @@ def _tsv_header(fields: dict) -> str:
     return "\t".join(fields.keys())
 
 
+def _normalize_graph_source_args(args: argparse.Namespace) -> argparse.Namespace:
+    """Resolve graph-source defaults and enforce leakage guards."""
+    from neuronauts.skeleton_graph import validate_skeleton_graph_config
+
+    if getattr(args, "skeleton_version", None) is None:
+        args.skeleton_version = int(args.base_version)
+    if getattr(args, "graph_source", "agents") == "skeleton":
+        try:
+            validate_skeleton_graph_config(
+                base_version=int(args.base_version),
+                target_version=int(args.target_version),
+                skeleton_version=int(args.skeleton_version),
+                graph_source=str(args.graph_source),
+            )
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+    return args
+
+
 # ---------------------------------------------------------------------------
 # Subcommand: build-dataset
 # ---------------------------------------------------------------------------
@@ -415,9 +439,11 @@ def cmd_build_dataset(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 def cmd_train(args: argparse.Namespace) -> int:  # noqa: C901
+    args = _normalize_graph_source_args(args)
     torch = _require_torch()
 
     from neuronauts.dataset_builder import load_dataset
+    from neuronauts.grammar import DEFAULT_PATH_FEATURE_MODE, path_feature_dim
     from neuronauts.shared_grammar_model import (
         GATTrainingConfig,
         GlobalAssemblyGAT,
@@ -470,9 +496,19 @@ def cmd_train(args: argparse.Namespace) -> int:  # noqa: C901
     if grammar_path.exists() and not args.reset:
         print(f"Resuming grammar from {grammar_path}")
         grammar_model = load_shared_grammar_model(str(grammar_path)).to(device)
+        loaded_mode = getattr(grammar_model, "path_feature_mode", DEFAULT_PATH_FEATURE_MODE)
+        if getattr(args, "path_feature_mode", loaded_mode) != loaded_mode:
+            print(
+                f"[W] Ignoring --path-feature-mode={args.path_feature_mode!r}; "
+                f"checkpoint expects {loaded_mode!r}."
+            )
+        args.path_feature_mode = loaded_mode
     else:
-        grammar_model = SharedGrammarModel().to(device)
-        print("Initialised fresh grammar model.")
+        grammar_model = SharedGrammarModel(
+            input_dim=path_feature_dim(args.path_feature_mode),
+            path_feature_mode=args.path_feature_mode,
+        ).to(device)
+        print(f"Initialised fresh grammar model ({args.path_feature_mode}).")
 
     grammar_optimizer = torch.optim.Adam(grammar_model.parameters(), lr=args.lr)
 
@@ -537,6 +573,20 @@ def cmd_train(args: argparse.Namespace) -> int:  # noqa: C901
         f"Dataset: {len(train_records)} train + {len(val_records)} val boxes "
         f"({sum(r.n_synapses for r in train_records)} train synapses)"
     )
+    n_train_with_volume = sum(1 for r in train_records if getattr(r, "has_volume", True))
+    n_val_with_volume = sum(1 for r in val_records if getattr(r, "has_volume", True))
+    if args.train_gat and getattr(args, "graph_source", "agents") == "agents" and n_train_with_volume == 0:
+        print(
+            "[W] --train-gat requested but the training cache has no EM volumes. "
+            "Disabling GAT training for this run."
+        )
+        args.train_gat = False
+    if getattr(args, "val_sim_every_n", 0) > 0 and getattr(args, "graph_source", "agents") == "agents" and n_val_with_volume == 0:
+        print(
+            "[W] Slow simulation validation requested but validation cache has no EM volumes. "
+            "Disabling --val-sim-every-n for this run."
+        )
+        args.val_sim_every_n = 0
 
     # ── Logging ───────────────────────────────────────────────────────────
     log_dir = Path(args.log_dir)
@@ -549,8 +599,9 @@ def cmd_train(args: argparse.Namespace) -> int:  # noqa: C901
         k: [] for k in (
             "epoch", "train_merge_acc", "train_topo_acc",
             "train_gat_f1",
-            "val_merge_acc", "val_merge_bce",
+            "val_merge_acc", "val_merge_bce", "val_topo_acc", "val_topo_bce",
             "val_f1", "val_precision", "val_recall",
+            "val_sampled_f1", "val_sampled_precision", "val_sampled_recall",
         )
     }
 
@@ -566,9 +617,9 @@ def cmd_train(args: argparse.Namespace) -> int:  # noqa: C901
         for idx in order:
             record = train_records[idx]
             try:
-                volume_chunk, synapses = cache.load(record)
+                volume_chunk, base_synapses = cache.load(record)
                 synapses = _maybe_map_synapse_roots(
-                    synapses,
+                    base_synapses,
                     base_version=getattr(args, "base_version", args.target_version),
                     target_version=args.target_version,
                 )
@@ -579,6 +630,7 @@ def cmd_train(args: argparse.Namespace) -> int:  # noqa: C901
             # ── Grammar step (fast: no simulation) ────────────────────────
             merge_batch, topo_batch = _grammar_batch_from_synapses(
                 synapses, device,
+                path_feature_mode=args.path_feature_mode,
                 max_merge=args.max_merge_per_box,
                 max_topo=args.max_topo_per_box,
                 max_negative_pairs_per_role=getattr(
@@ -611,7 +663,7 @@ def cmd_train(args: argparse.Namespace) -> int:  # noqa: C901
             # ── GAT step (slow: needs path simulation) ─────────────────────
             if args.train_gat and epoch % args.gat_every_n_epochs == 0:
                 _run_gat_training_step(
-                    volume_chunk, synapses, gat_model, grammar_model,
+                    record, volume_chunk, base_synapses, synapses, gat_model, grammar_model,
                     gat_optimizer, device, args, epoch_gat_f1s,
                 )
 
@@ -619,25 +671,37 @@ def cmd_train(args: argparse.Namespace) -> int:  # noqa: C901
         grammar_model.eval()
         fast_accs: list[float] = []
         fast_bces: list[float] = []
+        fast_topo_accs: list[float] = []
+        fast_topo_bces: list[float] = []
 
         for record in val_records:
-            result = _validate_box_fast(record, cache, grammar_model, device)
+            result = _validate_box_fast(record, cache, grammar_model, device, args.path_feature_mode)
             if result is not None:
                 fast_accs.append(result["merge_acc"])
                 fast_bces.append(result["merge_bce"])
+                fast_topo_accs.append(result["topo_acc"])
+                fast_topo_bces.append(result["topo_bce"])
 
         val_merge_acc = float(np.mean(fast_accs)) if fast_accs else 0.0
         val_merge_bce = float(np.mean(fast_bces)) if fast_bces else float("inf")
+        val_topo_acc = float(np.mean(fast_topo_accs)) if fast_topo_accs else 0.0
+        val_topo_bce = float(np.mean(fast_topo_bces)) if fast_topo_bces else float("inf")
 
         # ── Slow simulation validation (optional, every N epochs) ─────────
         val_f1 = float("nan")
         val_pre = float("nan")
         val_rec = float("nan")
+        val_sampled_f1 = float("nan")
+        val_sampled_pre = float("nan")
+        val_sampled_rec = float("nan")
         sim_every = getattr(args, "val_sim_every_n", 0)
         if sim_every > 0 and epoch % sim_every == 0:
             val_f1s: list[float] = []
             val_precisions: list[float] = []
             val_recalls: list[float] = []
+            val_sampled_f1s: list[float] = []
+            val_sampled_precisions: list[float] = []
+            val_sampled_recalls: list[float] = []
             for record in val_records:
                 m, diag = _validate_box(
                     record, cache, grammar_model, gat_model, args, device
@@ -646,10 +710,15 @@ def cmd_train(args: argparse.Namespace) -> int:  # noqa: C901
                     val_f1s.append(m.f1)
                     val_precisions.append(m.precision)
                     val_recalls.append(m.recall)
+                    if "sampled_f1" in diag:
+                        val_sampled_f1s.append(float(diag["sampled_f1"]))
+                        val_sampled_precisions.append(float(diag["sampled_precision"]))
+                        val_sampled_recalls.append(float(diag["sampled_recall"]))
                     if epoch == sim_every:  # first simulation pass
                         print(
                             f"  val box {record.box_hash[:8]}: "
                             f"F1={m.f1:.3f} P={m.precision:.3f} R={m.recall:.3f} "
+                            f"sampled_F1={diag.get('sampled_f1', float('nan')):.3f} "
                             f"true_e={m.n_true_edges} est_e={m.n_estimated_edges} "
                             f"syn={diag.get('n_synapses',0)} "
                             f"cands={diag.get('n_merge_candidates',0)} "
@@ -659,6 +728,9 @@ def cmd_train(args: argparse.Namespace) -> int:  # noqa: C901
             val_f1  = float(np.mean(val_f1s))        if val_f1s        else 0.0
             val_pre = float(np.mean(val_precisions))  if val_precisions else 0.0
             val_rec = float(np.mean(val_recalls))     if val_recalls    else 0.0
+            val_sampled_f1 = float(np.mean(val_sampled_f1s)) if val_sampled_f1s else 0.0
+            val_sampled_pre = float(np.mean(val_sampled_precisions)) if val_sampled_precisions else 0.0
+            val_sampled_rec = float(np.mean(val_sampled_recalls)) if val_sampled_recalls else 0.0
             if val_f1 >= best_val_f1:
                 best_val_f1 = val_f1
 
@@ -679,9 +751,14 @@ def cmd_train(args: argparse.Namespace) -> int:  # noqa: C901
             "train_gat_f1":    f"{np.mean(epoch_gat_f1s):.4f}"    if epoch_gat_f1s    else "n/a",
             "val_merge_acc":   f"{val_merge_acc:.4f}",
             "val_merge_bce":   f"{val_merge_bce:.4f}",
+            "val_topo_acc":    f"{val_topo_acc:.4f}",
+            "val_topo_bce":    f"{val_topo_bce:.4f}",
             "val_f1":          f"{val_f1:.4f}" if not np.isnan(val_f1) else "n/a",
             "val_precision":   f"{val_pre:.4f}" if not np.isnan(val_pre) else "n/a",
             "val_recall":      f"{val_rec:.4f}" if not np.isnan(val_rec) else "n/a",
+            "val_sampled_f1":  f"{val_sampled_f1:.4f}" if not np.isnan(val_sampled_f1) else "n/a",
+            "val_sampled_precision": f"{val_sampled_pre:.4f}" if not np.isnan(val_sampled_pre) else "n/a",
+            "val_sampled_recall":    f"{val_sampled_rec:.4f}" if not np.isnan(val_sampled_rec) else "n/a",
             "best_val_bce":    f"{best_val_bce:.4f}",
             "elapsed_s":       f"{time.time() - t_epoch:.1f}",
         }
@@ -691,7 +768,7 @@ def cmd_train(args: argparse.Namespace) -> int:  # noqa: C901
             fh.write(_tsv_row(row) + "\n")
 
         sim_suffix = (
-            f" val_f1={val_f1:.4f} (best={best_val_f1:.4f})"
+            f" val_f1={val_f1:.4f} sampled_f1={val_sampled_f1:.4f} (best={best_val_f1:.4f})"
             if not np.isnan(val_f1) else ""
         )
         print(
@@ -700,7 +777,10 @@ def cmd_train(args: argparse.Namespace) -> int:  # noqa: C901
             f"topo_acc={row['train_topo_acc']} "
             f"gat_f1={row['train_gat_f1']} | "
             f"val_merge_acc={val_merge_acc:.4f} "
-            f"val_bce={val_merge_bce:.4f} (best={best_val_bce:.4f})"
+            f"val_bce={val_merge_bce:.4f} "
+            f"val_topo_acc={val_topo_acc:.4f} "
+            f"val_topo_bce={val_topo_bce:.4f} "
+            f"(best={best_val_bce:.4f})"
             f"{sim_suffix} | "
             f"{time.time() - t_epoch:.1f}s"
         )
@@ -716,41 +796,52 @@ def cmd_train(args: argparse.Namespace) -> int:  # noqa: C901
 
 
 def _run_gat_training_step(
-    volume_chunk, synapses, gat_model, grammar_model,
+    record, volume_chunk, base_synapses, label_synapses, gat_model, grammar_model,
     gat_optimizer, device, args, gat_f1_acc: list,
 ):
-    """Run agent simulation → build graph → gat_train_step on one box."""
+    """Run graph construction → gat_train_step on one box."""
     from neuronauts.fields import compute_membrane_field
     from neuronauts.run import HeuristicConfig, _build_graph, simulate_paths_and_hits
+    from neuronauts.skeleton_graph import build_skeleton_connectivity_graph
     from neuronauts.shared_grammar_model import gat_train_step
 
     try:
-        mf = compute_membrane_field(volume_chunk.data)
-        path_arr, synapse_hits, path_lengths, _ = simulate_paths_and_hits(
-            volume_chunk.data,
-            synapses.pre_pt,
-            synapses.post_pt,
-            verbose=False,
-            membrane_field_override=mf,
-        )
-        graph = _build_graph(
-            path_arr=path_arr,
-            path_lengths=path_lengths,
-            synapse_hits=synapse_hits,
-            pre_pts=synapses.pre_pt,
-            post_pts=synapses.post_pt,
-            pre_seg_ids=synapses.pre_seg_id,
-            post_seg_ids=synapses.post_seg_id,
-            heuristic_config=HeuristicConfig.learned(),
-        )
+        if getattr(args, "graph_source", "agents") == "skeleton":
+            graph = build_skeleton_connectivity_graph(
+                record.to_spec(),
+                base_synapses,
+                version=args.skeleton_version,
+                datastack=getattr(args, "proofread_datastack", "minnie65_public"),
+                cave_server=getattr(args, "cave_server", "https://global.daf-apis.com"),
+                token=getattr(args, "cave_token", None),
+            )
+        else:
+            mf = compute_membrane_field(volume_chunk.data)
+            path_arr, synapse_hits, path_lengths, _ = simulate_paths_and_hits(
+                volume_chunk.data,
+                base_synapses.pre_pt,
+                base_synapses.post_pt,
+                verbose=False,
+                membrane_field_override=mf,
+            )
+            graph = _build_graph(
+                path_arr=path_arr,
+                path_lengths=path_lengths,
+                synapse_hits=synapse_hits,
+                pre_pts=base_synapses.pre_pt,
+                post_pts=base_synapses.post_pt,
+                pre_seg_ids=base_synapses.pre_seg_id,
+                post_seg_ids=base_synapses.post_seg_id,
+                heuristic_config=HeuristicConfig.learned(),
+            )
         if not graph.edges:
             return
 
         m = gat_train_step(
             gat_model, grammar_model.path_encoder, gat_optimizer,
             graph=graph,
-            pre_root_ids=synapses.pre_root_id,
-            post_root_ids=synapses.post_root_id,
+            pre_root_ids=label_synapses.pre_root_id,
+            post_root_ids=label_synapses.post_root_id,
             soft_f1_weight=args.gat_soft_f1_weight,
         )
         if m["n_edges"] > 0:
@@ -759,19 +850,24 @@ def _run_gat_training_step(
         print(f"  [W] GAT step failed: {exc}")
 
 
-def _validate_box_fast(record, cache, grammar_model, device):
+def _validate_box_fast(record, cache, grammar_model, device, path_feature_mode):
     """Fast no-simulation validation: build grammar batches from cached synapses
-    and compute pairwise merge BCE + accuracy.
+    and compute grammar-task validation metrics.
 
-    Returns a dict with keys ``merge_acc``, ``merge_bce``, ``n_pairs``,
-    or ``None`` if the box has too few synapses to produce examples.
+    Returns a dict with keys ``merge_acc``, ``merge_bce``, ``topo_acc``,
+    ``topo_bce``, ``n_pairs``, ``n_topo``, or ``None`` if the box has too few
+    synapses to produce examples.
     """
     import torch
     import torch.nn.functional as F
 
     try:
         _volume_chunk, synapses = cache.load(record)
-        merge_batch, _topo_batch = _grammar_batch_from_synapses(synapses, device)
+        merge_batch, topo_batch = _grammar_batch_from_synapses(
+            synapses,
+            device,
+            path_feature_mode=path_feature_mode,
+        )
         if merge_batch is None:
             return None
 
@@ -788,7 +884,24 @@ def _validate_box_fast(record, cache, grammar_model, device):
             acc = _accuracy_from_logits(
                 logits.cpu().numpy(), y.cpu().numpy()
             )
-        return {"merge_acc": acc, "merge_bce": bce, "n_pairs": int(y.shape[0])}
+            topo_logits = grammar_model.score_atomicity(
+                topo_batch["branch_x"],
+                topo_batch["branch_sequence_mask"],
+                topo_batch["branch_mask"],
+            )
+            y_topo = topo_batch["y"]
+            topo_bce = float(F.binary_cross_entropy_with_logits(topo_logits, y_topo).item())
+            topo_acc = _accuracy_from_logits(
+                topo_logits.cpu().numpy(), y_topo.cpu().numpy()
+            )
+        return {
+            "merge_acc": acc,
+            "merge_bce": bce,
+            "topo_acc": topo_acc,
+            "topo_bce": topo_bce,
+            "n_pairs": int(y.shape[0]),
+            "n_topo": int(y_topo.shape[0]),
+        }
     except Exception as exc:
         print(f"  [W] fast val failed for {record.box_hash}: {exc}")
         return None
@@ -804,6 +917,7 @@ def _make_live_merge_score_fn(grammar_model):
     import torch
 
     grammar_model.eval()
+    path_feature_mode = getattr(grammar_model, "path_feature_mode", "raw_delta3+skeleton")
 
     def score_fn(left_sequence: np.ndarray, right_sequence: np.ndarray) -> float:
         left = torch.from_numpy(left_sequence[None, ...]).float()
@@ -814,6 +928,7 @@ def _make_live_merge_score_fn(grammar_model):
             logits = grammar_model.score_merge(left, left_mask, right, right_mask)
         return float(logits.squeeze().cpu())
 
+    score_fn.path_feature_mode = path_feature_mode
     return score_fn
 
 
@@ -826,59 +941,80 @@ def _validate_box(record, cache, grammar_model, gat_model, args, device):
     import torch
     from neuronauts.fields import compute_membrane_field
     from neuronauts.run import HeuristicConfig, _build_graph, simulate_paths_and_hits
-    from neuronauts.line_graph import evaluate
+    from neuronauts.line_graph import evaluate, evaluate_sampled
 
     diag: dict = {}
     try:
-        volume_chunk, synapses = cache.load(record)
-        if len(synapses.pre_pt) < 5:
+        volume_chunk, base_synapses = cache.load(record)
+        if len(base_synapses.pre_pt) < 5:
+            return None, diag
+        label_synapses = _maybe_map_synapse_roots(
+            base_synapses,
+            base_version=getattr(args, "base_version", args.target_version),
+            target_version=args.target_version,
+        )
+        if (
+            getattr(args, "graph_source", "agents") == "agents"
+            and (getattr(volume_chunk, "data", None) is None or volume_chunk.data.size == 0)
+        ):
+            diag["skipped_no_volume"] = True
             return None, diag
 
-        mf = compute_membrane_field(volume_chunk.data)
-        path_arr, synapse_hits, path_lengths, _ = simulate_paths_and_hits(
-            volume_chunk.data,
-            synapses.pre_pt,
-            synapses.post_pt,
-            verbose=False,
-            membrane_field_override=mf,
-        )
+        if getattr(args, "graph_source", "agents") == "skeleton":
+            from neuronauts.skeleton_graph import build_skeleton_connectivity_graph
 
-        # Always use the live in-memory model so validation tracks training progress.
-        # Avoid _load_shared_merge_score_fn which is lru_cache'd and would return
-        # stale epoch-1 weights for the entire training run.
-        _base_score_fn = _make_live_merge_score_fn(grammar_model)
-        hcfg = HeuristicConfig.learned()
+            graph = build_skeleton_connectivity_graph(
+                record.to_spec(),
+                base_synapses,
+                version=args.skeleton_version,
+                datastack=getattr(args, "proofread_datastack", "minnie65_public"),
+                cave_server=getattr(args, "cave_server", "https://global.daf-apis.com"),
+                token=getattr(args, "cave_token", None),
+            )
+            diag["n_merge_candidates"] = len(graph.edges)
+            diag["n_merge_accepted"] = len(graph.edges)
+            diag["mean_score"] = float("nan")
+            diag["n_synapses"] = len(base_synapses.pre_pt)
+        else:
+            mf = compute_membrane_field(volume_chunk.data)
+            path_arr, synapse_hits, path_lengths, _ = simulate_paths_and_hits(
+                volume_chunk.data,
+                base_synapses.pre_pt,
+                base_synapses.post_pt,
+                verbose=False,
+                membrane_field_override=mf,
+            )
 
-        # Wrap the score function to count how many candidate pairs are evaluated
-        # and how many score above the merge threshold (i.e. produce merges).
-        _n_candidates = [0]
-        _n_accepted = [0]
-        _scores: list[float] = []
+            _base_score_fn = _make_live_merge_score_fn(grammar_model)
+            hcfg = HeuristicConfig.learned()
+            _n_candidates = [0]
+            _n_accepted = [0]
+            _scores: list[float] = []
 
-        def _counting_score_fn(left_seq, right_seq):
-            s = _base_score_fn(left_seq, right_seq)
-            _n_candidates[0] += 1
-            _scores.append(s)
-            if s >= 0.0:
-                _n_accepted[0] += 1
-            return s
+            def _counting_score_fn(left_seq, right_seq):
+                s = _base_score_fn(left_seq, right_seq)
+                _n_candidates[0] += 1
+                _scores.append(s)
+                if s >= 0.0:
+                    _n_accepted[0] += 1
+                return s
 
-        graph = _build_graph(
-            path_arr=path_arr,
-            path_lengths=path_lengths,
-            synapse_hits=synapse_hits,
-            pre_pts=synapses.pre_pt,
-            post_pts=synapses.post_pt,
-            pre_seg_ids=synapses.pre_seg_id,
-            post_seg_ids=synapses.post_seg_id,
-            learned_merge_score_fn=_counting_score_fn,
-            heuristic_config=hcfg,
-        )
+            graph = _build_graph(
+                path_arr=path_arr,
+                path_lengths=path_lengths,
+                synapse_hits=synapse_hits,
+                pre_pts=base_synapses.pre_pt,
+                post_pts=base_synapses.post_pt,
+                pre_seg_ids=base_synapses.pre_seg_id,
+                post_seg_ids=base_synapses.post_seg_id,
+                learned_merge_score_fn=_counting_score_fn,
+                heuristic_config=hcfg,
+            )
 
-        diag["n_merge_candidates"] = _n_candidates[0]
-        diag["n_merge_accepted"]   = _n_accepted[0]
-        diag["mean_score"] = float(np.mean(_scores)) if _scores else float("nan")
-        diag["n_synapses"] = len(synapses.pre_pt)
+            diag["n_merge_candidates"] = _n_candidates[0]
+            diag["n_merge_accepted"]   = _n_accepted[0]
+            diag["mean_score"] = float(np.mean(_scores)) if _scores else float("nan")
+            diag["n_synapses"] = len(base_synapses.pre_pt)
 
         # Optional GAT refinement on the validation graph.
         if gat_model is not None and graph.edges:
@@ -891,8 +1027,18 @@ def _validate_box(record, cache, grammar_model, gat_model, args, device):
                     gat_model=gat_model,
                     edge_threshold=args.gat_edge_threshold,
                 )
+        sampled = evaluate_sampled(
+            graph,
+            label_synapses.pre_root_id,
+            label_synapses.post_root_id,
+            max_pairs=args.val_sampled_max_pairs,
+            seed=args.seed,
+        )
+        diag["sampled_f1"] = sampled.f1
+        diag["sampled_precision"] = sampled.precision
+        diag["sampled_recall"] = sampled.recall
 
-        return evaluate(graph, synapses.pre_root_id, synapses.post_root_id), diag
+        return evaluate(graph, label_synapses.pre_root_id, label_synapses.post_root_id), diag
 
     except Exception as exc:
         print(f"  [W] validation failed for {record.box_hash}: {exc}")
@@ -1055,6 +1201,28 @@ def _add_dataset_args(parser: argparse.ArgumentParser) -> None:
 def _add_train_args(parser: argparse.ArgumentParser) -> None:
     _add_common_args(parser)
     parser.add_argument(
+        "--graph-source",
+        default="agents",
+        choices=["agents", "skeleton"],
+        help="Source used to build connectivity graphs for GAT/slow validation.",
+    )
+    parser.add_argument(
+        "--skeleton-version",
+        type=int,
+        default=None,
+        help=(
+            "Materialization version used when fetching skeletons for "
+            "--graph-source skeleton. Defaults to --base-version and must match it "
+            "to avoid target-label leakage."
+        ),
+    )
+    parser.add_argument(
+        "--path-feature-mode",
+        default="raw_delta3+skeleton",
+        choices=["legacy_geom3", "raw_delta3", "raw_delta3+skeleton"],
+        help="Per-step path representation used by grammar training and GAT node encoding.",
+    )
+    parser.add_argument(
         "--min-positive-pairs", type=int, default=0,
         help="Only train on boxes with at least this many same-root-id pairs.",
     )
@@ -1119,6 +1287,10 @@ def _add_train_args(parser: argparse.ArgumentParser) -> None:
             "the primary metric is then val_merge_bce (pairwise BCE on held-out "
             "synapse pairs, no simulation needed)."
         ),
+    )
+    parser.add_argument(
+        "--val-sampled-max-pairs", type=int, default=10000,
+        help="Number of sampled synapse pairs for the sampled-pair validation F1 diagnostic.",
     )
     parser.add_argument(
         "--reset", action="store_true",
@@ -1208,6 +1380,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     p_run.add_argument("--proofread-require-axon", action="store_true", default=False)
     # train-specific
     p_run.add_argument("--grammar-output",      default="models/shared_grammar_real.pt")
+    p_run.add_argument("--graph-source",        default="agents", choices=["agents", "skeleton"])
+    p_run.add_argument("--skeleton-version",    type=int, default=None)
+    p_run.add_argument("--path-feature-mode",   default="raw_delta3+skeleton", choices=["legacy_geom3", "raw_delta3", "raw_delta3+skeleton"])
     p_run.add_argument("--gat-output",          default="models/gat_real.pt")
     p_run.add_argument("--epochs",              type=int,   default=30)
     p_run.add_argument("--lr",                  type=float, default=3e-4)
@@ -1222,6 +1397,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     p_run.add_argument("--gat-soft-f1-weight",  type=float, default=0.5)
     p_run.add_argument("--gat-edge-threshold",  type=float, default=0.5)
     p_run.add_argument("--val-sim-every-n",     type=int,   default=0)
+    p_run.add_argument("--val-sampled-max-pairs", type=int, default=10000)
     p_run.add_argument("--reset",               action="store_true")
     p_run.add_argument("--log-dir",             default="run_logs")
     p_run.set_defaults(func=cmd_run)

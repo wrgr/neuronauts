@@ -21,6 +21,7 @@ from .fetch import (
     load_cached_membrane,
     make_test_volume,
 )
+from .grammar import DEFAULT_PATH_FEATURE_MODE, PATH_ISO, featurize_path_points
 from .line_graph import LineGraphMetrics, evaluate
 from .merge import ConnectivityGraph, MergedNeuron, cKDTree
 from .vectorized import run_agents_vectorized
@@ -208,36 +209,13 @@ def _subsample_points(path: np.ndarray) -> np.ndarray:
     return path[step_idx].astype(np.float32)
 
 
-# Isotropic scaling: convert MIP-2 voxel coords to 32-nm units (1 unit = 32 nm).
-# This keeps feature values in the same numerical range as raw voxel coords
-# (~1–60) while correctly weighting the Z axis at 40/32 = 1.25× relative to XY.
-# Raw nm (×32, ×32, ×40) would produce values up to ~2000 nm and destabilise
-# the input projection layer.
-_PATH_ISO = np.array([1.0, 1.0, 40.0 / 32.0], dtype=np.float32)
-
-
-def _path_sequence_from_points(points: np.ndarray) -> np.ndarray:
-    """Compute (edge_len, radius, curvature) sequence from path points.
-
-    Points are in MIP-2 voxel coordinates.  Features are computed in isotropic
-    32-nm units ([1, 1, 1.25] scaling) so that Z-axis steps are correctly
-    weighted relative to XY while keeping numerical values in the range ~1–60.
-    """
-    if len(points) < 2:
-        return np.zeros((0, 3), dtype=np.float32)
-    pts_nm = points.astype(np.float32) * _PATH_ISO
-    diffs = np.diff(pts_nm, axis=0)
-    edge_len = np.linalg.norm(diffs, axis=1).astype(np.float32, copy=False)
-    centroid = pts_nm.mean(axis=0, keepdims=True)
-    radius = np.linalg.norm(pts_nm[1:] - centroid, axis=1).astype(np.float32, copy=False)
-    if len(pts_nm) < 3:
-        curvature = np.zeros(len(edge_len), dtype=np.float32)
-    else:
-        unit = diffs / np.clip(np.linalg.norm(diffs, axis=1, keepdims=True), 1e-6, None)
-        turn = np.linalg.norm(np.diff(unit, axis=0), axis=1)
-        curvature = np.zeros(len(edge_len), dtype=np.float32)
-        curvature[1:] = turn.astype(np.float32, copy=False)
-    return np.stack([edge_len, radius, curvature], axis=-1).astype(np.float32, copy=False)
+def _path_sequence_from_points(
+    points: np.ndarray,
+    *,
+    path_feature_mode: str = DEFAULT_PATH_FEATURE_MODE,
+) -> np.ndarray:
+    """Compute isotropically-scaled raw step vectors from path points."""
+    return featurize_path_points(points, mode=path_feature_mode, iso_scale=PATH_ISO)
 
 
 @lru_cache(maxsize=4)
@@ -248,6 +226,7 @@ def _load_shared_merge_score_fn(checkpoint_path: str):
 
     model = load_shared_grammar_model(checkpoint_path)
     model.eval()
+    path_feature_mode = getattr(model, "path_feature_mode", DEFAULT_PATH_FEATURE_MODE)
 
     def score_fn(left_sequence: np.ndarray, right_sequence: np.ndarray) -> float:
         left = torch.from_numpy(left_sequence[None, ...]).float()
@@ -258,6 +237,7 @@ def _load_shared_merge_score_fn(checkpoint_path: str):
             logits = model.score_merge(left, left_mask, right, right_mask)
         return float(logits.squeeze().cpu())
 
+    score_fn.path_feature_mode = path_feature_mode
     return score_fn
 
 
@@ -272,7 +252,12 @@ def _load_shared_atomicity_score_fn(checkpoint_path: str):
     model.eval()
 
     def score_fn(branch_sequences: tuple[np.ndarray, ...]) -> float:
-        nested = pad_nested_path_sequences([list(branch_sequences)], max_items=len(branch_sequences), feature_dim=3)
+        feature_dim = int(branch_sequences[0].shape[1]) if branch_sequences else 3
+        nested = pad_nested_path_sequences(
+            [list(branch_sequences)],
+            max_items=len(branch_sequences),
+            feature_dim=feature_dim,
+        )
         branch_x = torch.from_numpy(nested.x).float()
         branch_sequence_mask = torch.from_numpy(nested.sequence_mask)
         branch_mask = torch.from_numpy(nested.item_mask)
@@ -280,6 +265,7 @@ def _load_shared_atomicity_score_fn(checkpoint_path: str):
             logits = model.score_atomicity(branch_x, branch_sequence_mask, branch_mask)
         return float(logits.squeeze().cpu())
 
+    score_fn.path_feature_mode = getattr(model, "path_feature_mode", DEFAULT_PATH_FEATURE_MODE)
     return score_fn
 
 
@@ -386,6 +372,11 @@ def _merge_role_groups(
     and the GAT refinement step (PR 4) performs the real pruning.
     """
     hcfg = heuristic_config or HeuristicConfig.legacy()
+    path_feature_mode = (
+        getattr(learned_merge_score_fn, "path_feature_mode", None)
+        or getattr(atomicity_score_fn, "path_feature_mode", None)
+        or DEFAULT_PATH_FEATURE_MODE
+    )
     role_agent_ids = np.where(role_hits.any(axis=1))[0].astype(np.int32)
     if len(role_agent_ids) == 0:
         return {}, {}, {}, next_neuron_id
@@ -440,8 +431,14 @@ def _merge_role_groups(
         if shared_count < hcfg.role_merge_min_shared_hits:
             continue
         if learned_merge_score_fn is not None:
-            seq_a = agent_sequences.setdefault(agent_a, _path_sequence_from_points(_agent_points(path_arr, agent_a)))
-            seq_b = agent_sequences.setdefault(agent_b, _path_sequence_from_points(_agent_points(path_arr, agent_b)))
+            seq_a = agent_sequences.setdefault(
+                agent_a,
+                _path_sequence_from_points(_agent_points(path_arr, agent_a), path_feature_mode=path_feature_mode),
+            )
+            seq_b = agent_sequences.setdefault(
+                agent_b,
+                _path_sequence_from_points(_agent_points(path_arr, agent_b), path_feature_mode=path_feature_mode),
+            )
             if len(seq_a) == 0 or len(seq_b) == 0:
                 continue
             score = float(learned_merge_score_fn(seq_a, seq_b))
@@ -466,9 +463,23 @@ def _merge_role_groups(
                 if atomicity_score_fn is None:
                     return 0.0
                 sequences = tuple(
-                    agent_sequences.setdefault(agent_id, _path_sequence_from_points(_agent_points(path_arr, agent_id)))
+                    agent_sequences.setdefault(
+                        agent_id,
+                        _path_sequence_from_points(
+                            _agent_points(path_arr, agent_id),
+                            path_feature_mode=path_feature_mode,
+                        ),
+                    )
                     for agent_id in group_members
-                    if len(agent_sequences.setdefault(agent_id, _path_sequence_from_points(_agent_points(path_arr, agent_id)))) > 0
+                    if len(
+                        agent_sequences.setdefault(
+                            agent_id,
+                            _path_sequence_from_points(
+                                _agent_points(path_arr, agent_id),
+                                path_feature_mode=path_feature_mode,
+                            ),
+                        )
+                    ) > 0
                 )
                 if not sequences:
                     return 0.0
@@ -573,6 +584,10 @@ def _build_bridge_graph(
     graph = BridgeGraph()
     endpoint_pos: dict[int, np.ndarray] = {}
     endpoint_seq: dict[int, np.ndarray] = {}
+    path_feature_mode = (
+        getattr(bridge_score_fn, "path_feature_mode", DEFAULT_PATH_FEATURE_MODE)
+        if bridge_score_fn is not None else DEFAULT_PATH_FEATURE_MODE
+    )
 
     for neuron_id, neuron in neurons.items():
         pts = neuron.path_points
@@ -585,7 +600,7 @@ def _build_bridge_graph(
         # Free intra-neuron edge so the full neuron is traversable.
         graph.add_edge(nid_start, nid_end, 0.0)
         if bridge_score_fn is not None:
-            seq = _path_sequence_from_points(pts)
+            seq = _path_sequence_from_points(pts, path_feature_mode=path_feature_mode)
             endpoint_seq[nid_start] = seq
             endpoint_seq[nid_end] = seq
 
@@ -991,7 +1006,10 @@ def run(
             _enc = _sgm.path_encoder
         else:
             from .shared_grammar_model import SharedGrammarModel
-            _enc = SharedGrammarModel().path_encoder
+            _enc = SharedGrammarModel(
+                input_dim=6,
+                path_feature_mode=DEFAULT_PATH_FEATURE_MODE,
+            ).path_encoder
         graph = gat_refine_connectivity(
             graph, _enc, gat_model, threshold=gat_edge_threshold
         )

@@ -10,7 +10,15 @@ if TYPE_CHECKING:
     import numpy as np
     from .merge import ConnectivityGraph
 
-from .grammar import TorchArborEncoder, TorchMergeScorer, TorchPathEncoder, _require_torch
+from .grammar import (
+    DEFAULT_PATH_FEATURE_MODE,
+    LEGACY_PATH_FEATURE_MODE,
+    TorchArborEncoder,
+    TorchMergeScorer,
+    TorchPathEncoder,
+    _require_torch,
+    path_feature_dim,
+)
 
 
 class SharedGrammarModel:
@@ -42,7 +50,7 @@ class SharedGrammarModel:
     def __new__(
         cls,
         *,
-        input_dim: int = 3,
+        input_dim: int | None = 3,
         path_d_model: int = 64,
         path_n_heads: int = 4,
         path_n_layers: int = 2,
@@ -54,10 +62,12 @@ class SharedGrammarModel:
         arbor_output_dim: int = 64,
         atomicity_hidden_dim: int = 64,
         bridge_hidden_dim: int = 64,
+        path_feature_mode: str = DEFAULT_PATH_FEATURE_MODE,
         # Legacy alias: older checkpoints / scripts may pass path_hidden_dim.
         path_hidden_dim: int | None = None,
     ):
         torch, nn = _require_torch()
+        _input_dim = int(path_feature_dim(path_feature_mode) if input_dim is None else input_dim)
 
         _path_d_model = int(path_d_model if path_hidden_dim is None else path_hidden_dim)
 
@@ -65,7 +75,7 @@ class SharedGrammarModel:
             def __init__(self) -> None:
                 super().__init__()
                 self._init_kwargs = {
-                    "input_dim": int(input_dim),
+                    "input_dim": _input_dim,
                     "path_d_model": _path_d_model,
                     "path_n_heads": int(path_n_heads),
                     "path_n_layers": int(path_n_layers),
@@ -77,9 +87,11 @@ class SharedGrammarModel:
                     "arbor_output_dim": int(arbor_output_dim),
                     "atomicity_hidden_dim": int(atomicity_hidden_dim),
                     "bridge_hidden_dim": int(bridge_hidden_dim),
+                    "path_feature_mode": str(path_feature_mode),
                 }
+                self.path_feature_mode = str(path_feature_mode)
                 self.path_encoder = TorchPathEncoder(
-                    input_dim=input_dim,
+                    input_dim=_input_dim,
                     d_model=_path_d_model,
                     n_heads=path_n_heads,
                     n_layers=path_n_layers,
@@ -87,6 +99,7 @@ class SharedGrammarModel:
                     dropout=path_dropout,
                     output_dim=embedding_dim,
                 )
+                self.path_encoder.path_feature_mode = self.path_feature_mode
                 self.merge_scorer = TorchMergeScorer(
                     embedding_dim=embedding_dim,
                     hidden_dim=merge_hidden_dim,
@@ -484,7 +497,15 @@ def save_shared_grammar_model(path: str | Path, model) -> None:
 def load_shared_grammar_model(path: str | Path):
     torch, _ = _require_torch()
     checkpoint = torch.load(path, map_location="cpu", weights_only=False)
-    model = SharedGrammarModel(**checkpoint.get("init_kwargs", {}))
+    init_kwargs = dict(checkpoint.get("init_kwargs", {}))
+    if "path_feature_mode" not in init_kwargs:
+        # Historical checkpoints with input_dim=3 were trained before feature
+        # modes were explicit; assume the original heuristic triplet.
+        if int(init_kwargs.get("input_dim", 3)) == 3:
+            init_kwargs["path_feature_mode"] = LEGACY_PATH_FEATURE_MODE
+        else:
+            init_kwargs["path_feature_mode"] = DEFAULT_PATH_FEATURE_MODE
+    model = SharedGrammarModel(**init_kwargs)
     model.load_state_dict(checkpoint["state_dict"])
     model.eval()
     return model

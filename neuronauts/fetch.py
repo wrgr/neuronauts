@@ -83,6 +83,17 @@ class SynapseTable:
 
 
 @dataclass(frozen=True)
+class SkeletonData:
+    """Skeleton geometry for a single root at one materialization version."""
+
+    root_id: int
+    materialization_version: int
+    vertices: np.ndarray
+    edges: np.ndarray
+    radius: np.ndarray | None = None
+
+
+@dataclass(frozen=True)
 class SyntheticBenchmarkConfig:
     shape: Tuple[int, int, int] = (96, 96, 96)
     n_synapses: int = 30
@@ -236,6 +247,67 @@ def fetch_synapses(
     )
 
 
+def fetch_root_skeleton(
+    root_id: int,
+    *,
+    version: int,
+    datastack: str = MICRONS_DATASTACK,
+    cave_server: str = CAVE_SERVER,
+    token: Optional[str] = None,
+    skeleton_service_version: int = 4,
+) -> SkeletonData:
+    """Fetch one root skeleton at a specific materialization version."""
+    _install_system_trust_store()
+    try:
+        from caveclient import CAVEclient
+    except ImportError as exc:
+        raise ImportError("pip install caveclient") from exc
+
+    client = CAVEclient(datastack, server_address=cave_server, auth_token=token)
+    client.version = int(version)
+    raw = client.skeleton.get_skeleton(
+        int(root_id),
+        datastack_name=datastack,
+        skeleton_version=int(skeleton_service_version),
+        output_format="dict",
+    )
+    vertices = np.asarray(raw.get("vertices", np.zeros((0, 3), dtype=np.float32)), dtype=np.float32)
+    edges = np.asarray(raw.get("edges", np.zeros((0, 2), dtype=np.int64)), dtype=np.int64)
+    radius_raw = raw.get("radius", None)
+    radius = None if radius_raw is None else np.asarray(radius_raw, dtype=np.float32)
+    return SkeletonData(
+        root_id=int(root_id),
+        materialization_version=int(version),
+        vertices=vertices,
+        edges=edges,
+        radius=radius,
+    )
+
+
+def fetch_root_skeletons(
+    root_ids: np.ndarray | list[int],
+    *,
+    version: int,
+    datastack: str = MICRONS_DATASTACK,
+    cave_server: str = CAVE_SERVER,
+    token: Optional[str] = None,
+    skeleton_service_version: int = 4,
+) -> dict[int, SkeletonData]:
+    """Fetch skeletons keyed by root ID for one materialization version."""
+    unique_roots = sorted({int(root_id) for root_id in np.asarray(root_ids, dtype=np.int64).tolist() if int(root_id) > 0})
+    out: dict[int, SkeletonData] = {}
+    for root_id in unique_roots:
+        out[root_id] = fetch_root_skeleton(
+            root_id,
+            version=version,
+            datastack=datastack,
+            cave_server=cave_server,
+            token=token,
+            skeleton_service_version=skeleton_service_version,
+        )
+    return out
+
+
 class CAVEDataFetcher:
     """Small convenience wrapper around the module-level CAVE fetch helpers.
 
@@ -264,6 +336,22 @@ class CAVEDataFetcher:
             datastack=self.datastack,
             cave_server=self.cave_server,
             token=self.token,
+        )
+
+    def fetch_root_skeleton(
+        self,
+        root_id: int,
+        *,
+        version: int,
+        skeleton_service_version: int = 4,
+    ) -> SkeletonData:
+        return fetch_root_skeleton(
+            root_id,
+            version=version,
+            datastack=self.datastack,
+            cave_server=self.cave_server,
+            token=self.token,
+            skeleton_service_version=skeleton_service_version,
         )
 
 

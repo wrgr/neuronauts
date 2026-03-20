@@ -242,22 +242,22 @@ class ValidateBoxTest(unittest.TestCase):
     def test_returns_line_graph_metrics_or_none(self):
         from neuronauts.line_graph import LineGraphMetrics
         args = _make_fake_args()
-        result = self.mod._validate_box(
+        metrics, diag = self.mod._validate_box(
             self._record, self._cache, None, None, args, "cpu"
         )
         # Either a valid metrics object or None (too few synapses / error).
-        self.assertTrue(result is None or isinstance(result, LineGraphMetrics))
+        self.assertTrue(metrics is None or isinstance(metrics, LineGraphMetrics))
+        self.assertIsInstance(diag, dict)
 
     def test_returns_metrics_with_valid_f1_range(self):
-        from neuronauts.line_graph import LineGraphMetrics
         args = _make_fake_args()
-        result = self.mod._validate_box(
+        metrics, _diag = self.mod._validate_box(
             self._record, self._cache, None, None, args, "cpu"
         )
-        if result is None:
+        if metrics is None:
             self.skipTest("box too small — returned None as expected")
-        self.assertGreaterEqual(result.f1, 0.0)
-        self.assertLessEqual(result.f1, 1.0)
+        self.assertGreaterEqual(metrics.f1, 0.0)
+        self.assertLessEqual(metrics.f1, 1.0)
 
     def test_bad_cache_returns_none_not_raises(self):
         """A broken cache should be silently swallowed, returning None."""
@@ -268,10 +268,11 @@ class ValidateBoxTest(unittest.TestCase):
                 raise OSError("disk error")
 
         args = _make_fake_args()
-        result = self.mod._validate_box(
+        metrics, diag = self.mod._validate_box(
             self._record, BrokenCache(), None, None, args, "cpu"
         )
-        self.assertIsNone(result)
+        self.assertIsNone(metrics)
+        self.assertIsInstance(diag, dict)
 
     def test_too_few_synapses_returns_none(self):
         from neuronauts.dataset_builder import BoxCache, select_random_boxes
@@ -295,8 +296,63 @@ class ValidateBoxTest(unittest.TestCase):
             )
             record = cache.save(spec, vol, tiny_syn)
             args = _make_fake_args()
-            result = self.mod._validate_box(record, cache, None, None, args, "cpu")
-            self.assertIsNone(result)
+            metrics, diag = self.mod._validate_box(record, cache, None, None, args, "cpu")
+            self.assertIsNone(metrics)
+            self.assertIsInstance(diag, dict)
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+
+class ValidateBoxFastTest(unittest.TestCase):
+    def setUp(self):
+        _require_torch()
+        from neuronauts.dataset_builder import BoxCache, select_random_boxes
+        from neuronauts.fetch import SynapseTable, VolumeChunk
+
+        self.mod = _import_train()
+        self._tmpdir = tempfile.mkdtemp()
+        self._cache = BoxCache(self._tmpdir)
+        spec = select_random_boxes(n=1, seed=17)[0]
+        rng = np.random.default_rng(17)
+        n = 40
+        vol = VolumeChunk(
+            data=np.zeros((8, 8, 8), dtype=np.uint8),
+            voxel_size_nm=(32, 32, 40),
+            bbox_voxels=((0, 0, 0), (8, 8, 8)),
+            mip=2,
+        )
+        syn = SynapseTable(
+            pre_pt=rng.random((n, 3), dtype=np.float32) * 30,
+            post_pt=rng.random((n, 3), dtype=np.float32) * 30,
+            pre_root_id=np.repeat(np.array([1, 2, 3, 4], dtype=np.int64), n // 4),
+            post_root_id=np.repeat(np.array([11, 12, 13, 14], dtype=np.int64), n // 4),
+            synapse_id=np.arange(n, dtype=np.int64),
+        )
+        self._record = self._cache.save(spec, vol, syn)
+
+    def test_returns_merge_and_topology_metrics(self):
+        import torch
+        from neuronauts.shared_grammar_model import SharedGrammarModel
+
+        model = SharedGrammarModel(input_dim=6, path_feature_mode="raw_delta3+skeleton")
+        result = self.mod._validate_box_fast(
+            self._record,
+            self._cache,
+            model,
+            torch.device("cpu"),
+            "raw_delta3+skeleton",
+        )
+        self.assertIsNotNone(result)
+        for key in ("merge_acc", "merge_bce", "topo_acc", "topo_bce", "n_pairs", "n_topo"):
+            self.assertIn(key, result)
+        self.assertGreater(result["n_pairs"], 0)
+        self.assertGreater(result["n_topo"], 0)
+        self.assertGreaterEqual(result["merge_acc"], 0.0)
+        self.assertLessEqual(result["merge_acc"], 1.0)
+        self.assertGreaterEqual(result["topo_acc"], 0.0)
+        self.assertLessEqual(result["topo_acc"], 1.0)
 
     def tearDown(self):
         import shutil

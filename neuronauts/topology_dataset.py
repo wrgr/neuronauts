@@ -10,15 +10,16 @@ import numpy as np
 
 from .fetch import RealBoxSpec, SynapseTable, fetch_synapses, fetch_volume, load_cached_membrane
 from .fields import compute_membrane_field
-from .grammar import PathEncoder, build_path_batch
+from .grammar import (
+    DEFAULT_PATH_FEATURE_MODE,
+    LEGACY_PATH_FEATURE_MODE,
+    PathEncoder,
+    build_path_batch,
+    featurize_path_points,
+)
 from .training_batches import pad_nested_path_sequences
 
 BRANCH_FEATURE_NAME = "branch_embedding"
-
-# Isotropic scaling: convert MIP-2 voxel coords to 32-nm units (1 unit = 32 nm).
-# Keeps feature values in the same numerical range as raw voxel coords (~1–60)
-# while correctly weighting the Z axis at 40/32 = 1.25× relative to XY.
-_SYNAPSE_ISO = np.array([1.0, 1.0, 40.0 / 32.0], dtype=np.float32)
 
 
 @dataclass(frozen=True)
@@ -50,19 +51,6 @@ def _ordered_points(points: np.ndarray) -> np.ndarray:
     return pts[order].astype(np.float32, copy=False)
 
 
-def _curvature_from_points(points: np.ndarray) -> np.ndarray:
-    if len(points) < 3:
-        return np.zeros(max(0, len(points) - 1), dtype=np.float32)
-
-    segments = np.diff(points, axis=0).astype(np.float32)
-    seg_norm = np.linalg.norm(segments, axis=1)
-    unit = segments / np.clip(seg_norm[:, None], 1e-6, None)
-    turn = np.linalg.norm(np.diff(unit, axis=0), axis=1)
-    curvature = np.zeros(len(segments), dtype=np.float32)
-    curvature[1:] = turn.astype(np.float32, copy=False)
-    return curvature
-
-
 def _branch_point_splits(points: np.ndarray, max_branches: int) -> list[np.ndarray]:
     ordered = _ordered_points(points)
     if len(ordered) < 2:
@@ -75,17 +63,11 @@ def _branch_point_splits(points: np.ndarray, max_branches: int) -> list[np.ndarr
 
 def _branch_sequence_from_points(points: np.ndarray) -> np.ndarray:
     ordered = _ordered_points(points)
-    ordered_nm = ordered * _SYNAPSE_ISO
-    diffs = np.diff(ordered_nm, axis=0)
-    edge_len = np.linalg.norm(diffs, axis=1).astype(np.float32, copy=False)
-    centroid = ordered_nm.mean(axis=0, keepdims=True)
-    radius = np.linalg.norm(ordered_nm[1:] - centroid, axis=1).astype(np.float32, copy=False)
-    curvature = _curvature_from_points(ordered)  # direction-based: scale-independent
-    return np.stack([edge_len, radius, curvature], axis=-1).astype(np.float32, copy=False)
+    return featurize_path_points(ordered, mode=DEFAULT_PATH_FEATURE_MODE)
 
 
 def _encode_branch(points: np.ndarray, encoder: PathEncoder) -> np.ndarray:
-    sequence = _branch_sequence_from_points(points)
+    sequence = featurize_path_points(_ordered_points(points), mode=LEGACY_PATH_FEATURE_MODE)
     batch = build_path_batch(
         edge_len=sequence[:, 0],
         radius=sequence[:, 1],
@@ -98,13 +80,14 @@ def _cluster_branch_sequences(
     points: np.ndarray,
     *,
     max_branches: int,
+    path_feature_mode: str,
 ) -> tuple[np.ndarray, ...]:
     branches = []
     for branch_points in _branch_point_splits(points, max_branches=max_branches):
-        branches.append(_branch_sequence_from_points(branch_points))
+        branches.append(featurize_path_points(_ordered_points(branch_points), mode=path_feature_mode))
 
     if not branches and len(points) >= 2:
-        branches.append(_branch_sequence_from_points(points))
+        branches.append(featurize_path_points(_ordered_points(points), mode=path_feature_mode))
     return tuple(np.asarray(branch, dtype=np.float32) for branch in branches)
 
 
@@ -128,6 +111,7 @@ def _atomic_examples_for_role(
     points: np.ndarray,
     root_ids: np.ndarray,
     *,
+    path_feature_mode: str,
     encoder: PathEncoder,
     min_cluster_size: int,
     max_branches: int,
@@ -140,7 +124,11 @@ def _atomic_examples_for_role(
         if len(indices) < min_cluster_size:
             continue
         cluster_points = points[indices]
-        branch_sequences = _cluster_branch_sequences(cluster_points, max_branches=max_branches)
+        branch_sequences = _cluster_branch_sequences(
+            cluster_points,
+            max_branches=max_branches,
+            path_feature_mode=path_feature_mode,
+        )
         examples.append(
             ClusterExample(
                 role=role,
@@ -163,6 +151,7 @@ def _non_atomic_examples_for_role(
     points: np.ndarray,
     root_ids: np.ndarray,
     *,
+    path_feature_mode: str,
     encoder: PathEncoder,
     min_cluster_size: int,
     max_negative_pairs_per_role: int,
@@ -196,7 +185,11 @@ def _non_atomic_examples_for_role(
         merged = list(idx_a) + list(idx_b)
         rng.shuffle(merged)
         cluster_points = points[merged]
-        branch_sequences = _cluster_branch_sequences(cluster_points, max_branches=max_branches)
+        branch_sequences = _cluster_branch_sequences(
+            cluster_points,
+            max_branches=max_branches,
+            path_feature_mode=path_feature_mode,
+        )
         examples.append(
             ClusterExample(
                 role=role,
@@ -239,6 +232,7 @@ def build_cluster_examples(
     synapses: SynapseTable,
     membrane_field: np.ndarray,
     *,
+    path_feature_mode: str = DEFAULT_PATH_FEATURE_MODE,
     min_cluster_size: int = 2,
     max_negative_pairs_per_role: int = 32,
     max_branches: int = 32,
@@ -258,6 +252,7 @@ def build_cluster_examples(
                 role,
                 points,
                 root_ids,
+                path_feature_mode=path_feature_mode,
                 encoder=encoder,
                 min_cluster_size=min_cluster_size,
                 max_branches=max_branches,
@@ -268,6 +263,7 @@ def build_cluster_examples(
                 role,
                 points,
                 root_ids,
+                path_feature_mode=path_feature_mode,
                 encoder=encoder,
                 min_cluster_size=min_cluster_size,
                 max_negative_pairs_per_role=max_negative_pairs_per_role,
@@ -281,6 +277,7 @@ def build_cluster_examples(
 def build_cluster_examples_for_box(
     box: RealBoxSpec,
     *,
+    path_feature_mode: str = DEFAULT_PATH_FEATURE_MODE,
     membrane_source: str = "auto",
     membrane_cache_dir: str = "cache/membranes",
     min_cluster_size: int = 2,
@@ -300,6 +297,7 @@ def build_cluster_examples_for_box(
     return build_cluster_examples(
         synapses,
         membrane,
+        path_feature_mode=path_feature_mode,
         min_cluster_size=min_cluster_size,
         max_negative_pairs_per_role=max_negative_pairs_per_role,
         max_branches=max_branches,
@@ -338,10 +336,15 @@ def examples_to_branch_sequence_arrays(
     *,
     max_branches: int = 32,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    feature_dim = (
+        int(examples[0].branch_sequences[0].shape[1])
+        if examples and examples[0].branch_sequences
+        else 3
+    )
     nested = pad_nested_path_sequences(
         [list(example.branch_sequences) for example in examples],
         max_items=max_branches,
-        feature_dim=3,
+        feature_dim=feature_dim,
     )
     return nested.x, nested.sequence_mask, nested.item_mask
 

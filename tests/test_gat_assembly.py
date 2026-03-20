@@ -61,28 +61,29 @@ class PathSeqFromPtsTest(unittest.TestCase):
     def test_output_shape(self):
         pts = _rng_pts(10)
         seq = _path_seq_from_pts(pts)
-        self.assertEqual(seq.shape, (9, 3))
+        self.assertEqual(seq.shape, (9, 6))
 
     def test_single_point_returns_empty(self):
         seq = _path_seq_from_pts(np.zeros((1, 3), dtype=np.float32))
         self.assertEqual(seq.shape[0], 0)
 
     def test_two_points(self):
-        # Points are in MIP-2 voxel coords.  Features are in isotropic 32-nm
-        # units: a 1-voxel step in X = 1.0 unit; a 1-voxel step in Z = 1.25 units.
+        # Points are in MIP-2 voxel coords. Features are isotropic raw deltas:
+        # a 1-voxel step in X = (1, 0, 0), a 1-voxel step in Z = (0, 0, 1.25).
         pts = np.array([[0, 0, 0], [1, 0, 0]], dtype=np.float32)
         seq = _path_seq_from_pts(pts)
-        self.assertEqual(seq.shape, (1, 3))
-        self.assertAlmostEqual(float(seq[0, 0]), 1.0, places=4)
+        self.assertEqual(seq.shape, (1, 6))
+        np.testing.assert_allclose(seq[0, :3], [1.0, 0.0, 0.0], atol=1e-4)
+        np.testing.assert_allclose(seq[0, 3:], [1.0, 0.0, 0.0], atol=1e-4)
 
     def test_z_step_is_longer_than_xy(self):
-        # A 1-voxel Z step should be 1.25 units (40/32), not 1.0.
+        # A 1-voxel Z step should produce dz=1.25 units (40/32), not 1.0.
         pts_x = np.array([[0, 0, 0], [1, 0, 0]], dtype=np.float32)
         pts_z = np.array([[0, 0, 0], [0, 0, 1]], dtype=np.float32)
-        edge_x = float(_path_seq_from_pts(pts_x)[0, 0])
-        edge_z = float(_path_seq_from_pts(pts_z)[0, 0])
-        self.assertAlmostEqual(edge_x, 1.0, places=4)
-        self.assertAlmostEqual(edge_z, 40.0 / 32.0, places=4)
+        delta_x = _path_seq_from_pts(pts_x)[0]
+        delta_z = _path_seq_from_pts(pts_z)[0]
+        np.testing.assert_allclose(delta_x[:3], [1.0, 0.0, 0.0], atol=1e-4)
+        np.testing.assert_allclose(delta_z[:3], [0.0, 0.0, 40.0 / 32.0], atol=1e-4)
 
     def test_dtype_float32(self):
         seq = _path_seq_from_pts(_rng_pts(5))
@@ -227,7 +228,7 @@ class GATCheckpointTest(unittest.TestCase):
 
 class EncodeNeuronsTest(unittest.TestCase):
     def _encoder(self):
-        return SharedGrammarModel(input_dim=3, path_d_model=16, embedding_dim=16,
+        return SharedGrammarModel(input_dim=6, path_d_model=16, embedding_dim=16,
                                   path_n_heads=2).path_encoder.eval()
 
     def test_returns_correct_node_count(self):
@@ -283,7 +284,7 @@ class BuildGATEdgesTest(unittest.TestCase):
 
 class GatRefineConnectivityTest(unittest.TestCase):
     def _enc_and_gat(self, node_dim=16):
-        enc = SharedGrammarModel(input_dim=3, path_d_model=16, embedding_dim=node_dim,
+        enc = SharedGrammarModel(input_dim=6, path_d_model=16, embedding_dim=node_dim,
                                  path_n_heads=2).path_encoder.eval()
         gat = GlobalAssemblyGAT(node_dim=node_dim, gat_dim=16, n_heads=2, n_layers=1,
                                  dropout=0.0).eval()
@@ -343,7 +344,7 @@ class RunGATIntegrationTest(unittest.TestCase):
         from neuronauts.run import run
 
         # Default SharedGrammarModel uses embedding_dim=32; GAT node_dim must match.
-        enc = SharedGrammarModel(input_dim=3, path_d_model=32, embedding_dim=32,
+        enc = SharedGrammarModel(input_dim=6, path_d_model=32, embedding_dim=32,
                                  path_n_heads=2).path_encoder
         gat = GlobalAssemblyGAT(node_dim=32, gat_dim=32, n_heads=2, n_layers=1, dropout=0.0)
 
