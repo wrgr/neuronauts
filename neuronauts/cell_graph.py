@@ -932,3 +932,246 @@ def load_cell_gnn(path):
     model.load_state_dict(ckpt["state_dict"])
     model.eval()
     return model
+
+
+# ---------------------------------------------------------------------------
+# 9. Sampling strategy: proofread-core with tangledness prioritisation
+# ---------------------------------------------------------------------------
+
+def score_box_tangledness(
+    cache: "BoxCache",
+    record: "BoxRecord",
+) -> dict[str, float]:
+    """Score a cached box for how "tangled" its root-ID structure is.
+
+    Tangled boxes have many distinct roots sharing synapses in a small volume —
+    exactly the hard cases where the CellGNN needs to learn.  Proofreader-edited
+    regions (the proofread core) are rich in these.
+
+    Metrics returned:
+    - ``n_pre_roots``: number of distinct pre-side root IDs
+    - ``n_post_roots``: number of distinct post-side root IDs
+    - ``root_density``: (n_pre_roots + n_post_roots) / n_synapses
+    - ``max_root_size``: largest root group (synapses) on either side
+    - ``multi_root_fraction``: fraction of roots that own ≥2 synapses (on
+      either side).  Higher = more mergeable structure.
+    - ``tangledness``: composite score = multi_root_fraction * root_density * 100
+    """
+    try:
+        _, synapses = cache.load(record)
+    except Exception:
+        return {"tangledness": 0.0}
+
+    pre_roots = np.asarray(synapses.pre_root_id, dtype=np.int64)
+    post_roots = np.asarray(synapses.post_root_id, dtype=np.int64)
+    n = len(pre_roots)
+    if n == 0:
+        return {"tangledness": 0.0}
+
+    from collections import Counter
+    pre_counts = Counter(pre_roots.tolist())
+    post_counts = Counter(post_roots.tolist())
+
+    n_pre = len(pre_counts)
+    n_post = len(post_counts)
+    root_density = (n_pre + n_post) / max(n, 1)
+
+    max_root_size = max(
+        max(pre_counts.values(), default=0),
+        max(post_counts.values(), default=0),
+    )
+
+    # Fraction of roots with ≥2 synapses (mergeable groups)
+    multi_pre = sum(1 for c in pre_counts.values() if c >= 2)
+    multi_post = sum(1 for c in post_counts.values() if c >= 2)
+    total_roots = n_pre + n_post
+    multi_root_fraction = (multi_pre + multi_post) / max(total_roots, 1)
+
+    tangledness = multi_root_fraction * root_density * 100.0
+
+    return {
+        "n_pre_roots": float(n_pre),
+        "n_post_roots": float(n_post),
+        "root_density": root_density,
+        "max_root_size": float(max_root_size),
+        "multi_root_fraction": multi_root_fraction,
+        "tangledness": tangledness,
+    }
+
+
+def rank_boxes_by_tangledness(
+    cache: "BoxCache",
+    records: "list[BoxRecord] | None" = None,
+    *,
+    min_synapses: int = 10,
+    min_positive_pairs: int = 2,
+) -> "list[tuple[BoxRecord, dict[str, float]]]":
+    """Rank cached boxes by tangledness, most tangled first.
+
+    Returns list of (record, metrics) tuples sorted by descending tangledness.
+    Filters out boxes with too few synapses or positive pairs.
+    """
+    if records is None:
+        records = cache.all_records()
+
+    scored = []
+    for rec in records:
+        if rec.n_synapses < min_synapses:
+            continue
+        if rec.n_positive_pairs < min_positive_pairs:
+            continue
+        metrics = score_box_tangledness(cache, rec)
+        scored.append((rec, metrics))
+
+    scored.sort(key=lambda x: x[1].get("tangledness", 0.0), reverse=True)
+    return scored
+
+
+def spatial_train_val_test_split(
+    cache: "BoxCache",
+    records: "list[BoxRecord]",
+    *,
+    val_fraction: float = 0.15,
+    test_fraction: float = 0.15,
+    axis: int = 0,
+    seed: int = 42,
+) -> "dict[str, list[BoxRecord]]":
+    """Split BoxRecords into train/val/test by spatial binning.
+
+    Assigns each box to a spatial bin along ``axis`` (0=x, 1=y, 2=z) based
+    on its center coordinate, then allocates bins to splits.  This ensures
+    that nearby boxes (which may share neurons) stay in the same split,
+    preventing data leakage.
+
+    Falls back to shuffled splitting if there are too few distinct bins.
+
+    Parameters
+    ----------
+    cache : BoxCache
+    records : list of BoxRecord to split
+    val_fraction, test_fraction : target fractions for val and test
+    axis : spatial axis to bin along (0=x, 1=y, 2=z)
+    seed : RNG seed for bin assignment when bins are tied
+
+    Returns
+    -------
+    dict with keys "train", "val", "test", each a list of BoxRecord.
+    """
+    rng = np.random.default_rng(seed)
+
+    if not records:
+        return {"train": [], "val": [], "test": []}
+
+    # Get center coordinates along the chosen axis
+    centers = []
+    for rec in records:
+        c = rec.center_nm
+        if isinstance(c, (list, tuple)) and len(c) > axis:
+            centers.append(float(c[axis]))
+        else:
+            centers.append(0.0)
+    centers = np.array(centers)
+
+    # Determine number of bins (at least 3 for a proper split)
+    n = len(records)
+    n_bins = max(3, min(10, n // 3))
+
+    # Assign boxes to bins via quantiles
+    percentiles = np.linspace(0, 100, n_bins + 1)
+    bin_edges = np.percentile(centers, percentiles)
+    bin_ids = np.digitize(centers, bin_edges[1:-1])  # [0, n_bins-1]
+
+    # Assign bins to splits
+    unique_bins = sorted(set(bin_ids.tolist()))
+    rng.shuffle(unique_bins)
+
+    n_val_bins = max(1, round(len(unique_bins) * val_fraction))
+    n_test_bins = max(1, round(len(unique_bins) * test_fraction))
+    n_train_bins = len(unique_bins) - n_val_bins - n_test_bins
+
+    if n_train_bins < 1:
+        # Fallback: shuffled split
+        order = rng.permutation(n)
+        n_val = max(1, int(n * val_fraction))
+        n_test = max(1, int(n * test_fraction))
+        return {
+            "val": [records[i] for i in order[:n_val]],
+            "test": [records[i] for i in order[n_val:n_val + n_test]],
+            "train": [records[i] for i in order[n_val + n_test:]],
+        }
+
+    val_bins = set(unique_bins[:n_val_bins])
+    test_bins = set(unique_bins[n_val_bins:n_val_bins + n_test_bins])
+
+    splits: dict[str, list] = {"train": [], "val": [], "test": []}
+    for i, rec in enumerate(records):
+        b = bin_ids[i]
+        if b in val_bins:
+            splits["val"].append(rec)
+        elif b in test_bins:
+            splits["test"].append(rec)
+        else:
+            splits["train"].append(rec)
+
+    return splits
+
+
+def select_cell_gnn_training_boxes(
+    cache: "BoxCache",
+    *,
+    max_train: int = 200,
+    max_val: int = 30,
+    min_tangledness: float = 0.0,
+    min_synapses: int = 10,
+    min_positive_pairs: int = 2,
+    val_fraction: float = 0.15,
+    test_fraction: float = 0.15,
+    seed: int = 42,
+) -> "dict[str, list[BoxRecord]]":
+    """Select and split boxes for CellGNN training, prioritising tangled ones.
+
+    Pipeline:
+    1. Score all boxes for tangledness.
+    2. Filter by min_tangledness (0.0 keeps all).
+    3. Spatial train/val/test split to prevent leakage.
+    4. Cap train set at ``max_train`` (keeping most tangled).
+    5. Cap val set at ``max_val``.
+
+    Returns dict with "train", "val", "test" lists of BoxRecord.
+    """
+    ranked = rank_boxes_by_tangledness(
+        cache,
+        min_synapses=min_synapses,
+        min_positive_pairs=min_positive_pairs,
+    )
+
+    if min_tangledness > 0:
+        ranked = [(r, m) for r, m in ranked if m.get("tangledness", 0) >= min_tangledness]
+
+    records = [r for r, _m in ranked]
+    if not records:
+        return {"train": [], "val": [], "test": []}
+
+    splits = spatial_train_val_test_split(
+        cache, records,
+        val_fraction=val_fraction,
+        test_fraction=test_fraction,
+        seed=seed,
+    )
+
+    # Sort each split by tangledness (most tangled first), then cap
+    def _tangle_key(rec):
+        for r, m in ranked:
+            if r.box_hash == rec.box_hash:
+                return m.get("tangledness", 0.0)
+        return 0.0
+
+    splits["train"].sort(key=_tangle_key, reverse=True)
+    splits["val"].sort(key=_tangle_key, reverse=True)
+
+    if max_train > 0 and len(splits["train"]) > max_train:
+        splits["train"] = splits["train"][:max_train]
+    if max_val > 0 and len(splits["val"]) > max_val:
+        splits["val"] = splits["val"][:max_val]
+
+    return splits

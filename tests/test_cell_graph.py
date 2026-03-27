@@ -17,7 +17,11 @@ from neuronauts.cell_graph import (
     infer_cells,
     load_cell_gnn,
     partition_from_embeddings,
+    rank_boxes_by_tangledness,
     save_cell_gnn,
+    score_box_tangledness,
+    select_cell_gnn_training_boxes,
+    spatial_train_val_test_split,
 )
 
 torch = pytest.importorskip("torch", reason="torch not installed")
@@ -414,3 +418,148 @@ class TestPersistence:
             out1 = model(node_feat, edge_src, edge_dst, edge_feat)
             out2 = loaded(node_feat, edge_src, edge_dst, edge_feat)
         assert torch.allclose(out1, out2)
+
+
+# ---------------------------------------------------------------------------
+# Sampling strategy: tangledness and spatial splitting
+# ---------------------------------------------------------------------------
+
+def _make_box_cache(tmp_path, n_boxes=6, seed=0):
+    """Create a BoxCache with synthetic boxes for testing sampling utilities."""
+    from neuronauts.dataset_builder import BoxCache
+    from neuronauts.fetch import RealBoxSpec
+
+    rng = np.random.default_rng(seed)
+    cache = BoxCache(str(tmp_path / "cache"))
+
+    for i in range(n_boxes):
+        n_cells = rng.integers(2, 6)
+        syn = _make_synapses(n_cells=n_cells, synapses_per_cell=rng.integers(3, 8), seed=seed + i)
+        # Spread boxes along x axis for spatial splitting
+        center_x = 500_000 + i * 200_000
+        center_y = 1_000_000
+        center_z = 300_000
+        spec = RealBoxSpec(
+            center_nm=(center_x, center_y, center_z),
+            side_um=30.0,
+            mip=2,
+        )
+        from neuronauts.dataset_builder import count_positive_pairs
+        n_pos = count_positive_pairs(syn)
+        cache.save_synapse_only(spec, syn, n_positive_pairs=n_pos)
+
+    return cache
+
+
+class TestTangledness:
+    def test_score_box_tangledness_returns_metrics(self, tmp_path):
+        cache = _make_box_cache(tmp_path, n_boxes=3)
+        records = cache.all_records()
+        assert len(records) == 3
+
+        metrics = score_box_tangledness(cache, records[0])
+        assert "tangledness" in metrics
+        assert "n_pre_roots" in metrics
+        assert "root_density" in metrics
+        assert "multi_root_fraction" in metrics
+        assert metrics["tangledness"] >= 0.0
+
+    def test_score_box_tangledness_positive_for_multi_root(self, tmp_path):
+        cache = _make_box_cache(tmp_path, n_boxes=1)
+        records = cache.all_records()
+        metrics = score_box_tangledness(cache, records[0])
+        # Our synthetic boxes have multiple roots, so tangledness > 0
+        assert metrics["n_pre_roots"] >= 2
+        assert metrics["multi_root_fraction"] > 0
+
+    def test_rank_boxes_by_tangledness(self, tmp_path):
+        cache = _make_box_cache(tmp_path, n_boxes=5)
+        ranked = rank_boxes_by_tangledness(cache, min_synapses=2, min_positive_pairs=0)
+        assert len(ranked) > 0
+        # Should be sorted descending by tangledness
+        tangle_vals = [m["tangledness"] for _, m in ranked]
+        for i in range(len(tangle_vals) - 1):
+            assert tangle_vals[i] >= tangle_vals[i + 1]
+
+    def test_rank_filters_small_boxes(self, tmp_path):
+        cache = _make_box_cache(tmp_path, n_boxes=3)
+        # Very high min_synapses should filter most/all
+        ranked = rank_boxes_by_tangledness(cache, min_synapses=99999)
+        assert len(ranked) == 0
+
+
+class TestSpatialSplit:
+    def test_split_covers_all_records(self, tmp_path):
+        cache = _make_box_cache(tmp_path, n_boxes=9)
+        records = cache.all_records()
+        splits = spatial_train_val_test_split(
+            cache, records, val_fraction=0.2, test_fraction=0.2, seed=42,
+        )
+        total = len(splits["train"]) + len(splits["val"]) + len(splits["test"])
+        assert total == len(records)
+
+    def test_split_no_overlap(self, tmp_path):
+        cache = _make_box_cache(tmp_path, n_boxes=9)
+        records = cache.all_records()
+        splits = spatial_train_val_test_split(
+            cache, records, val_fraction=0.2, test_fraction=0.2, seed=42,
+        )
+        train_hashes = {r.box_hash for r in splits["train"]}
+        val_hashes = {r.box_hash for r in splits["val"]}
+        test_hashes = {r.box_hash for r in splits["test"]}
+        assert not (train_hashes & val_hashes)
+        assert not (train_hashes & test_hashes)
+        assert not (val_hashes & test_hashes)
+
+    def test_split_each_nonempty(self, tmp_path):
+        cache = _make_box_cache(tmp_path, n_boxes=9)
+        records = cache.all_records()
+        splits = spatial_train_val_test_split(
+            cache, records, val_fraction=0.2, test_fraction=0.2, seed=42,
+        )
+        assert len(splits["train"]) > 0
+        assert len(splits["val"]) > 0
+        assert len(splits["test"]) > 0
+
+    def test_split_empty_input(self, tmp_path):
+        cache = _make_box_cache(tmp_path, n_boxes=1)
+        splits = spatial_train_val_test_split(cache, [], seed=42)
+        assert splits == {"train": [], "val": [], "test": []}
+
+
+class TestSelectCellGNNTrainingBoxes:
+    def test_returns_all_splits(self, tmp_path):
+        cache = _make_box_cache(tmp_path, n_boxes=9)
+        splits = select_cell_gnn_training_boxes(
+            cache,
+            min_synapses=2,
+            min_positive_pairs=0,
+            seed=42,
+        )
+        assert "train" in splits
+        assert "val" in splits
+        assert "test" in splits
+
+    def test_max_train_caps(self, tmp_path):
+        cache = _make_box_cache(tmp_path, n_boxes=9)
+        splits = select_cell_gnn_training_boxes(
+            cache,
+            max_train=2,
+            min_synapses=2,
+            min_positive_pairs=0,
+            seed=42,
+        )
+        assert len(splits["train"]) <= 2
+
+    def test_min_tangledness_filters(self, tmp_path):
+        cache = _make_box_cache(tmp_path, n_boxes=5)
+        # Very high tangledness threshold
+        splits = select_cell_gnn_training_boxes(
+            cache,
+            min_tangledness=9999.0,
+            min_synapses=2,
+            min_positive_pairs=0,
+            seed=42,
+        )
+        total = len(splits["train"]) + len(splits["val"]) + len(splits["test"])
+        assert total == 0

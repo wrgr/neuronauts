@@ -1,8 +1,10 @@
 # Global Topological Merge: Implementation Plan
 
-> **Status: Phase 1 implemented.**
-> `neuronauts/cell_graph.py` contains the core CellGNN architecture and
-> training loop.  `tests/test_cell_graph.py` has 29 passing tests.
+> **Status: Phase 0 + Sampling Strategy implemented.**
+> `neuronauts/cell_graph.py` contains the core CellGNN architecture,
+> training loop, and sampling utilities (tangledness scoring, spatial
+> train/val/test splitting).  `tests/test_cell_graph.py` has 40 passing
+> tests.  `scripts/train.py train-cell-gnn` provides the CLI entry point.
 > Remaining phases are tracked below.
 
 ---
@@ -113,6 +115,33 @@ Implemented:
 
 The `F1 roundtrip` test confirms a perfect partition of ground-truth root IDs
 yields F1=1.0 through the full pipeline.
+
+### Phase 0.5: Sampling Strategy ✓ DONE
+**Tangledness-aware sampling + spatial train/val/test split**
+
+Implemented in `cell_graph.py`:
+- `score_box_tangledness` — scores each cached box for root-ID complexity
+  (root density, multi-root fraction, composite tangledness score).
+  Tangled boxes = many distinct roots sharing synapses in a small volume,
+  i.e. the hard cases from the proofread core with edit history.
+- `rank_boxes_by_tangledness` — sorts boxes most-tangled-first with
+  min_synapses / min_positive_pairs filtering.
+- `spatial_train_val_test_split` — bins boxes along a spatial axis
+  (quantile-based), assigns bins to splits so nearby boxes (which may
+  share neurons) stay together.  Prevents data leakage.
+- `select_cell_gnn_training_boxes` — end-to-end pipeline: score → filter
+  → spatial split → cap train/val sizes (keeping most tangled).
+
+CLI entry point: `python scripts/train.py train-cell-gnn --cache-dir <dir>`
+
+Workflow:
+1. Build proofread-core cache:
+   `python experiments/root_neighborhood_dataset.py build-cache --cache-dir data/proofread --version 1718`
+2. Train CellGNN:
+   `python scripts/train.py train-cell-gnn --cache-dir data/proofread --epochs 50`
+
+11 new tests (40 total) verify tangledness scoring, spatial splitting,
+and the full selection pipeline.
 
 ---
 
@@ -249,9 +278,12 @@ loss).
 Phase 0 (CellGNN core)      ✓ DONE — cell_graph.py + 29 tests
   |
   v
+Phase 0.5 (sampling)        ✓ DONE — tangledness + spatial splits + CLI
+  |
+  v
 Phase 1 (baseline eval)     <- DO THIS NOW
-  |                            Train CellGNN on cached boxes, compare F1
-  |                            vs current beam-search pipeline
+  |                            Train CellGNN on proofread-core cache,
+  |                            compare F1 vs current beam-search pipeline
   v
 Phase 2 (grammar integration) <- NEXT
   |                            Feed grammar pairwise scores as edge features
