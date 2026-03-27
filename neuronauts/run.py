@@ -26,6 +26,9 @@ from .line_graph import LineGraphMetrics, evaluate
 from .merge import ConnectivityGraph, MergedNeuron, cKDTree
 from .vectorized import run_agents_vectorized
 
+# Lazy imports for CellGNN (only needed when --cell-gnn-checkpoint is set)
+CELL_GNN_CHECKPOINT = None
+
 # ============================================================
 # EXPERIMENT CONFIG -- autoresearch edits this block
 # ============================================================
@@ -897,6 +900,9 @@ def run(
     membrane_unet_checkpoint: str | None = None,
     gat_assembly_checkpoint: str | None = None,
     gat_edge_threshold: float = 0.5,
+    cell_gnn_checkpoint: str | None = CELL_GNN_CHECKPOINT,
+    cell_gnn_partition_threshold: float = 0.5,
+    cell_gnn_proximity_radius_nm: float = 5000.0,
 ) -> LineGraphMetrics:
     t0 = time.time()
     all_syn_pts = np.vstack([pre_pts, post_pts])
@@ -931,6 +937,48 @@ def run(
         hit_count = synapse_hits.any(axis=0).sum()
         print(f"  {time.time() - t1:.2f}s | {hit_count}/{len(all_syn_pts)} sites hit, {alive.sum()} alive")
     t2 = time.time()
+
+    # --- CellGNN assembly path (alternative to beam search) ---
+    if cell_gnn_checkpoint is not None:
+        from .cell_graph import cell_gnn_assembly, load_cell_gnn
+
+        if verbose:
+            print("CellGNN assembly …")
+        cell_gnn_model = load_cell_gnn(cell_gnn_checkpoint)
+        grammar_fn = None
+        if shared_grammar_checkpoint:
+            grammar_fn = _load_shared_merge_score_fn(shared_grammar_checkpoint)
+        # Build a minimal SynapseTable-like object for cell_gnn_assembly
+        from .fetch import SynapseTable
+        syn_table = SynapseTable(
+            pre_pt=pre_pts,
+            post_pt=post_pts,
+            pre_root_id=pre_root_ids,
+            post_root_id=post_root_ids,
+            synapse_id=np.arange(len(pre_pts), dtype=np.int64),
+            pre_seg_id=pre_seg_ids,
+            post_seg_id=post_seg_ids,
+        )
+        graph = cell_gnn_assembly(
+            syn_table,
+            cell_gnn_model,
+            grammar_score_fn=grammar_fn,
+            synapse_hits=synapse_hits,
+            proximity_radius_nm=cell_gnn_proximity_radius_nm,
+            partition_threshold=cell_gnn_partition_threshold,
+            verbose=verbose,
+        )
+        if verbose:
+            print(
+                f"  CellGNN assembly {time.time() - t2:.2f}s | "
+                f"{len(graph.neurons)} neurons, {len(graph.edges)} edges"
+            )
+        metrics = evaluate(graph, pre_root_ids, post_root_ids)
+        if verbose:
+            print(f"\nTotal: {time.time() - t0:.2f}s")
+            print(f"Result: {metrics}")
+        return metrics
+
     score_fn = learned_merge_score_fn
     atomicity_fn = None
     if score_fn is None and shared_grammar_checkpoint:
@@ -1035,6 +1083,9 @@ def evaluate_synthetic_case(
     membrane_unet_checkpoint: str | None = None,
     gat_assembly_checkpoint: str | None = None,
     gat_edge_threshold: float = 0.5,
+    cell_gnn_checkpoint: str | None = None,
+    cell_gnn_partition_threshold: float = 0.5,
+    cell_gnn_proximity_radius_nm: float = 5000.0,
 ) -> LineGraphMetrics:
     chunk, synapses = make_test_volume(config=benchmark_config, seed=volume_seed)
     return run(
@@ -1050,6 +1101,9 @@ def evaluate_synthetic_case(
         membrane_unet_checkpoint=membrane_unet_checkpoint,
         gat_assembly_checkpoint=gat_assembly_checkpoint,
         gat_edge_threshold=gat_edge_threshold,
+        cell_gnn_checkpoint=cell_gnn_checkpoint,
+        cell_gnn_partition_threshold=cell_gnn_partition_threshold,
+        cell_gnn_proximity_radius_nm=cell_gnn_proximity_radius_nm,
     )
 
 
@@ -1129,6 +1183,9 @@ def evaluate_real_box(
     atomicity_score_weight: float = ATOMICITY_SCORE_WEIGHT,
     reranker_thresholds: str = RERANKER_THRESHOLDS,
     reranker_beam_widths: str = RERANKER_BEAM_WIDTHS,
+    cell_gnn_checkpoint: str | None = None,
+    cell_gnn_partition_threshold: float = 0.5,
+    cell_gnn_proximity_radius_nm: float = 5000.0,
 ) -> tuple[LineGraphMetrics | None, dict[str, int | float | tuple]]:
     synapses = fetch_synapses(box.bbox_nm, mip=box.mip)
     summary = {
@@ -1167,6 +1224,9 @@ def evaluate_real_box(
         atomicity_score_weight=atomicity_score_weight,
         reranker_thresholds=reranker_thresholds,
         reranker_beam_widths=reranker_beam_widths,
+        cell_gnn_checkpoint=cell_gnn_checkpoint,
+        cell_gnn_partition_threshold=cell_gnn_partition_threshold,
+        cell_gnn_proximity_radius_nm=cell_gnn_proximity_radius_nm,
     )
     return metrics, summary
 
@@ -1187,6 +1247,9 @@ def evaluate_real_box_set(
     atomicity_score_weight: float = ATOMICITY_SCORE_WEIGHT,
     reranker_thresholds: str = RERANKER_THRESHOLDS,
     reranker_beam_widths: str = RERANKER_BEAM_WIDTHS,
+    cell_gnn_checkpoint: str | None = None,
+    cell_gnn_partition_threshold: float = 0.5,
+    cell_gnn_proximity_radius_nm: float = 5000.0,
 ) -> tuple[LineGraphMetrics, list[dict[str, int | float | tuple]]]:
     summaries = []
     metrics_list = []
@@ -1207,6 +1270,9 @@ def evaluate_real_box_set(
             atomicity_score_weight=atomicity_score_weight,
             reranker_thresholds=reranker_thresholds,
             reranker_beam_widths=reranker_beam_widths,
+            cell_gnn_checkpoint=cell_gnn_checkpoint,
+            cell_gnn_partition_threshold=cell_gnn_partition_threshold,
+            cell_gnn_proximity_radius_nm=cell_gnn_proximity_radius_nm,
         )
         if metrics is None:
             summaries.append({**summary, "status": "skip_low_synapses"})
@@ -1283,6 +1349,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--atomicity-score-weight", type=float, default=ATOMICITY_SCORE_WEIGHT, help="Weight for atomicity reranking inside beam search.")
     parser.add_argument("--reranker-thresholds", default=RERANKER_THRESHOLDS, help="Threshold sweep used when reranker-driven hypothesis selection is enabled.")
     parser.add_argument("--reranker-beam-widths", default=RERANKER_BEAM_WIDTHS, help="Beam-width sweep used when reranker-driven hypothesis selection is enabled.")
+    parser.add_argument("--cell-gnn-checkpoint", default=CELL_GNN_CHECKPOINT, help="CellGNN checkpoint for global topological merge (bypasses beam search).")
+    parser.add_argument("--cell-gnn-partition-threshold", type=float, default=0.5, help="Cosine similarity threshold for CellGNN partition clustering.")
+    parser.add_argument("--cell-gnn-proximity-radius-nm", type=float, default=5000.0, help="Spatial radius for CellGNN evidence graph construction.")
     parser.add_argument("--quiet", action="store_true", help="Suppress per-step benchmark logging.")
     return parser.parse_args()
 
@@ -1303,14 +1372,9 @@ def main() -> None:
                 volume_seed=args.volume_seed,
                 run_seed=args.run_seed,
                 verbose=not args.quiet,
-                shared_grammar_checkpoint=args.shared_grammar_checkpoint,
-                assembly_reranker_checkpoint=args.assembly_reranker_checkpoint,
-                learned_merge_score_threshold=args.learned_merge_score_threshold,
-                beam_width=args.beam_width,
-                beam_max_candidates=args.beam_max_candidates,
-                atomicity_score_weight=args.atomicity_score_weight,
-                reranker_thresholds=args.reranker_thresholds,
-                reranker_beam_widths=args.reranker_beam_widths,
+                cell_gnn_checkpoint=getattr(args, "cell_gnn_checkpoint", None),
+                cell_gnn_partition_threshold=getattr(args, "cell_gnn_partition_threshold", 0.5),
+                cell_gnn_proximity_radius_nm=getattr(args, "cell_gnn_proximity_radius_nm", 5000.0),
             )
             print(f"Result: {metrics}")
             print(f"\nval_f1 = {metrics.f1:.4f}")
@@ -1360,6 +1424,9 @@ def main() -> None:
         atomicity_score_weight=args.atomicity_score_weight,
         reranker_thresholds=args.reranker_thresholds,
         reranker_beam_widths=args.reranker_beam_widths,
+        cell_gnn_checkpoint=getattr(args, "cell_gnn_checkpoint", None),
+        cell_gnn_partition_threshold=getattr(args, "cell_gnn_partition_threshold", 0.5),
+        cell_gnn_proximity_radius_nm=getattr(args, "cell_gnn_proximity_radius_nm", 5000.0),
     )
     for idx, summary in enumerate(box_summaries, start=1):
         print(

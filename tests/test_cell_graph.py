@@ -12,8 +12,10 @@ from neuronauts.cell_graph import (
     SynapseEdge,
     SynapseGraph,
     build_synapse_graph,
+    cell_gnn_assembly,
     cell_graph_train_step,
     connectivity_graph_from_cell_labels,
+    extract_grammar_scores,
     infer_cells,
     load_cell_gnn,
     partition_from_embeddings,
@@ -563,3 +565,150 @@ class TestSelectCellGNNTrainingBoxes:
         )
         total = len(splits["train"]) + len(splits["val"]) + len(splits["test"])
         assert total == 0
+
+
+# ---------------------------------------------------------------------------
+# Grammar score extraction and CellGNN assembly
+# ---------------------------------------------------------------------------
+
+def _dummy_grammar_score_fn(left_seq, right_seq):
+    """Dummy grammar scorer: returns cosine similarity of mean features."""
+    if len(left_seq) == 0 or len(right_seq) == 0:
+        return 0.0
+    a = left_seq.mean(axis=0)
+    b = right_seq.mean(axis=0)
+    norm = np.linalg.norm(a) * np.linalg.norm(b)
+    if norm < 1e-8:
+        return 0.0
+    return float(np.dot(a, b) / norm)
+
+
+class TestExtractGrammarScores:
+    def test_returns_dict(self):
+        syn = _make_synapses(n_cells=3, synapses_per_cell=4)
+        # Give synapses distinct seg_ids per cell to form scaffold groups
+        syn = SynapseTable(
+            pre_pt=syn.pre_pt,
+            post_pt=syn.post_pt,
+            pre_root_id=syn.pre_root_id,
+            post_root_id=syn.post_root_id,
+            synapse_id=syn.synapse_id,
+            pre_seg_id=syn.pre_root_id.copy(),  # use root IDs as seg IDs
+        )
+        scores = extract_grammar_scores(
+            syn, "pre", _dummy_grammar_score_fn,
+            proximity_radius_nm=100000.0,
+        )
+        assert isinstance(scores, dict)
+        # Should have some pairs scored
+        assert len(scores) > 0
+        for (i, j), v in scores.items():
+            assert i < j
+            assert isinstance(v, float)
+
+    def test_no_seg_ids_returns_empty(self):
+        syn = _make_synapses(n_cells=2, synapses_per_cell=3)
+        scores = extract_grammar_scores(syn, "pre", _dummy_grammar_score_fn)
+        assert scores == {}
+
+
+class TestCellGNNAssembly:
+    def test_produces_connectivity_graph(self):
+        syn = _make_synapses(n_cells=3, synapses_per_cell=5)
+        model = CellGNN(node_input_dim=3, d_model=16, n_layers=2,
+                        n_heads=2, embedding_dim=8)
+        model.eval()
+        cg = cell_gnn_assembly(syn, model, proximity_radius_nm=50000.0)
+        from neuronauts.merge import ConnectivityGraph
+        assert isinstance(cg, ConnectivityGraph)
+        assert len(cg.neurons) > 0
+        assert len(cg.edges) > 0
+
+    def test_with_grammar_scores(self):
+        syn = _make_synapses(n_cells=2, synapses_per_cell=4)
+        syn = SynapseTable(
+            pre_pt=syn.pre_pt,
+            post_pt=syn.post_pt,
+            pre_root_id=syn.pre_root_id,
+            post_root_id=syn.post_root_id,
+            synapse_id=syn.synapse_id,
+            pre_seg_id=syn.pre_root_id.copy(),
+            post_seg_id=syn.post_root_id.copy(),
+        )
+        model = CellGNN(node_input_dim=3, d_model=16, n_layers=2,
+                        n_heads=2, embedding_dim=8)
+        model.eval()
+        cg = cell_gnn_assembly(
+            syn, model,
+            grammar_score_fn=_dummy_grammar_score_fn,
+            proximity_radius_nm=100000.0,
+        )
+        assert len(cg.neurons) > 0
+
+    def test_f1_computable(self):
+        """CellGNN assembly output can be evaluated for F1."""
+        from neuronauts.line_graph import evaluate
+        syn = _make_synapses(n_cells=3, synapses_per_cell=4)
+        model = CellGNN(node_input_dim=3, d_model=16, n_layers=2,
+                        n_heads=2, embedding_dim=8)
+        model.eval()
+        cg = cell_gnn_assembly(syn, model, proximity_radius_nm=50000.0)
+        metrics = evaluate(cg, syn.pre_root_id, syn.post_root_id)
+        assert 0.0 <= metrics.f1 <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# Edit history
+# ---------------------------------------------------------------------------
+
+class TestEditHistory:
+    def test_edits_to_synapse_pairs_merge(self):
+        from neuronauts.edit_history import EditOperation, edits_to_synapse_pairs
+        syn = _make_synapses(n_cells=3, synapses_per_cell=4)
+        # Simulate a merge: roots 1 and 2 were merged
+        edits = [EditOperation(
+            operation="merge",
+            before_root_ids=(1, 2),
+            after_root_ids=(1,),
+        )]
+        pairs = edits_to_synapse_pairs(edits, syn, "pre")
+        assert len(pairs) > 0
+        for p in pairs:
+            assert p.label == 1
+            assert p.role == "pre"
+            assert p.edit_type == "merge"
+            assert p.synapse_i < p.synapse_j
+
+    def test_edits_to_synapse_pairs_split(self):
+        from neuronauts.edit_history import EditOperation, edits_to_synapse_pairs
+        syn = _make_synapses(n_cells=3, synapses_per_cell=4)
+        # Simulate a split: root 1 was split into 1 and 2
+        edits = [EditOperation(
+            operation="split",
+            before_root_ids=(1,),
+            after_root_ids=(1, 2),
+        )]
+        pairs = edits_to_synapse_pairs(edits, syn, "pre")
+        assert len(pairs) > 0
+        for p in pairs:
+            assert p.label == 0
+            assert p.edit_type == "split"
+
+    def test_empty_edits_returns_empty(self):
+        from neuronauts.edit_history import edits_to_synapse_pairs
+        syn = _make_synapses(n_cells=2, synapses_per_cell=3)
+        pairs = edits_to_synapse_pairs([], syn, "pre")
+        assert pairs == []
+
+    def test_edit_pairs_to_contrastive(self):
+        from neuronauts.edit_history import EditPair, edit_pairs_to_contrastive
+        pairs = [
+            EditPair(0, 1, label=1, role="pre", source_root_a=1, source_root_b=2, edit_type="merge"),
+            EditPair(2, 3, label=0, role="pre", source_root_a=1, source_root_b=3, edit_type="split"),
+            EditPair(4, 5, label=1, role="post", source_root_a=1, source_root_b=2, edit_type="merge"),
+        ]
+        pos, neg = edit_pairs_to_contrastive(pairs, "pre")
+        assert pos == [(0, 1)]
+        assert neg == [(2, 3)]
+        # Post pairs should be excluded for role="pre"
+        assert (4, 5) not in pos

@@ -45,7 +45,7 @@ import numpy as np
 
 from dataclasses import dataclass as _dataclass
 
-from .grammar import PATH_ISO, _require_torch
+from .grammar import PATH_ISO, DEFAULT_PATH_FEATURE_MODE, featurize_path_points, _require_torch
 
 if TYPE_CHECKING:
     from .fetch import SynapseTable
@@ -1175,3 +1175,221 @@ def select_cell_gnn_training_boxes(
         splits["val"] = splits["val"][:max_val]
 
     return splits
+
+
+# ---------------------------------------------------------------------------
+# 10. Grammar score extraction — bridge from pairwise grammar to edge features
+# ---------------------------------------------------------------------------
+
+def extract_grammar_scores(
+    synapses: "SynapseTable",
+    role: str,
+    grammar_score_fn,
+    *,
+    proximity_radius_nm: float = 5000.0,
+    path_feature_mode: str = DEFAULT_PATH_FEATURE_MODE,
+) -> dict[tuple[int, int], float]:
+    """Score nearby scaffold-group pairs with the grammar model.
+
+    Groups synapses by scaffold (seg_id), featurizes each group's synapse
+    positions into a path sequence, then scores all spatially nearby group
+    pairs.  Returns a dict keyed by canonical synapse-index pair ``(i, j)``
+    with ``i < j``, valued at the grammar merge logit.
+
+    This is the bridge between the pairwise grammar and the CellGNN: grammar
+    scores become edge features in ``build_synapse_graph``.
+
+    Parameters
+    ----------
+    synapses : SynapseTable
+    role : "pre" or "post"
+    grammar_score_fn :
+        Callable ``(left_seq, right_seq) -> float`` — the grammar model's
+        merge scorer (e.g. from ``_load_shared_merge_score_fn``).
+    proximity_radius_nm :
+        Only score group pairs whose centroids are within this distance.
+    path_feature_mode :
+        Feature mode for ``featurize_path_points``.
+    """
+    if role == "pre":
+        positions = synapses.pre_pt.copy().astype(np.float32)
+        seg_ids = getattr(synapses, "pre_seg_id", None)
+    else:
+        positions = synapses.post_pt.copy().astype(np.float32)
+        seg_ids = getattr(synapses, "post_seg_id", None)
+
+    # Group synapses by scaffold seg_id
+    groups: dict[int, list[int]] = {}
+    if seg_ids is not None:
+        for i, sid in enumerate(seg_ids):
+            sid_int = int(sid)
+            if sid_int > 0:
+                groups.setdefault(sid_int, []).append(i)
+    if not groups:
+        return {}
+
+    # Compute per-group centroids and sequences
+    group_ids = sorted(groups.keys())
+    centroids = {}
+    sequences = {}
+    iso_positions = positions * PATH_ISO[np.newaxis, :]
+    for gid in group_ids:
+        indices = groups[gid]
+        pts = iso_positions[indices]
+        centroids[gid] = pts.mean(axis=0)
+        # Order points along principal axis for consistent featurization
+        if len(pts) >= 2:
+            centered = pts - pts.mean(axis=0, keepdims=True)
+            try:
+                _, _, vh = np.linalg.svd(centered, full_matrices=False)
+                order = np.argsort(centered @ vh[0])
+                pts = pts[order]
+            except np.linalg.LinAlgError:
+                pass
+        sequences[gid] = featurize_path_points(
+            pts, mode=path_feature_mode, iso_scale=PATH_ISO,
+        )
+
+    # Score nearby group pairs
+    group_scores: dict[tuple[int, int], float] = {}
+    for i_idx, gid_a in enumerate(group_ids):
+        for gid_b in group_ids[i_idx + 1:]:
+            dist = float(np.linalg.norm(centroids[gid_a] - centroids[gid_b]))
+            if dist > proximity_radius_nm:
+                continue
+            seq_a = sequences[gid_a]
+            seq_b = sequences[gid_b]
+            if len(seq_a) == 0 or len(seq_b) == 0:
+                continue
+            score = float(grammar_score_fn(seq_a, seq_b))
+            group_scores[(gid_a, gid_b)] = score
+
+    # Map group-pair scores to synapse-pair scores
+    synapse_scores: dict[tuple[int, int], float] = {}
+    for (gid_a, gid_b), score in group_scores.items():
+        for syn_a in groups[gid_a]:
+            for syn_b in groups[gid_b]:
+                key = (min(syn_a, syn_b), max(syn_a, syn_b))
+                # Keep the best score if multiple group pairs cover the same synapse pair
+                if key not in synapse_scores or score > synapse_scores[key]:
+                    synapse_scores[key] = score
+
+    return synapse_scores
+
+
+# ---------------------------------------------------------------------------
+# 11. CellGNN assembly — full alternative to beam-search pipeline
+# ---------------------------------------------------------------------------
+
+def cell_gnn_assembly(
+    synapses: "SynapseTable",
+    model,
+    *,
+    grammar_score_fn=None,
+    synapse_hits: np.ndarray | None = None,
+    proximity_radius_nm: float = 5000.0,
+    partition_threshold: float = 0.5,
+    partition_method: str = "agglomerative",
+    path_feature_mode: str = DEFAULT_PATH_FEATURE_MODE,
+    verbose: bool = False,
+) -> "ConnectivityGraph":
+    """Run CellGNN to produce a ConnectivityGraph — drop-in alternative to _build_graph.
+
+    Pipeline:
+    1. Optionally extract grammar pairwise scores from scaffold groups.
+    2. Build pre- and post-side SynapseGraphs with all available evidence.
+    3. Run CellGNN inference to get per-synapse cell labels.
+    4. Convert to ConnectivityGraph for F1 evaluation.
+
+    Parameters
+    ----------
+    synapses : SynapseTable
+    model : CellGNN (eval mode)
+    grammar_score_fn :
+        Optional grammar merge scorer.  When provided, grammar pairwise scores
+        are computed between scaffold groups and fed as edge features.
+    synapse_hits :
+        Optional agent hit matrix [n_agents, n_synapses] for shared-agent edges.
+    proximity_radius_nm :
+        Spatial radius for evidence graph construction.
+    partition_threshold :
+        Cosine similarity threshold for clustering embeddings into cells.
+    partition_method :
+        "agglomerative" or "greedy".
+    path_feature_mode :
+        Feature mode for grammar score extraction.
+    verbose :
+        Print progress.
+    """
+    import time as _time
+
+    t0 = _time.time()
+
+    # Extract grammar scores if model available
+    pre_grammar_scores = None
+    post_grammar_scores = None
+    if grammar_score_fn is not None:
+        if verbose:
+            print("  CellGNN: extracting grammar scores …")
+        pre_grammar_scores = extract_grammar_scores(
+            synapses, "pre", grammar_score_fn,
+            proximity_radius_nm=proximity_radius_nm,
+            path_feature_mode=path_feature_mode,
+        )
+        post_grammar_scores = extract_grammar_scores(
+            synapses, "post", grammar_score_fn,
+            proximity_radius_nm=proximity_radius_nm,
+            path_feature_mode=path_feature_mode,
+        )
+        if verbose:
+            print(
+                f"    pre: {len(pre_grammar_scores)} scored pairs  "
+                f"post: {len(post_grammar_scores)} scored pairs"
+            )
+
+    # Build synapse graphs
+    pre_graph = build_synapse_graph(
+        synapses, "pre",
+        synapse_hits=synapse_hits,
+        grammar_scores=pre_grammar_scores,
+        proximity_radius_nm=proximity_radius_nm,
+    )
+    post_graph = build_synapse_graph(
+        synapses, "post",
+        synapse_hits=synapse_hits,
+        grammar_scores=post_grammar_scores,
+        proximity_radius_nm=proximity_radius_nm,
+    )
+
+    if verbose:
+        print(
+            f"  CellGNN: pre graph {pre_graph.n_synapses} nodes / {len(pre_graph.edges)} edges  "
+            f"post graph {post_graph.n_synapses} nodes / {len(post_graph.edges)} edges"
+        )
+
+    # Infer cell labels
+    pre_labels = infer_cells(
+        model, pre_graph,
+        threshold=partition_threshold,
+        method=partition_method,
+    )
+    post_labels = infer_cells(
+        model, post_graph,
+        threshold=partition_threshold,
+        method=partition_method,
+    )
+
+    n_pre_cells = len(set(pre_labels.tolist()))
+    n_post_cells = len(set(post_labels.tolist()))
+
+    # Convert to ConnectivityGraph
+    cg = connectivity_graph_from_cell_labels(pre_labels, post_labels, synapses)
+
+    if verbose:
+        print(
+            f"  CellGNN: {n_pre_cells} pre cells + {n_post_cells} post cells  "
+            f"{len(cg.neurons)} neurons  {len(cg.edges)} edges  "
+            f"{_time.time() - t0:.2f}s"
+        )
+
+    return cg
