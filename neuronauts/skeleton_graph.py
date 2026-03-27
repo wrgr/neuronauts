@@ -169,6 +169,7 @@ def build_skeleton_connectivity_graph(
     cave_server: str = CAVE_SERVER,
     token: str | None = None,
     skeleton_service_version: int = 4,
+    skeleton_cache_dir: str | None = None,
     fragment_radius_nm: float = 2_500.0,
     add_decoy_edges: bool = True,
 ) -> ConnectivityGraph:
@@ -188,6 +189,7 @@ def build_skeleton_connectivity_graph(
         cave_server=cave_server,
         token=token,
         skeleton_service_version=skeleton_service_version,
+        cache_dir=skeleton_cache_dir,
     )
     post_skeletons = fetch_root_skeletons(
         synapses.post_root_id,
@@ -196,6 +198,7 @@ def build_skeleton_connectivity_graph(
         cave_server=cave_server,
         token=token,
         skeleton_service_version=skeleton_service_version,
+        cache_dir=skeleton_cache_dir,
     )
 
     pre_neurons, pre_owner, pre_centroids, next_id = _build_role_neurons(

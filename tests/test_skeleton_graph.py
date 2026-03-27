@@ -58,6 +58,25 @@ class FetchRootSkeletonTest(unittest.TestCase):
         self.assertEqual(sk.edges.shape, (1, 2))
         self.assertEqual(sk.radius.shape, (2,))
 
+    def test_fetch_root_skeletons_falls_back_to_empty_on_service_failure(self):
+        from neuronauts.fetch import fetch_root_skeletons
+
+        class FakeSkeletonService:
+            def get_skeleton(self, *args, **kwargs):
+                raise RuntimeError("503 Service Temporarily Unavailable")
+
+        class FakeClient:
+            def __init__(self, datastack, server_address=None, auth_token=None):
+                self.version = None
+                self.skeleton = FakeSkeletonService()
+
+        with mock.patch.dict("sys.modules", {"caveclient": mock.Mock(CAVEclient=FakeClient)}):
+            out = fetch_root_skeletons([101, 202], version=117)
+
+        self.assertEqual(sorted(out.keys()), [101, 202])
+        self.assertEqual(out[101].vertices.shape, (0, 3))
+        self.assertEqual(out[202].edges.shape, (0, 2))
+
 
 class BuildSkeletonConnectivityGraphTest(unittest.TestCase):
     def test_builds_candidate_graph_with_decoys(self):

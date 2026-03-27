@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Tuple
@@ -255,33 +256,73 @@ def fetch_root_skeleton(
     cave_server: str = CAVE_SERVER,
     token: Optional[str] = None,
     skeleton_service_version: int = 4,
+    cache_dir: str | Path | None = None,
+    max_retries: int = 4,
+    initial_backoff_s: float = 1.0,
+    client=None,
 ) -> SkeletonData:
     """Fetch one root skeleton at a specific materialization version."""
-    _install_system_trust_store()
-    try:
-        from caveclient import CAVEclient
-    except ImportError as exc:
-        raise ImportError("pip install caveclient") from exc
+    cache_path: Path | None = None
+    if cache_dir is not None:
+        cache_path = Path(cache_dir) / f"v{int(version)}_rid{int(root_id)}_skv{int(skeleton_service_version)}.npz"
+        if cache_path.exists():
+            cached = np.load(cache_path, allow_pickle=False)
+            radius = cached["radius"] if "radius" in cached else None
+            return SkeletonData(
+                root_id=int(root_id),
+                materialization_version=int(version),
+                vertices=cached["vertices"].astype(np.float32, copy=False),
+                edges=cached["edges"].astype(np.int64, copy=False),
+                radius=None if radius is None else radius.astype(np.float32, copy=False),
+            )
 
-    client = CAVEclient(datastack, server_address=cave_server, auth_token=token)
-    client.version = int(version)
-    raw = client.skeleton.get_skeleton(
-        int(root_id),
-        datastack_name=datastack,
-        skeleton_version=int(skeleton_service_version),
-        output_format="dict",
-    )
+    _install_system_trust_store()
+    if client is None:
+        try:
+            from caveclient import CAVEclient
+        except ImportError as exc:
+            raise ImportError("pip install caveclient") from exc
+        client = CAVEclient(datastack, server_address=cave_server, auth_token=token)
+        client.version = int(version)
+
+    last_exc: Exception | None = None
+    raw = None
+    for attempt in range(max(1, int(max_retries))):
+        try:
+            raw = client.skeleton.get_skeleton(
+                int(root_id),
+                datastack_name=datastack,
+                skeleton_version=int(skeleton_service_version),
+                output_format="dict",
+            )
+            break
+        except Exception as exc:  # pragma: no cover - exercised via mocked fallback tests
+            last_exc = exc
+            if attempt + 1 >= max(1, int(max_retries)):
+                raise
+            time.sleep(float(initial_backoff_s) * (2 ** attempt))
+    if raw is None:
+        assert last_exc is not None
+        raise last_exc
+
     vertices = np.asarray(raw.get("vertices", np.zeros((0, 3), dtype=np.float32)), dtype=np.float32)
     edges = np.asarray(raw.get("edges", np.zeros((0, 2), dtype=np.int64)), dtype=np.int64)
     radius_raw = raw.get("radius", None)
     radius = None if radius_raw is None else np.asarray(radius_raw, dtype=np.float32)
-    return SkeletonData(
+    sk = SkeletonData(
         root_id=int(root_id),
         materialization_version=int(version),
         vertices=vertices,
         edges=edges,
         radius=radius,
     )
+    if cache_path is not None:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        arrays = {"vertices": sk.vertices, "edges": sk.edges}
+        if sk.radius is not None:
+            arrays["radius"] = sk.radius
+        np.savez_compressed(cache_path, **arrays)
+    return sk
 
 
 def fetch_root_skeletons(
@@ -292,19 +333,44 @@ def fetch_root_skeletons(
     cave_server: str = CAVE_SERVER,
     token: Optional[str] = None,
     skeleton_service_version: int = 4,
+    cache_dir: str | Path | None = None,
+    allow_missing: bool = True,
+    max_retries: int = 4,
 ) -> dict[int, SkeletonData]:
     """Fetch skeletons keyed by root ID for one materialization version."""
+    _install_system_trust_store()
+    try:
+        from caveclient import CAVEclient
+    except ImportError as exc:
+        raise ImportError("pip install caveclient") from exc
+
+    client = CAVEclient(datastack, server_address=cave_server, auth_token=token)
+    client.version = int(version)
     unique_roots = sorted({int(root_id) for root_id in np.asarray(root_ids, dtype=np.int64).tolist() if int(root_id) > 0})
     out: dict[int, SkeletonData] = {}
     for root_id in unique_roots:
-        out[root_id] = fetch_root_skeleton(
-            root_id,
-            version=version,
-            datastack=datastack,
-            cave_server=cave_server,
-            token=token,
-            skeleton_service_version=skeleton_service_version,
-        )
+        try:
+            out[root_id] = fetch_root_skeleton(
+                root_id,
+                version=version,
+                datastack=datastack,
+                cave_server=cave_server,
+                token=token,
+                skeleton_service_version=skeleton_service_version,
+                cache_dir=cache_dir,
+                max_retries=max_retries,
+                client=client,
+            )
+        except Exception:
+            if not allow_missing:
+                raise
+            out[root_id] = SkeletonData(
+                root_id=int(root_id),
+                materialization_version=int(version),
+                vertices=np.zeros((0, 3), dtype=np.float32),
+                edges=np.zeros((0, 2), dtype=np.int64),
+                radius=None,
+            )
     return out
 
 

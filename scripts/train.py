@@ -814,6 +814,7 @@ def _run_gat_training_step(
                 datastack=getattr(args, "proofread_datastack", "minnie65_public"),
                 cave_server=getattr(args, "cave_server", "https://global.daf-apis.com"),
                 token=getattr(args, "cave_token", None),
+                skeleton_cache_dir=getattr(args, "skeleton_cache_dir", "cache/skeletons"),
             )
         else:
             mf = compute_membrane_field(volume_chunk.data)
@@ -970,6 +971,7 @@ def _validate_box(record, cache, grammar_model, gat_model, args, device):
                 datastack=getattr(args, "proofread_datastack", "minnie65_public"),
                 cave_server=getattr(args, "cave_server", "https://global.daf-apis.com"),
                 token=getattr(args, "cave_token", None),
+                skeleton_cache_dir=getattr(args, "skeleton_cache_dir", "cache/skeletons"),
             )
             diag["n_merge_candidates"] = len(graph.edges)
             diag["n_merge_accepted"] = len(graph.edges)
@@ -1217,6 +1219,11 @@ def _add_train_args(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--skeleton-cache-dir",
+        default="cache/skeletons",
+        help="On-disk cache for fetched base-materialization skeletons.",
+    )
+    parser.add_argument(
         "--path-feature-mode",
         default="raw_delta3+skeleton",
         choices=["legacy_geom3", "raw_delta3", "raw_delta3+skeleton"],
@@ -1382,6 +1389,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     p_run.add_argument("--grammar-output",      default="models/shared_grammar_real.pt")
     p_run.add_argument("--graph-source",        default="agents", choices=["agents", "skeleton"])
     p_run.add_argument("--skeleton-version",    type=int, default=None)
+    p_run.add_argument("--skeleton-cache-dir",  default="cache/skeletons")
     p_run.add_argument("--path-feature-mode",   default="raw_delta3+skeleton", choices=["legacy_geom3", "raw_delta3", "raw_delta3+skeleton"])
     p_run.add_argument("--gat-output",          default="models/gat_real.pt")
     p_run.add_argument("--epochs",              type=int,   default=30)
