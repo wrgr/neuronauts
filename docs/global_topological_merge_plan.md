@@ -1,8 +1,34 @@
 # Global Topological Merge: Implementation Plan
 
-> **Status: Design.** This document captures the logical structure of the
-> global topological merge idea and breaks it into concrete implementation
-> phases, distinguishing what already exists from what needs to be built.
+> **Status: Phase 1 implemented.**
+> `neuronauts/cell_graph.py` contains the core CellGNN architecture and
+> training loop.  `tests/test_cell_graph.py` has 29 passing tests.
+> Remaining phases are tracked below.
+
+---
+
+## Reconciled Approach
+
+The original 4-phase plan and the "graph reachability / GNN" direction are
+unified into a single architecture: **the CellGNN**.
+
+**Why this reconciles the two ideas:**
+
+| What was asked for | How CellGNN delivers it |
+|--------------------|------------------------|
+| Not pairwise — pairwise scores as evidence, not decisions | Grammar scores are one of four *edge features*; the GNN decides in context |
+| Global reachability argument | K message-passing rounds = K-hop reachability; synapses on the same arbor converge to similar embeddings |
+| Hierarchical substructure → full cell | K=1 → scaffold clusters; K=2 → local branch fragments; K=3+ → full arbor |
+| Learnable (GNN) | `CellGNN`: edge-conditioned message passing trained with contrastive loss against CAVE root IDs |
+| Probabilistic cell output | Embedding similarity = cell membership probability; `partition_from_embeddings` thresholds it |
+| No simulation required for training | Like grammar training, works from cached synapse tables alone |
+
+**How pairwise work is reused:**
+The existing grammar produces pairwise merge scores between scaffold groups.
+These become the `grammar_score` edge feature in `build_synapse_graph`.
+The GNN learns when to trust these scores (e.g., high-quality direct path)
+vs. override them (e.g., pairwise score is high but the cluster would be
+non-atomic at the cell level).
 
 ---
 
@@ -70,6 +96,25 @@ maximizes global topological correctness (line-graph F1).
    known root-ID structure or from connectivity patterns.
 
 ## 4. Implementation Phases
+
+### Phase 0: CellGNN Core ✓ DONE
+**`neuronauts/cell_graph.py` — 29 tests passing**
+
+Implemented:
+- `build_synapse_graph` — constructs the evidence graph from scaffold IDs,
+  spatial proximity, grammar scores, and shared agent visits
+- `CellGNN` — edge-conditioned message-passing GNN with K layers
+- `partition_from_embeddings` — agglomerative / greedy clustering from cosine sim
+- `cell_graph_train_step` — contrastive pull/push with correct hinge loss
+- `train_cell_gnn` — epoch loop over a BoxCache (no simulation needed)
+- `infer_cells` — inference returning per-synapse cell labels
+- `connectivity_graph_from_cell_labels` — labels → `ConnectivityGraph` for F1 eval
+- `save_cell_gnn` / `load_cell_gnn` — persistence
+
+The `F1 roundtrip` test confirms a perfect partition of ground-truth root IDs
+yields F1=1.0 through the full pipeline.
+
+---
 
 ### Phase 1: Cell-Level Plausibility Scoring
 **Effort: Small. Uses existing infrastructure.**
@@ -201,21 +246,24 @@ loss).
 ## 5. Recommended Execution Order
 
 ```
-Phase 1 (cell scoring)      <- DO THIS NOW
-  |                            Uses existing atomicity head + merge pipeline
-  |                            Validates whether cell-level reasoning helps
+Phase 0 (CellGNN core)      ✓ DONE — cell_graph.py + 29 tests
+  |
   v
-Phase 2 (partition search)  <- DO THIS NEXT
-  |                            Requires Phase 1 scoring to select partitions
-  |                            Natural extension of beam search
+Phase 1 (baseline eval)     <- DO THIS NOW
+  |                            Train CellGNN on cached boxes, compare F1
+  |                            vs current beam-search pipeline
   v
-Phase 3 (edit tree)         <- PARALLEL WITH PHASE 2
-  |                            Independent data pipeline
-  |                            Highest-quality hard examples
+Phase 2 (grammar integration) <- NEXT
+  |                            Feed grammar pairwise scores as edge features
+  |                            Confirm CellGNN outperforms grammar-only
   v
-Phase 4 (top-down)          <- ONLY IF PHASES 1-3 PLATEAU
-                               Significant new modeling
-                               Only justified if bottom-up + edit tree isn't enough
+Phase 3 (edit tree)          <- PARALLEL
+  |                            Fetch proofreader merge/split history
+  |                            Use as hard training examples
+  v
+Phase 4 (partition loss)     <- ONLY IF CONTRASTIVE PLATEAUS
+                               Replace contrastive with soft line-graph F1 loss
+                               Directly optimise the terminal metric
 ```
 
 ## 6. Success Criteria
