@@ -83,6 +83,154 @@ def beam_search_merge_groups(
     return beam[0].groups if beam else initial.groups
 
 
+def _score_to_affinity(score: float) -> float:
+    clipped = float(np.clip(score, -30.0, 30.0))
+    return float(1.0 / (1.0 + np.exp(-clipped)))
+
+
+def _fallback_bipartition(affinity: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    n_items = int(affinity.shape[0])
+    if n_items <= 1:
+        empty = np.zeros(0, dtype=np.int32)
+        return empty, empty
+    if n_items == 2:
+        return np.array([0], dtype=np.int32), np.array([1], dtype=np.int32)
+
+    tri_upper = np.triu_indices(n_items, k=1)
+    edge_weights = affinity[tri_upper]
+    weakest_idx = int(np.argmin(edge_weights)) if len(edge_weights) > 0 else 0
+    seed_left = int(tri_upper[0][weakest_idx]) if len(edge_weights) > 0 else 0
+    seed_right = int(tri_upper[1][weakest_idx]) if len(edge_weights) > 0 else 1
+
+    left = [seed_left]
+    right = [seed_right]
+    for idx in range(n_items):
+        if idx in {seed_left, seed_right}:
+            continue
+        if affinity[idx, seed_left] >= affinity[idx, seed_right]:
+            left.append(idx)
+        else:
+            right.append(idx)
+
+    if not left or not right:
+        split_at = max(1, n_items // 2)
+        order = np.arange(n_items, dtype=np.int32)
+        return order[:split_at], order[split_at:]
+    return np.array(sorted(left), dtype=np.int32), np.array(sorted(right), dtype=np.int32)
+
+
+def _spectral_bipartition(affinity: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    n_items = int(affinity.shape[0])
+    if n_items <= 1:
+        empty = np.zeros(0, dtype=np.int32)
+        return empty, empty
+    if n_items == 2:
+        return np.array([0], dtype=np.int32), np.array([1], dtype=np.int32)
+
+    degree = affinity.sum(axis=1)
+    if np.allclose(degree, 0.0):
+        return _fallback_bipartition(affinity)
+
+    laplacian = np.diag(degree) - affinity
+    try:
+        _, eigenvectors = np.linalg.eigh(laplacian)
+    except np.linalg.LinAlgError:
+        return _fallback_bipartition(affinity)
+    if eigenvectors.shape[1] < 2:
+        return _fallback_bipartition(affinity)
+
+    fiedler = eigenvectors[:, 1]
+    pivot = float(np.median(fiedler))
+    left = np.flatnonzero(fiedler <= pivot).astype(np.int32)
+    right = np.flatnonzero(fiedler > pivot).astype(np.int32)
+
+    if len(left) == 0 or len(right) == 0:
+        order = np.argsort(fiedler).astype(np.int32)
+        split_at = max(1, n_items // 2)
+        left = order[:split_at]
+        right = order[split_at:]
+    if len(left) == 0 or len(right) == 0:
+        return _fallback_bipartition(affinity)
+    return left, right
+
+
+def repartition_low_atomicity_group(
+    members: tuple[int, ...] | list[int],
+    *,
+    pair_score_fn,
+    atomicity_score_fn,
+    atomicity_threshold: float = 0.0,
+    min_group_size: int = 3,
+    max_rounds: int = 2,
+) -> tuple[tuple[int, ...], ...]:
+    """Split a low-atomicity cell into subgroups using pairwise merge affinities.
+
+    The split is intentionally simple and dependency-light:
+
+    1. Convert pairwise merge scores into a symmetric affinity matrix.
+    2. Take a spectral two-way cut of that matrix.
+    3. Accept the split only if the mean child atomicity improves over the
+       parent. Recurse on any child that is still below the threshold.
+    """
+    ordered_members = tuple(sorted(int(member) for member in members))
+    if len(ordered_members) < max(2, int(min_group_size)) or max_rounds <= 0:
+        return (ordered_members,)
+
+    parent_score = float(atomicity_score_fn(ordered_members))
+    if parent_score >= float(atomicity_threshold):
+        return (ordered_members,)
+
+    n_items = len(ordered_members)
+    affinity = np.zeros((n_items, n_items), dtype=np.float32)
+    score_cache: dict[tuple[int, int], float] = {}
+
+    for i in range(n_items):
+        affinity[i, i] = 1.0
+        for j in range(i + 1, n_items):
+            pair = (ordered_members[i], ordered_members[j])
+            score = score_cache.get(pair)
+            if score is None:
+                score = float(pair_score_fn(*pair))
+                score_cache[pair] = score
+            weight = _score_to_affinity(score)
+            affinity[i, j] = weight
+            affinity[j, i] = weight
+
+    left_idx, right_idx = _spectral_bipartition(affinity)
+    if len(left_idx) == 0 or len(right_idx) == 0:
+        return (ordered_members,)
+
+    left_group = tuple(sorted(ordered_members[int(idx)] for idx in left_idx.tolist()))
+    right_group = tuple(sorted(ordered_members[int(idx)] for idx in right_idx.tolist()))
+    if not left_group or not right_group:
+        return (ordered_members,)
+
+    child_scores = [
+        float(atomicity_score_fn(left_group)),
+        float(atomicity_score_fn(right_group)),
+    ]
+    if float(np.mean(child_scores)) <= parent_score:
+        return (ordered_members,)
+
+    partitions: list[tuple[int, ...]] = []
+    for child_group, child_score in zip((left_group, right_group), child_scores):
+        if len(child_group) >= max(2, int(min_group_size)) and child_score < float(atomicity_threshold):
+            partitions.extend(
+                repartition_low_atomicity_group(
+                    child_group,
+                    pair_score_fn=pair_score_fn,
+                    atomicity_score_fn=atomicity_score_fn,
+                    atomicity_threshold=atomicity_threshold,
+                    min_group_size=min_group_size,
+                    max_rounds=max_rounds - 1,
+                )
+            )
+        else:
+            partitions.append(child_group)
+
+    return tuple(sorted(partitions, key=lambda group: (group[0], len(group), group)))
+
+
 # ---------------------------------------------------------------------------
 # PR 4: Global GAT Assembly
 # ---------------------------------------------------------------------------
@@ -350,4 +498,5 @@ def gat_refine_connectivity(
         neurons=graph.neurons,
         edges=refined_edges,
         unresolved_synapse_indices=sorted(set(unresolved)),
+        metadata=dict(graph.metadata),
     )

@@ -1,6 +1,6 @@
 """Neuron merge and graph datatypes."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
 
 import numpy as np
@@ -60,6 +60,7 @@ class ConnectivityGraph:
     neurons: Dict[int, MergedNeuron]
     edges: List[Tuple[int, int, int]]
     unresolved_synapse_indices: List[int]
+    metadata: dict[str, object] = field(default_factory=dict)
 
 
 def merge_agents(
