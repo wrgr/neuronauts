@@ -231,11 +231,13 @@ class BuildGraphTest(unittest.TestCase):
 class LearnedMergeCheckpointTest(unittest.TestCase):
     def test_load_shared_merge_score_fn_from_checkpoint(self):
         model = SharedGrammarModel()
+        D = model._init_kwargs["input_dim"]
         with tempfile.TemporaryDirectory() as tmpdir:
             path = str((Path(tmpdir) / "shared_grammar.pt"))
             save_shared_grammar_model(path, model)
             score_fn = _load_shared_merge_score_fn(path)
-            left = np.array([[1.0, 1.0, 0.0], [2.0, 1.0, 0.1]], dtype=np.float32)
-            right = np.array([[1.5, 1.0, 0.0], [2.5, 1.0, 0.1]], dtype=np.float32)
+            rng = np.random.default_rng(0)
+            left = rng.random((2, D), dtype=np.float32)
+            right = rng.random((2, D), dtype=np.float32)
             score = score_fn(left, right)
             self.assertTrue(np.isfinite(score))

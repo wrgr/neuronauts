@@ -400,7 +400,7 @@ class RunGATTrainingStepTest(unittest.TestCase):
         args = _make_fake_args(gat_soft_f1_weight=0.5)
         gat_f1_acc: list[float] = []
         self.mod._run_gat_training_step(
-            vol, syn, gat_model, grammar_model,
+            None, vol, syn, syn, gat_model, grammar_model,
             gat_optimizer, self.device, args, gat_f1_acc,
         )
         # If the graph had edges, gat_f1_acc should be non-empty.
@@ -432,7 +432,7 @@ class RunGATTrainingStepTest(unittest.TestCase):
         args = _make_fake_args(gat_soft_f1_weight=0.5)
         gat_f1_acc: list[float] = []
         self.mod._run_gat_training_step(
-            vol, syn, gat_model, grammar_model,
+            None, vol, syn, syn, gat_model, grammar_model,
             gat_optimizer, self.device, args, gat_f1_acc,
         )
 
@@ -470,7 +470,7 @@ class RunGATTrainingStepTest(unittest.TestCase):
         gat_f1_acc: list[float] = []
         # Should not raise.
         self.mod._run_gat_training_step(
-            bad_vol, tiny_syn, gat_model, grammar_model,
+            None, bad_vol, tiny_syn, tiny_syn, gat_model, grammar_model,
             gat_optimizer, self.device, args, gat_f1_acc,
         )
 

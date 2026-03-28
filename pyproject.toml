@@ -22,6 +22,11 @@ dependencies = [
 dev = [
     "matplotlib",
     "pytest",
+    "pandas",
+]
+cave = [
+    "caveclient",
+    "pandas",
 ]
 topology = [
     "torch",

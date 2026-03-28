@@ -50,7 +50,7 @@ class SharedGrammarModel:
     def __new__(
         cls,
         *,
-        input_dim: int | None = 3,
+        input_dim: int | None = None,
         path_d_model: int = 64,
         path_n_heads: int = 4,
         path_n_layers: int = 2,

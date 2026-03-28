@@ -101,13 +101,14 @@ class SharedGrammarTrainingTest(unittest.TestCase):
     def test_shared_grammar_model_round_trip(self):
         model = SharedGrammarModel()
         model.eval()
+        D = model._init_kwargs["input_dim"]
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "shared_grammar.pt"
             save_shared_grammar_model(path, model)
             loaded = load_shared_grammar_model(path)
-            left_x = torch.randn(2, 4, 3)
+            left_x = torch.randn(2, 4, D)
             left_mask = torch.tensor([[False, False, False, True], [False, False, True, True]])
-            right_x = torch.randn(2, 4, 3)
+            right_x = torch.randn(2, 4, D)
             right_mask = torch.tensor([[False, False, False, True], [False, False, True, True]])
             with torch.no_grad():
                 expected = model.score_merge(left_x, left_mask, right_x, right_mask)

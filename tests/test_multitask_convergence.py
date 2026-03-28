@@ -148,11 +148,12 @@ class MergeLogitSignConventionTest(unittest.TestCase):
 
         model = SharedGrammarModel(embedding_dim=16)
         model.eval()
+        D = model._init_kwargs["input_dim"]
         B, T = 4, 5
         with torch.no_grad():
             logits = model.score_merge(
-                torch.randn(B, T, 3), torch.zeros(B, T, dtype=torch.bool),
-                torch.randn(B, T, 3), torch.zeros(B, T, dtype=torch.bool),
+                torch.randn(B, T, D), torch.zeros(B, T, dtype=torch.bool),
+                torch.randn(B, T, D), torch.zeros(B, T, dtype=torch.bool),
             )
         self.assertEqual(logits.shape, (B,), f"expected [B={B}], got {logits.shape}")
 
@@ -163,10 +164,11 @@ class MergeLogitSignConventionTest(unittest.TestCase):
 
         model = SharedGrammarModel(embedding_dim=16)
         model.eval()
+        D = model._init_kwargs["input_dim"]
         with torch.no_grad():
             logits = model.score_merge(
-                torch.randn(3, 4, 3), torch.zeros(3, 4, dtype=torch.bool),
-                torch.randn(3, 4, 3), torch.zeros(3, 4, dtype=torch.bool),
+                torch.randn(3, 4, D), torch.zeros(3, 4, dtype=torch.bool),
+                torch.randn(3, 4, D), torch.zeros(3, 4, dtype=torch.bool),
             )
         self.assertTrue(torch.all(torch.isfinite(logits)).item(),
                         f"non-finite logits: {logits}")
@@ -224,15 +226,16 @@ class MergeLogitSignConventionTest(unittest.TestCase):
 
         model = SharedGrammarModel(embedding_dim=16)
         model.eval()
+        D = model._init_kwargs["input_dim"]
         T = 4
         with torch.no_grad():
             # Identical left and right should tend toward positive (cosine-like).
-            x = torch.randn(1, T, 3)
+            x = torch.randn(1, T, D)
             logit_same = model.score_merge(x, torch.zeros(1, T, dtype=torch.bool),
                                            x, torch.zeros(1, T, dtype=torch.bool))
             logit_diff = model.score_merge(
                 x, torch.zeros(1, T, dtype=torch.bool),
-                torch.randn(1, T, 3), torch.zeros(1, T, dtype=torch.bool),
+                torch.randn(1, T, D), torch.zeros(1, T, dtype=torch.bool),
             )
         # Just verify they are finite scalars — not a hard directional test.
         self.assertEqual(logit_same.shape, (1,))
@@ -273,10 +276,11 @@ class LiveMergeScoreFnTest(unittest.TestCase):
 
         mod = self._import_train()
         model = SharedGrammarModel(embedding_dim=16)
+        D = model._init_kwargs["input_dim"]
         score_fn = mod._make_live_merge_score_fn(model)
 
         rng = np.random.default_rng(0)
-        seq = rng.random((5, 3), dtype=np.float32)
+        seq = rng.random((5, D), dtype=np.float32)
         result = score_fn(seq, seq)
         self.assertIsInstance(result, float)
         self.assertFalse(np.isnan(result), "score is NaN")
@@ -297,11 +301,12 @@ class LiveMergeScoreFnTest(unittest.TestCase):
 
         mod = self._import_train()
         model = SharedGrammarModel(embedding_dim=16)
+        D = model._init_kwargs["input_dim"]
         score_fn = mod._make_live_merge_score_fn(model)
 
         rng = np.random.default_rng(3)
-        seq_a = rng.random((4, 3), dtype=np.float32)
-        seq_b = rng.random((4, 3), dtype=np.float32)
+        seq_a = rng.random((4, D), dtype=np.float32)
+        seq_b = rng.random((4, D), dtype=np.float32)
 
         score_before = score_fn(seq_a, seq_b)
 
@@ -327,10 +332,11 @@ class LiveMergeScoreFnTest(unittest.TestCase):
 
         mod = self._import_train()
         model = SharedGrammarModel(embedding_dim=16)
+        D = model._init_kwargs["input_dim"]
         score_fn = mod._make_live_merge_score_fn(model)
 
         rng = np.random.default_rng(5)
-        seq = rng.random((6, 3), dtype=np.float32)
+        seq = rng.random((6, D), dtype=np.float32)
         r1 = score_fn(seq, seq)
         r2 = score_fn(seq, seq)
         self.assertAlmostEqual(r1, r2, places=6)
@@ -342,11 +348,12 @@ class LiveMergeScoreFnTest(unittest.TestCase):
 
         mod = self._import_train()
         model = SharedGrammarModel(embedding_dim=16)
+        D = model._init_kwargs["input_dim"]
         score_fn = mod._make_live_merge_score_fn(model)
 
         rng = np.random.default_rng(6)
         for T in (1, 5, 20, 100):
-            seq = rng.random((T, 3), dtype=np.float32)
+            seq = rng.random((T, D), dtype=np.float32)
             result = score_fn(seq, seq)
             self.assertIsInstance(result, float, f"failed for T={T}")
             self.assertFalse(np.isnan(result), f"NaN for T={T}")
@@ -598,14 +605,17 @@ class GrammarBatchShapeTest(unittest.TestCase):
         self.assertEqual(topo_batch["y"].shape[0], B)
 
     def test_merge_batch_input_dim_matches_model(self):
-        """The feature dimension of left_x / right_x must match model input_dim (=3)."""
+        """The feature dimension of left_x / right_x must match model input_dim."""
+        from neuronauts.grammar import path_feature_dim, DEFAULT_PATH_FEATURE_MODE
+
         synapses = _make_mixed_synapses(n_per_group=6)
         merge_batch, _ = _build_batches(synapses)
         if merge_batch is None:
             self.skipTest("not enough examples")
         feat_dim = merge_batch["left_x"].shape[-1]
-        self.assertEqual(feat_dim, 3,
-                         f"expected input_dim=3, got {feat_dim}")
+        expected_dim = path_feature_dim(DEFAULT_PATH_FEATURE_MODE)
+        self.assertEqual(feat_dim, expected_dim,
+                         f"expected input_dim={expected_dim}, got {feat_dim}")
 
     def test_branch_mask_shape_matches_branch_x(self):
         """branch_mask shape: (B, max_branches); branch_sequence_mask: (B, max_branches, T)."""
@@ -652,7 +662,8 @@ class CheckpointConsistencyTest(unittest.TestCase):
         loaded = load_shared_grammar_model(ckpt)
         loaded.eval()
 
-        x = torch.randn(2, 5, 3)
+        D = model._init_kwargs["input_dim"]
+        x = torch.randn(2, 5, D)
         mask = torch.zeros(2, 5, dtype=torch.bool)
         with torch.no_grad():
             out_orig = model.score_merge(x, mask, x, mask)
