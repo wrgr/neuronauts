@@ -2,6 +2,7 @@
 
 import argparse
 import time
+from collections import Counter
 from dataclasses import asdict, dataclass
 from functools import lru_cache
 
@@ -9,7 +10,7 @@ import numpy as np
 
 from .assembly_dataset import hypothesis_features
 from .agent import AgentConfig
-from .assembly import CandidateMerge, beam_search_merge_groups, gat_refine_connectivity
+from .assembly import CandidateMerge, beam_search_merge_groups, gat_refine_connectivity, repartition_low_atomicity_group
 from .dijkstra import BridgeGraph
 from .fields import compute_exploration_field, compute_membrane_field, compute_membrane_vectors
 from .membrane_unet import load_model as _load_membrane_model, predict_membranes as _predict_membranes
@@ -107,6 +108,9 @@ BEAM_MAX_CANDIDATES = 24
 ATOMICITY_SCORE_WEIGHT = 0.25
 RERANKER_THRESHOLDS = "-0.5,0.0,0.5"
 RERANKER_BEAM_WIDTHS = "1,2,4"
+CELL_SPLIT_ATOMICITY_THRESHOLD = 0.0
+CELL_SPLIT_MIN_GROUP_SIZE = 3
+CELL_SPLIT_MAX_ROUNDS = 2
 
 # ============================================================
 # END CONFIG
@@ -345,6 +349,41 @@ def _scaffold_union_from_seg_ids(
             seg_representative[seg_id] = agent_id
 
 
+def _materialize_role_neurons(
+    path_arr: np.ndarray,
+    role_hits: np.ndarray,
+    grouped_agents: list[list[int]] | tuple[list[int], ...],
+    role_name: str,
+    next_neuron_id: int,
+) -> tuple[dict[int, MergedNeuron], dict[int, list[int]], dict[int, cKDTree], int]:
+    neurons: dict[int, MergedNeuron] = {}
+    synapse_owner: dict[int, list[int]] = {}
+    trees: dict[int, cKDTree] = {}
+
+    for members in grouped_agents:
+        valid_paths = [_agent_points(path_arr, agent_id) for agent_id in members]
+        valid_paths = [pts for pts in valid_paths if len(pts) > 0]
+        if not valid_paths:
+            continue
+
+        pts = np.vstack(valid_paths)
+        synapse_indices = sorted(np.flatnonzero(role_hits[members, :].any(axis=0)).tolist())
+        neuron_id = next_neuron_id
+        next_neuron_id += 1
+        neurons[neuron_id] = MergedNeuron(
+            neuron_id=neuron_id,
+            agent_ids=sorted(int(agent_id) for agent_id in members),
+            path_points=pts,
+            synapse_indices=synapse_indices,
+            role=role_name,
+        )
+        trees[neuron_id] = cKDTree(pts)
+        for syn_idx in synapse_indices:
+            synapse_owner.setdefault(int(syn_idx), []).append(neuron_id)
+
+    return neurons, synapse_owner, trees, next_neuron_id
+
+
 def _merge_role_groups(
     path_arr: np.ndarray,
     role_hits: np.ndarray,
@@ -507,26 +546,13 @@ def _merge_role_groups(
         for agent_id in role_agent_ids.tolist():
             grouped_agents.setdefault(find(int(agent_id)), []).append(int(agent_id))
 
-    neurons = {}
-    synapse_owner = {}
-    trees = {}
-    for members in grouped_agents.values():
-        pts = np.vstack([_agent_points(path_arr, agent_id) for agent_id in members if len(_agent_points(path_arr, agent_id)) > 0])
-        synapse_indices = sorted(np.flatnonzero(role_hits[members, :].any(axis=0)).tolist())
-        neuron_id = next_neuron_id
-        next_neuron_id += 1
-        neurons[neuron_id] = MergedNeuron(
-            neuron_id=neuron_id,
-            agent_ids=members,
-            path_points=pts,
-            synapse_indices=synapse_indices,
-            role=role_name,
-        )
-        trees[neuron_id] = cKDTree(pts)
-        for syn_idx in synapse_indices:
-            synapse_owner.setdefault(int(syn_idx), []).append(neuron_id)
-
-    return neurons, synapse_owner, trees, next_neuron_id
+    return _materialize_role_neurons(
+        path_arr,
+        role_hits,
+        list(grouped_agents.values()),
+        role_name,
+        next_neuron_id,
+    )
 
 
 def _nearest_owner(
@@ -688,74 +714,27 @@ def _propose_bridges(
     return sorted_proposals[:top_k]
 
 
-def _build_graph(
-    path_arr: np.ndarray,
-    path_lengths: np.ndarray,
-    synapse_hits: np.ndarray,
+def _assemble_connectivity_graph(
+    pre_neurons: dict[int, MergedNeuron],
+    pre_owners: dict[int, list[int]],
+    pre_trees: dict[int, cKDTree],
+    post_neurons: dict[int, MergedNeuron],
+    post_owners: dict[int, list[int]],
+    post_trees: dict[int, cKDTree],
     pre_pts: np.ndarray,
     post_pts: np.ndarray,
-    learned_merge_score_fn=None,
-    learned_merge_score_threshold: float = LEARNED_MERGE_SCORE_THRESHOLD,
-    atomicity_score_fn=None,
-    beam_width: int = BEAM_WIDTH,
-    beam_max_candidates: int = BEAM_MAX_CANDIDATES,
-    atomicity_score_weight: float = ATOMICITY_SCORE_WEIGHT,
-    pre_seg_ids: np.ndarray | None = None,
-    post_seg_ids: np.ndarray | None = None,
-    heuristic_config: "HeuristicConfig | None" = None,
+    heuristic_config: HeuristicConfig,
 ) -> ConnectivityGraph:
-    del path_lengths
-    hcfg = heuristic_config or HeuristicConfig.legacy()
-    n_syn = len(pre_pts)
-    valid_idx = _valid_agent_indices(path_arr)
-    if len(valid_idx) == 0:
-        return ConnectivityGraph(neurons={}, edges=[], unresolved_synapse_indices=list(range(n_syn)))
-
-    role_hits = synapse_hits[valid_idx]
-    pre_hits = np.zeros_like(synapse_hits[:, :n_syn], dtype=bool)
-    post_hits = np.zeros_like(synapse_hits[:, n_syn:], dtype=bool)
-    pre_hits[valid_idx] = role_hits[:, :n_syn]
-    post_hits[valid_idx] = role_hits[:, n_syn:]
-
-    pre_neurons, pre_owners, pre_trees, next_id = _merge_role_groups(
-        path_arr,
-        pre_hits,
-        "pre",
-        0,
-        learned_merge_score_fn=learned_merge_score_fn,
-        learned_merge_score_threshold=learned_merge_score_threshold,
-        atomicity_score_fn=atomicity_score_fn,
-        beam_width=beam_width,
-        beam_max_candidates=beam_max_candidates,
-        atomicity_score_weight=atomicity_score_weight,
-        role_seg_ids=pre_seg_ids,
-        heuristic_config=hcfg,
-    )
-    post_neurons, post_owners, post_trees, next_id = _merge_role_groups(
-        path_arr,
-        post_hits,
-        "post",
-        next_id,
-        learned_merge_score_fn=learned_merge_score_fn,
-        learned_merge_score_threshold=learned_merge_score_threshold,
-        atomicity_score_fn=atomicity_score_fn,
-        beam_width=beam_width,
-        beam_max_candidates=beam_max_candidates,
-        atomicity_score_weight=atomicity_score_weight,
-        role_seg_ids=post_seg_ids,
-        heuristic_config=hcfg,
-    )
-    del next_id
-
-    neurons = {}
+    neurons: dict[int, MergedNeuron] = {}
     neurons.update(pre_neurons)
     neurons.update(post_neurons)
     assigned_synapses = {neuron_id: [] for neuron_id in neurons}
 
     edges = []
     unresolved = []
-    _pcr = hcfg.polarity_capture_r
-    _max_syn = hcfg.max_synapses_per_neuron
+    _pcr = heuristic_config.polarity_capture_r
+    _max_syn = heuristic_config.max_synapses_per_neuron
+    n_syn = len(pre_pts)
     for syn_idx in range(n_syn):
         pre_neuron, pre_dist = _nearest_owner(syn_idx, pre_pts[syn_idx], pre_owners, pre_trees)
         post_neuron, post_dist = _nearest_owner(syn_idx, post_pts[syn_idx], post_owners, post_trees)
@@ -778,6 +757,392 @@ def _build_graph(
         neuron.synapse_indices = sorted(set(assigned_synapses[neuron_id]))
 
     return ConnectivityGraph(neurons=neurons, edges=edges, unresolved_synapse_indices=unresolved)
+
+
+def _atomicity_score_for_agent_ids(
+    agent_ids: list[int] | tuple[int, ...],
+    *,
+    path_arr: np.ndarray,
+    atomicity_score_fn,
+    path_feature_mode: str,
+    sequence_cache: dict[int, np.ndarray],
+) -> float | None:
+    if atomicity_score_fn is None:
+        return None
+
+    sequences = []
+    for agent_id in agent_ids:
+        sequence = sequence_cache.get(int(agent_id))
+        if sequence is None:
+            sequence = _path_sequence_from_points(
+                _agent_points(path_arr, int(agent_id)),
+                path_feature_mode=path_feature_mode,
+            )
+            sequence_cache[int(agent_id)] = sequence
+        if len(sequence) > 0:
+            sequences.append(sequence)
+
+    if not sequences:
+        return None
+    return float(atomicity_score_fn(tuple(sequences)))
+
+
+def _sigmoid(value: float) -> float:
+    clipped = float(np.clip(value, -30.0, 30.0))
+    return float(1.0 / (1.0 + np.exp(-clipped)))
+
+
+def _compute_cell_quality_diagnostics(
+    graph: ConnectivityGraph,
+    *,
+    path_arr: np.ndarray,
+    atomicity_score_fn=None,
+    path_feature_mode: str = DEFAULT_PATH_FEATURE_MODE,
+    pre_root_ids: np.ndarray | None = None,
+    post_root_ids: np.ndarray | None = None,
+    low_atomicity_threshold: float | None = CELL_SPLIT_ATOMICITY_THRESHOLD,
+) -> tuple[dict[int, dict[str, float | int | str | bool | None]], dict[str, float | int]]:
+    sequence_cache: dict[int, np.ndarray] = {}
+    root_totals = {
+        "pre": Counter(int(root_id) for root_id in pre_root_ids.tolist()) if pre_root_ids is not None else Counter(),
+        "post": Counter(int(root_id) for root_id in post_root_ids.tolist()) if post_root_ids is not None else Counter(),
+    }
+
+    diagnostics: dict[int, dict[str, float | int | str | bool | None]] = {}
+    atomicity_values: list[float] = []
+    purity_values: list[float] = []
+    completeness_values: list[float] = []
+    low_atomicity_count = 0
+
+    for neuron_id, neuron in graph.neurons.items():
+        atomicity = _atomicity_score_for_agent_ids(
+            neuron.agent_ids,
+            path_arr=path_arr,
+            atomicity_score_fn=atomicity_score_fn,
+            path_feature_mode=path_feature_mode,
+            sequence_cache=sequence_cache,
+        )
+        role_root_ids = pre_root_ids if neuron.role == "pre" else post_root_ids if neuron.role == "post" else None
+        majority_root_id = None
+        purity = None
+        completeness = None
+        if role_root_ids is not None and neuron.synapse_indices:
+            root_counts = Counter(int(role_root_ids[syn_idx]) for syn_idx in neuron.synapse_indices)
+            majority_root_id, majority_count = root_counts.most_common(1)[0]
+            purity = float(majority_count / max(1, len(neuron.synapse_indices)))
+            captured_total = int(root_totals[neuron.role].get(int(majority_root_id), 0))
+            if captured_total > 0:
+                completeness = float(majority_count / captured_total)
+
+        low_atomicity = bool(
+            atomicity is not None
+            and low_atomicity_threshold is not None
+            and atomicity < float(low_atomicity_threshold)
+        )
+        if atomicity is not None:
+            atomicity_values.append(float(atomicity))
+        if purity is not None:
+            purity_values.append(float(purity))
+        if completeness is not None:
+            completeness_values.append(float(completeness))
+        if low_atomicity:
+            low_atomicity_count += 1
+
+        diagnostics[int(neuron_id)] = {
+            "role": neuron.role,
+            "n_agents": int(len(neuron.agent_ids)),
+            "n_synapses": int(len(neuron.synapse_indices)),
+            "atomicity_logit": None if atomicity is None else float(atomicity),
+            "atomicity_probability": None if atomicity is None else _sigmoid(float(atomicity)),
+            "low_atomicity": low_atomicity,
+            "majority_root_id": None if majority_root_id is None else int(majority_root_id),
+            "purity": None if purity is None else float(purity),
+            "completeness": None if completeness is None else float(completeness),
+        }
+
+    summary: dict[str, float | int] = {
+        "n_cells": int(len(graph.neurons)),
+        "low_atomicity_count": int(low_atomicity_count),
+    }
+    if atomicity_values:
+        summary["mean_atomicity_logit"] = float(np.mean(atomicity_values))
+    if purity_values:
+        summary["mean_purity"] = float(np.mean(purity_values))
+    if completeness_values:
+        summary["mean_completeness"] = float(np.mean(completeness_values))
+    return diagnostics, summary
+
+
+def _repartition_role_neurons(
+    path_arr: np.ndarray,
+    role_hits: np.ndarray,
+    role_name: str,
+    neurons: dict[int, MergedNeuron],
+    *,
+    next_neuron_id: int,
+    learned_merge_score_fn,
+    atomicity_score_fn,
+    atomicity_threshold: float,
+    min_group_size: int,
+    max_rounds: int,
+    path_feature_mode: str,
+) -> tuple[dict[int, MergedNeuron], dict[int, list[int]], dict[int, cKDTree], int, dict[str, int]]:
+    sequence_cache: dict[int, np.ndarray] = {}
+    pair_score_cache: dict[tuple[int, int], float] = {}
+
+    def pair_score_fn(left_agent: int, right_agent: int) -> float:
+        pair = (min(int(left_agent), int(right_agent)), max(int(left_agent), int(right_agent)))
+        cached = pair_score_cache.get(pair)
+        if cached is not None:
+            return cached
+
+        left_sequence = sequence_cache.get(pair[0])
+        if left_sequence is None:
+            left_sequence = _path_sequence_from_points(
+                _agent_points(path_arr, pair[0]),
+                path_feature_mode=path_feature_mode,
+            )
+            sequence_cache[pair[0]] = left_sequence
+        right_sequence = sequence_cache.get(pair[1])
+        if right_sequence is None:
+            right_sequence = _path_sequence_from_points(
+                _agent_points(path_arr, pair[1]),
+                path_feature_mode=path_feature_mode,
+            )
+            sequence_cache[pair[1]] = right_sequence
+
+        if len(left_sequence) == 0 or len(right_sequence) == 0:
+            score = -30.0
+        else:
+            score = float(learned_merge_score_fn(left_sequence, right_sequence))
+        pair_score_cache[pair] = score
+        return score
+
+    def group_atomicity_fn(group_members: tuple[int, ...]) -> float:
+        score = _atomicity_score_for_agent_ids(
+            group_members,
+            path_arr=path_arr,
+            atomicity_score_fn=atomicity_score_fn,
+            path_feature_mode=path_feature_mode,
+            sequence_cache=sequence_cache,
+        )
+        return 0.0 if score is None else float(score)
+
+    updated_groups: list[list[int]] = []
+    low_atomicity_candidates = 0
+    cells_split = 0
+
+    for neuron in sorted(neurons.values(), key=lambda item: item.neuron_id):
+        members = tuple(sorted(int(agent_id) for agent_id in neuron.agent_ids))
+        if len(members) < max(2, int(min_group_size)):
+            updated_groups.append(list(members))
+            continue
+
+        parent_atomicity = group_atomicity_fn(members)
+        if parent_atomicity < float(atomicity_threshold):
+            low_atomicity_candidates += 1
+
+        repartitioned = repartition_low_atomicity_group(
+            members,
+            pair_score_fn=pair_score_fn,
+            atomicity_score_fn=group_atomicity_fn,
+            atomicity_threshold=atomicity_threshold,
+            min_group_size=min_group_size,
+            max_rounds=max_rounds,
+        )
+        if len(repartitioned) > 1:
+            cells_split += 1
+        updated_groups.extend([list(group) for group in repartitioned])
+
+    materialized = _materialize_role_neurons(
+        path_arr,
+        role_hits,
+        updated_groups,
+        role_name,
+        next_neuron_id,
+    )
+    stats = {
+        "low_atomicity_candidates": int(low_atomicity_candidates),
+        "cells_split": int(cells_split),
+        "added_cells": int(len(updated_groups) - len(neurons)),
+    }
+    return (*materialized, stats)
+
+
+def _build_graph(
+    path_arr: np.ndarray,
+    path_lengths: np.ndarray,
+    synapse_hits: np.ndarray,
+    pre_pts: np.ndarray,
+    post_pts: np.ndarray,
+    learned_merge_score_fn=None,
+    learned_merge_score_threshold: float = LEARNED_MERGE_SCORE_THRESHOLD,
+    atomicity_score_fn=None,
+    beam_width: int = BEAM_WIDTH,
+    beam_max_candidates: int = BEAM_MAX_CANDIDATES,
+    atomicity_score_weight: float = ATOMICITY_SCORE_WEIGHT,
+    pre_seg_ids: np.ndarray | None = None,
+    post_seg_ids: np.ndarray | None = None,
+    pre_root_ids: np.ndarray | None = None,
+    post_root_ids: np.ndarray | None = None,
+    cell_split_atomicity_threshold: float | None = CELL_SPLIT_ATOMICITY_THRESHOLD,
+    cell_split_min_group_size: int = CELL_SPLIT_MIN_GROUP_SIZE,
+    cell_split_max_rounds: int = CELL_SPLIT_MAX_ROUNDS,
+    heuristic_config: "HeuristicConfig | None" = None,
+) -> ConnectivityGraph:
+    del path_lengths
+    hcfg = heuristic_config or HeuristicConfig.legacy()
+    n_syn = len(pre_pts)
+    valid_idx = _valid_agent_indices(path_arr)
+    if len(valid_idx) == 0:
+        return ConnectivityGraph(neurons={}, edges=[], unresolved_synapse_indices=list(range(n_syn)))
+
+    role_hits = synapse_hits[valid_idx]
+    pre_hits = np.zeros_like(synapse_hits[:, :n_syn], dtype=bool)
+    post_hits = np.zeros_like(synapse_hits[:, n_syn:], dtype=bool)
+    pre_hits[valid_idx] = role_hits[:, :n_syn]
+    post_hits[valid_idx] = role_hits[:, n_syn:]
+
+    path_feature_mode = (
+        getattr(learned_merge_score_fn, "path_feature_mode", None)
+        or getattr(atomicity_score_fn, "path_feature_mode", None)
+        or DEFAULT_PATH_FEATURE_MODE
+    )
+    can_repartition = bool(
+        learned_merge_score_fn is not None
+        and atomicity_score_fn is not None
+        and cell_split_atomicity_threshold is not None
+        and cell_split_max_rounds > 0
+    )
+    pre_start_id = 0
+
+    pre_neurons, pre_owners, pre_trees, next_id = _merge_role_groups(
+        path_arr,
+        pre_hits,
+        "pre",
+        pre_start_id,
+        learned_merge_score_fn=learned_merge_score_fn,
+        learned_merge_score_threshold=learned_merge_score_threshold,
+        atomicity_score_fn=atomicity_score_fn,
+        beam_width=beam_width,
+        beam_max_candidates=beam_max_candidates,
+        atomicity_score_weight=atomicity_score_weight,
+        role_seg_ids=pre_seg_ids,
+        heuristic_config=hcfg,
+    )
+    post_start_id = next_id
+    post_neurons, post_owners, post_trees, next_id = _merge_role_groups(
+        path_arr,
+        post_hits,
+        "post",
+        post_start_id,
+        learned_merge_score_fn=learned_merge_score_fn,
+        learned_merge_score_threshold=learned_merge_score_threshold,
+        atomicity_score_fn=atomicity_score_fn,
+        beam_width=beam_width,
+        beam_max_candidates=beam_max_candidates,
+        atomicity_score_weight=atomicity_score_weight,
+        role_seg_ids=post_seg_ids,
+        heuristic_config=hcfg,
+    )
+    baseline_graph = _assemble_connectivity_graph(
+        pre_neurons,
+        pre_owners,
+        pre_trees,
+        post_neurons,
+        post_owners,
+        post_trees,
+        pre_pts,
+        post_pts,
+        hcfg,
+    )
+
+    baseline_diagnostics, baseline_summary = _compute_cell_quality_diagnostics(
+        baseline_graph,
+        path_arr=path_arr,
+        atomicity_score_fn=atomicity_score_fn,
+        path_feature_mode=path_feature_mode,
+        pre_root_ids=pre_root_ids,
+        post_root_ids=post_root_ids,
+        low_atomicity_threshold=cell_split_atomicity_threshold,
+    )
+    baseline_graph.metadata["cell_diagnostics"] = baseline_diagnostics
+    baseline_graph.metadata["cell_diagnostic_summary"] = baseline_summary
+
+    graph = baseline_graph
+    repartition_metadata: dict[str, object] = {
+        "enabled": can_repartition,
+        "pre": {"low_atomicity_candidates": 0, "cells_split": 0, "added_cells": 0},
+        "post": {"low_atomicity_candidates": 0, "cells_split": 0, "added_cells": 0},
+    }
+    if pre_root_ids is not None and post_root_ids is not None:
+        repartition_metadata["baseline_f1"] = float(evaluate(baseline_graph, pre_root_ids, post_root_ids).f1)
+
+    if can_repartition:
+        pre_neurons_split, pre_owners_split, pre_trees_split, next_id, pre_stats = _repartition_role_neurons(
+            path_arr,
+            pre_hits,
+            "pre",
+            pre_neurons,
+            next_neuron_id=pre_start_id,
+            learned_merge_score_fn=learned_merge_score_fn,
+            atomicity_score_fn=atomicity_score_fn,
+            atomicity_threshold=float(cell_split_atomicity_threshold),
+            min_group_size=cell_split_min_group_size,
+            max_rounds=cell_split_max_rounds,
+            path_feature_mode=path_feature_mode,
+        )
+        post_neurons_split, post_owners_split, post_trees_split, _, post_stats = _repartition_role_neurons(
+            path_arr,
+            post_hits,
+            "post",
+            post_neurons,
+            next_neuron_id=next_id,
+            learned_merge_score_fn=learned_merge_score_fn,
+            atomicity_score_fn=atomicity_score_fn,
+            atomicity_threshold=float(cell_split_atomicity_threshold),
+            min_group_size=cell_split_min_group_size,
+            max_rounds=cell_split_max_rounds,
+            path_feature_mode=path_feature_mode,
+        )
+        repartition_metadata["pre"] = pre_stats
+        repartition_metadata["post"] = post_stats
+
+        if pre_stats["cells_split"] > 0 or post_stats["cells_split"] > 0:
+            graph = _assemble_connectivity_graph(
+                pre_neurons_split,
+                pre_owners_split,
+                pre_trees_split,
+                post_neurons_split,
+                post_owners_split,
+                post_trees_split,
+                pre_pts,
+                post_pts,
+                hcfg,
+            )
+
+    diagnostics, diagnostic_summary = _compute_cell_quality_diagnostics(
+        graph,
+        path_arr=path_arr,
+        atomicity_score_fn=atomicity_score_fn,
+        path_feature_mode=path_feature_mode,
+        pre_root_ids=pre_root_ids,
+        post_root_ids=post_root_ids,
+        low_atomicity_threshold=cell_split_atomicity_threshold,
+    )
+    graph.metadata["cell_diagnostics"] = diagnostics
+    graph.metadata["cell_diagnostic_summary"] = diagnostic_summary
+    graph.metadata["baseline_cell_diagnostics"] = baseline_diagnostics
+    graph.metadata["baseline_cell_diagnostic_summary"] = baseline_summary
+
+    if pre_root_ids is not None and post_root_ids is not None:
+        final_metrics = evaluate(graph, pre_root_ids, post_root_ids)
+        repartition_metadata["final_f1"] = float(final_metrics.f1)
+        baseline_f1 = float(repartition_metadata.get("baseline_f1", final_metrics.f1))
+        repartition_metadata["f1_delta"] = float(final_metrics.f1 - baseline_f1)
+
+    graph.metadata["repartition"] = repartition_metadata
+    return graph
 
 
 def simulate_paths_and_hits(
@@ -825,6 +1190,11 @@ def build_graph_hypotheses(
     *,
     thresholds: list[float],
     beam_widths: list[int],
+    pre_root_ids: np.ndarray | None = None,
+    post_root_ids: np.ndarray | None = None,
+    cell_split_atomicity_threshold: float | None = CELL_SPLIT_ATOMICITY_THRESHOLD,
+    cell_split_min_group_size: int = CELL_SPLIT_MIN_GROUP_SIZE,
+    cell_split_max_rounds: int = CELL_SPLIT_MAX_ROUNDS,
     shared_grammar_checkpoint: str | None = SHARED_GRAMMAR_CHECKPOINT,
 ):
     learned_merge_score_fn = None
@@ -848,6 +1218,11 @@ def build_graph_hypotheses(
                 beam_width=beam_width,
                 beam_max_candidates=BEAM_MAX_CANDIDATES,
                 atomicity_score_weight=ATOMICITY_SCORE_WEIGHT,
+                pre_root_ids=pre_root_ids,
+                post_root_ids=post_root_ids,
+                cell_split_atomicity_threshold=cell_split_atomicity_threshold,
+                cell_split_min_group_size=cell_split_min_group_size,
+                cell_split_max_rounds=cell_split_max_rounds,
             )
             hypotheses.append((threshold, beam_width, graph))
     return hypotheses
@@ -903,6 +1278,9 @@ def run(
     cell_gnn_checkpoint: str | None = CELL_GNN_CHECKPOINT,
     cell_gnn_partition_threshold: float = 0.5,
     cell_gnn_proximity_radius_nm: float = 5000.0,
+    cell_split_atomicity_threshold: float | None = CELL_SPLIT_ATOMICITY_THRESHOLD,
+    cell_split_min_group_size: int = CELL_SPLIT_MIN_GROUP_SIZE,
+    cell_split_max_rounds: int = CELL_SPLIT_MAX_ROUNDS,
 ) -> LineGraphMetrics:
     t0 = time.time()
     all_syn_pts = np.vstack([pre_pts, post_pts])
@@ -1010,6 +1388,11 @@ def run(
             post_pts,
             thresholds=thresholds,
             beam_widths=beam_widths,
+            pre_root_ids=pre_root_ids,
+            post_root_ids=post_root_ids,
+            cell_split_atomicity_threshold=cell_split_atomicity_threshold,
+            cell_split_min_group_size=cell_split_min_group_size,
+            cell_split_max_rounds=cell_split_max_rounds,
             shared_grammar_checkpoint=shared_grammar_checkpoint,
         )
         _, _, graph = select_hypothesis_with_reranker(
@@ -1032,6 +1415,11 @@ def run(
             atomicity_score_weight=atomicity_score_weight,
             pre_seg_ids=pre_seg_ids,
             post_seg_ids=post_seg_ids,
+            pre_root_ids=pre_root_ids,
+            post_root_ids=post_root_ids,
+            cell_split_atomicity_threshold=cell_split_atomicity_threshold,
+            cell_split_min_group_size=cell_split_min_group_size,
+            cell_split_max_rounds=cell_split_max_rounds,
             heuristic_config=_hcfg,
         )
     if verbose:
@@ -1040,6 +1428,38 @@ def run(
             f"{len(graph.neurons)} neurons, {len(graph.edges)} edges, "
             f"{len(graph.unresolved_synapse_indices)} unresolved"
         )
+        cell_summary = graph.metadata.get("cell_diagnostic_summary")
+        if isinstance(cell_summary, dict):
+            atomicity_text = ""
+            if "mean_atomicity_logit" in cell_summary:
+                atomicity_text = f" atomicity={cell_summary['mean_atomicity_logit']:.3f}"
+            purity_text = ""
+            if "mean_purity" in cell_summary:
+                purity_text = f" purity={cell_summary['mean_purity']:.3f}"
+            completeness_text = ""
+            if "mean_completeness" in cell_summary:
+                completeness_text = f" completeness={cell_summary['mean_completeness']:.3f}"
+            print(
+                f"  cell_quality cells={cell_summary.get('n_cells', len(graph.neurons))} "
+                f"low_atomicity={cell_summary.get('low_atomicity_count', 0)}"
+                f"{atomicity_text}{purity_text}{completeness_text}"
+            )
+        repartition = graph.metadata.get("repartition")
+        if isinstance(repartition, dict) and repartition.get("enabled"):
+            pre_stats = repartition.get("pre", {})
+            post_stats = repartition.get("post", {})
+            f1_text = ""
+            if "baseline_f1" in repartition and "final_f1" in repartition:
+                f1_text = (
+                    f" f1={repartition['baseline_f1']:.3f}->{repartition['final_f1']:.3f} "
+                    f"(delta={repartition.get('f1_delta', 0.0):+.3f})"
+                )
+            print(
+                "  cell_repartition "
+                f"pre_split={pre_stats.get('cells_split', 0)} "
+                f"post_split={post_stats.get('cells_split', 0)}"
+                f"{f1_text}"
+            )
 
     # --- PR 4: Global GAT refinement ---
     if gat_assembly_checkpoint is not None:
@@ -1080,12 +1500,23 @@ def evaluate_synthetic_case(
     run_seed: int | None = None,
     verbose: bool = True,
     use_scaffold: bool = True,
+    shared_grammar_checkpoint: str | None = SHARED_GRAMMAR_CHECKPOINT,
+    assembly_reranker_checkpoint: str | None = ASSEMBLY_RERANKER_CHECKPOINT,
+    learned_merge_score_threshold: float = LEARNED_MERGE_SCORE_THRESHOLD,
+    beam_width: int = BEAM_WIDTH,
+    beam_max_candidates: int = BEAM_MAX_CANDIDATES,
+    atomicity_score_weight: float = ATOMICITY_SCORE_WEIGHT,
+    reranker_thresholds: str = RERANKER_THRESHOLDS,
+    reranker_beam_widths: str = RERANKER_BEAM_WIDTHS,
     membrane_unet_checkpoint: str | None = None,
     gat_assembly_checkpoint: str | None = None,
     gat_edge_threshold: float = 0.5,
     cell_gnn_checkpoint: str | None = None,
     cell_gnn_partition_threshold: float = 0.5,
     cell_gnn_proximity_radius_nm: float = 5000.0,
+    cell_split_atomicity_threshold: float | None = CELL_SPLIT_ATOMICITY_THRESHOLD,
+    cell_split_min_group_size: int = CELL_SPLIT_MIN_GROUP_SIZE,
+    cell_split_max_rounds: int = CELL_SPLIT_MAX_ROUNDS,
 ) -> LineGraphMetrics:
     chunk, synapses = make_test_volume(config=benchmark_config, seed=volume_seed)
     return run(
@@ -1096,6 +1527,14 @@ def evaluate_synthetic_case(
         post_root_ids=synapses.post_root_id,
         seed=42 if run_seed is None else run_seed,
         verbose=verbose,
+        shared_grammar_checkpoint=shared_grammar_checkpoint,
+        assembly_reranker_checkpoint=assembly_reranker_checkpoint,
+        learned_merge_score_threshold=learned_merge_score_threshold,
+        beam_width=beam_width,
+        beam_max_candidates=beam_max_candidates,
+        atomicity_score_weight=atomicity_score_weight,
+        reranker_thresholds=reranker_thresholds,
+        reranker_beam_widths=reranker_beam_widths,
         pre_seg_ids=synapses.pre_seg_id if use_scaffold else None,
         post_seg_ids=synapses.post_seg_id if use_scaffold else None,
         membrane_unet_checkpoint=membrane_unet_checkpoint,
@@ -1104,6 +1543,9 @@ def evaluate_synthetic_case(
         cell_gnn_checkpoint=cell_gnn_checkpoint,
         cell_gnn_partition_threshold=cell_gnn_partition_threshold,
         cell_gnn_proximity_radius_nm=cell_gnn_proximity_radius_nm,
+        cell_split_atomicity_threshold=cell_split_atomicity_threshold,
+        cell_split_min_group_size=cell_split_min_group_size,
+        cell_split_max_rounds=cell_split_max_rounds,
     )
 
 
@@ -1186,6 +1628,9 @@ def evaluate_real_box(
     cell_gnn_checkpoint: str | None = None,
     cell_gnn_partition_threshold: float = 0.5,
     cell_gnn_proximity_radius_nm: float = 5000.0,
+    cell_split_atomicity_threshold: float | None = CELL_SPLIT_ATOMICITY_THRESHOLD,
+    cell_split_min_group_size: int = CELL_SPLIT_MIN_GROUP_SIZE,
+    cell_split_max_rounds: int = CELL_SPLIT_MAX_ROUNDS,
 ) -> tuple[LineGraphMetrics | None, dict[str, int | float | tuple]]:
     synapses = fetch_synapses(box.bbox_nm, mip=box.mip)
     summary = {
@@ -1227,6 +1672,9 @@ def evaluate_real_box(
         cell_gnn_checkpoint=cell_gnn_checkpoint,
         cell_gnn_partition_threshold=cell_gnn_partition_threshold,
         cell_gnn_proximity_radius_nm=cell_gnn_proximity_radius_nm,
+        cell_split_atomicity_threshold=cell_split_atomicity_threshold,
+        cell_split_min_group_size=cell_split_min_group_size,
+        cell_split_max_rounds=cell_split_max_rounds,
     )
     return metrics, summary
 
@@ -1250,6 +1698,9 @@ def evaluate_real_box_set(
     cell_gnn_checkpoint: str | None = None,
     cell_gnn_partition_threshold: float = 0.5,
     cell_gnn_proximity_radius_nm: float = 5000.0,
+    cell_split_atomicity_threshold: float | None = CELL_SPLIT_ATOMICITY_THRESHOLD,
+    cell_split_min_group_size: int = CELL_SPLIT_MIN_GROUP_SIZE,
+    cell_split_max_rounds: int = CELL_SPLIT_MAX_ROUNDS,
 ) -> tuple[LineGraphMetrics, list[dict[str, int | float | tuple]]]:
     summaries = []
     metrics_list = []
@@ -1273,6 +1724,9 @@ def evaluate_real_box_set(
             cell_gnn_checkpoint=cell_gnn_checkpoint,
             cell_gnn_partition_threshold=cell_gnn_partition_threshold,
             cell_gnn_proximity_radius_nm=cell_gnn_proximity_radius_nm,
+            cell_split_atomicity_threshold=cell_split_atomicity_threshold,
+            cell_split_min_group_size=cell_split_min_group_size,
+            cell_split_max_rounds=cell_split_max_rounds,
         )
         if metrics is None:
             summaries.append({**summary, "status": "skip_low_synapses"})
