@@ -270,8 +270,9 @@ class LoadSharedAtomicityScoreFnTest(unittest.TestCase):
             score_fn = _load_shared_atomicity_score_fn(ckpt)
 
             rng = np.random.default_rng(0)
-            # branch_sequences: tuple of 2-D arrays (steps, 3)
-            seqs = tuple(rng.random((5, 3)).astype(np.float32) for _ in range(3))
+            D = model._init_kwargs["input_dim"]
+            # branch_sequences: tuple of 2-D arrays (steps, D)
+            seqs = tuple(rng.random((5, D)).astype(np.float32) for _ in range(3))
             result = score_fn(seqs)
             self.assertIsInstance(result, float)
             self.assertFalse(np.isnan(result), "score is NaN")
@@ -288,7 +289,8 @@ class LoadSharedAtomicityScoreFnTest(unittest.TestCase):
             score_fn = _load_shared_atomicity_score_fn(ckpt)
             rng = np.random.default_rng(1)
             for n_branches in (1, 2, 5):
-                seqs = tuple(rng.random((4, 3)).astype(np.float32) for _ in range(n_branches))
+                D = model._init_kwargs["input_dim"]
+                seqs = tuple(rng.random((4, D)).astype(np.float32) for _ in range(n_branches))
                 result = score_fn(seqs)
                 self.assertIsInstance(result, float, f"failed for n_branches={n_branches}")
 
@@ -303,7 +305,8 @@ class LoadSharedAtomicityScoreFnTest(unittest.TestCase):
             save_shared_grammar_model(ckpt, model)
             score_fn = _load_shared_atomicity_score_fn(ckpt)
             rng = np.random.default_rng(2)
-            seqs = tuple(rng.random((6, 3)).astype(np.float32) for _ in range(2))
+            D = model._init_kwargs["input_dim"]
+            seqs = tuple(rng.random((6, D)).astype(np.float32) for _ in range(2))
             r1 = score_fn(seqs)
             r2 = score_fn(seqs)
             self.assertAlmostEqual(r1, r2, places=6)

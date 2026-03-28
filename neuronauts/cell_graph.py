@@ -182,10 +182,7 @@ def build_synapse_graph(
                     agent_covisit[key] = agent_covisit.get(key, 0) + 1
 
     # Build edges via spatial proximity (KD-tree)
-    try:
-        from scipy.spatial import cKDTree
-    except ImportError:
-        from .merge import cKDTree
+    from ._scipy_compat import cKDTree
 
     tree = cKDTree(iso_positions)
     edge_dict: dict[tuple[int, int], SynapseEdge] = {}
@@ -473,25 +470,9 @@ def partition_from_embeddings(
         return labels
 
     # Agglomerative: bottom-up merging by cosine similarity
-    # Union-find based
-    parent = list(range(N))
-    rank = [0] * N
+    from .helpers import UnionFind
 
-    def find(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    def union(x, y):
-        px, py = find(x), find(y)
-        if px == py:
-            return
-        if rank[px] < rank[py]:
-            px, py = py, px
-        parent[py] = px
-        if rank[px] == rank[py]:
-            rank[px] += 1
+    uf = UnionFind(N)
 
     # Compute pairwise similarities and merge above threshold
     sim_matrix = normed @ normed.T
@@ -504,10 +485,10 @@ def partition_from_embeddings(
         if sims[idx] < threshold:
             break
         i, j = int(upper_tri[0][idx]), int(upper_tri[1][idx])
-        union(i, j)
+        uf.union(i, j)
 
     # Convert to contiguous labels
-    labels = np.array([find(i) for i in range(N)], dtype=np.int64)
+    labels = np.array([uf.find(i) for i in range(N)], dtype=np.int64)
     unique_roots = sorted(set(labels.tolist()))
     remap = {r: idx for idx, r in enumerate(unique_roots)}
     return np.array([remap[l] for l in labels], dtype=np.int64)

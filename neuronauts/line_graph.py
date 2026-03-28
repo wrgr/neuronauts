@@ -5,6 +5,7 @@ from typing import Set, Tuple
 
 import numpy as np
 
+from .helpers import pairwise_edges
 from .merge import ConnectivityGraph
 
 
@@ -33,7 +34,6 @@ def build_true_line_graph(
     pre_root_ids: np.ndarray,
     post_root_ids: np.ndarray,
 ) -> Set[Tuple[int, int]]:
-    edges = set()
     n = len(pre_root_ids)
     pre_groups: dict[int, list[int]] = {}
     post_groups: dict[int, list[int]] = {}
@@ -42,18 +42,11 @@ def build_true_line_graph(
         pre_groups.setdefault(int(pre_root_ids[idx]), []).append(idx)
         post_groups.setdefault(int(post_root_ids[idx]), []).append(idx)
 
+    edges: Set[Tuple[int, int]] = set()
     for group in pre_groups.values():
-        for i in range(len(group)):
-            for j in range(i + 1, len(group)):
-                a, b = group[i], group[j]
-                edges.add((min(a, b), max(a, b)))
-
+        edges |= pairwise_edges(group)
     for group in post_groups.values():
-        for i in range(len(group)):
-            for j in range(i + 1, len(group)):
-                a, b = group[i], group[j]
-                edges.add((min(a, b), max(a, b)))
-
+        edges |= pairwise_edges(group)
     return edges
 
 
@@ -62,13 +55,9 @@ def build_estimated_line_graph(
     n_synapses: int,
 ) -> Set[Tuple[int, int]]:
     del n_synapses
-    edges = set()
+    edges: Set[Tuple[int, int]] = set()
     for neuron in graph.neurons.values():
-        syns = sorted(set(neuron.synapse_indices))
-        for i in range(len(syns)):
-            for j in range(i + 1, len(syns)):
-                a, b = syns[i], syns[j]
-                edges.add((min(a, b), max(a, b)))
+        edges |= pairwise_edges(neuron.synapse_indices)
     return edges
 
 

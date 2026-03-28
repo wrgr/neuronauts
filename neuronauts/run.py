@@ -23,8 +23,10 @@ from .fetch import (
     make_test_volume,
 )
 from .grammar import DEFAULT_PATH_FEATURE_MODE, PATH_ISO, featurize_path_points
+from .helpers import UnionFind
 from .line_graph import LineGraphMetrics, evaluate
-from .merge import ConnectivityGraph, MergedNeuron, cKDTree
+from ._scipy_compat import cKDTree
+from .merge import ConnectivityGraph, MergedNeuron
 from .vectorized import run_agents_vectorized
 
 # Lazy imports for CellGNN (only needed when --cell-gnn-checkpoint is set)
@@ -287,7 +289,7 @@ def _scaffold_union_from_seg_ids(
     role_agent_ids: np.ndarray,
     role_hits: np.ndarray,
     role_seg_ids: np.ndarray | None,
-    parent: dict[int, int],
+    uf: "UnionFind",
 ) -> None:
     """Pre-merge agents whose hit synapses all belong to the same scaffold seg_id.
 
@@ -319,17 +321,6 @@ def _scaffold_union_from_seg_ids(
     if role_seg_ids is None:
         return
 
-    def find(x: int) -> int:
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    def union(x: int, y: int) -> None:
-        px, py = find(x), find(y)
-        if px != py:
-            parent[px] = py
-
     # Map seg_id → first agent that is purely within that segment.
     seg_representative: dict[int, int] = {}
 
@@ -344,7 +335,7 @@ def _scaffold_union_from_seg_ids(
             continue
         seg_id = int(unique_segs[0])
         if seg_id in seg_representative:
-            union(agent_id, seg_representative[seg_id])
+            uf.union(agent_id, seg_representative[seg_id])
         else:
             seg_representative[seg_id] = agent_id
 
@@ -423,21 +414,10 @@ def _merge_role_groups(
     if len(role_agent_ids) == 0:
         return {}, {}, {}, next_neuron_id
 
-    parent = {int(agent_id): int(agent_id) for agent_id in role_agent_ids.tolist()}
+    uf = UnionFind.from_keys(int(a) for a in role_agent_ids.tolist())
 
     # --- Scaffold pre-initialization (PR 3) ---
-    _scaffold_union_from_seg_ids(role_agent_ids, role_hits, role_seg_ids, parent)
-
-    def find(x: int) -> int:
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    def union(x: int, y: int) -> None:
-        px, py = find(x), find(y)
-        if px != py:
-            parent[px] = py
+    _scaffold_union_from_seg_ids(role_agent_ids, role_hits, role_seg_ids, uf)
 
     sub_pts_list = []
     sub_labels = []
@@ -488,12 +468,12 @@ def _merge_role_groups(
         elif hcfg.use_learned_decisions:
             # Learned mode but no scorer yet: union optimistically so downstream
             # GAT refinement (PR 4) can make the real acceptance/rejection call.
-            union(agent_a, agent_b)
+            uf.union(agent_a, agent_b)
         else:
             # Legacy mode: overlap fraction is the decision criterion.
             overlap = shared_count / max(1, min(int(np.count_nonzero(hits_a)), int(np.count_nonzero(hits_b))))
             if overlap >= hcfg.merge_overlap_threshold:
-                union(agent_a, agent_b)
+                uf.union(agent_a, agent_b)
 
     if learned_merge_score_fn is not None:
         candidate_merges = [candidate for candidate in candidate_merges if candidate.score >= learned_merge_score_threshold]
@@ -537,14 +517,13 @@ def _merge_role_groups(
             grouped_agents = {idx: sorted(group) for idx, group in enumerate(final_groups)}
         else:
             for candidate in candidate_merges:
-                union(candidate.left_agent, candidate.right_agent)
+                uf.union(candidate.left_agent, candidate.right_agent)
             grouped_agents = {}
     else:
         grouped_agents = {}
 
     if not grouped_agents:
-        for agent_id in role_agent_ids.tolist():
-            grouped_agents.setdefault(find(int(agent_id)), []).append(int(agent_id))
+        grouped_agents = uf.group_dict()
 
     return _materialize_role_neurons(
         path_arr,

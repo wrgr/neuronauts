@@ -18,20 +18,28 @@ import numpy as np
 # ---------------------------------------------------------------------------
 
 def _get_fallback_cdist():
-    """Return the pure-numpy cdist fallback function.
+    """Return the pure-numpy cdist fallback from _scipy_compat.
 
-    We extract the fallback directly from the source rather than fighting the
-    import system.  The fallback is defined verbatim here so we can test its
-    logic independently of whether scipy is installed.
+    We force-reload the module with scipy hidden so we always get the
+    fallback implementation, regardless of whether scipy is installed.
     """
-    def cdist(left: np.ndarray, right: np.ndarray) -> np.ndarray:
-        left_arr = np.asarray(left, dtype=np.float32)
-        right_arr = np.asarray(right, dtype=np.float32)
-        if len(left_arr) == 0 or len(right_arr) == 0:
-            return np.zeros((len(left_arr), len(right_arr)), dtype=np.float32)
-        diff = left_arr[:, None, :] - right_arr[None, :, :]
-        return np.linalg.norm(diff, axis=-1).astype(np.float32, copy=False)
-    return cdist
+    import importlib
+    import sys
+
+    saved_modules = dict(sys.modules)
+    for k in list(sys.modules):
+        if k.startswith("scipy"):
+            sys.modules.pop(k)
+    sys.modules.pop("neuronauts._scipy_compat", None)
+
+    try:
+        import neuronauts._scipy_compat as m
+        importlib.reload(m)
+        fallback = m.cdist
+    finally:
+        sys.modules.clear()
+        sys.modules.update(saved_modules)
+    return fallback
 
 
 class CdistFallbackTest(unittest.TestCase):

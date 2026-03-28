@@ -5,45 +5,10 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 
-try:
-    from scipy.spatial import cKDTree
-except ImportError:
-    class cKDTree:  # type: ignore[override]
-        """Minimal fallback with the subset of scipy.spatial.cKDTree used here."""
-
-        def __init__(self, data: np.ndarray) -> None:
-            self.data = np.asarray(data, dtype=np.float32)
-
-        def query_ball_point(self, points: np.ndarray, r: float):
-            pts = np.asarray(points, dtype=np.float32)
-            scalar_input = pts.ndim == 1
-            if scalar_input:
-                pts = pts[None, :]
-
-            result = []
-            for point in pts:
-                dist = np.linalg.norm(self.data - point, axis=1)
-                result.append(np.flatnonzero(dist <= r).tolist())
-            return result[0] if scalar_input else result
-
-        def query_pairs(self, r: float, output_type: str = "set"):
-            pairs = []
-            for i in range(len(self.data)):
-                dist = np.linalg.norm(self.data[i + 1 :] - self.data[i], axis=1)
-                neighbors = np.flatnonzero(dist <= r)
-                for offset in neighbors.tolist():
-                    pairs.append((i, i + 1 + offset))
-            if output_type == "ndarray":
-                return np.asarray(pairs, dtype=np.int64).reshape(-1, 2)
-            return {tuple(pair) for pair in pairs}
-
-        def query(self, point: np.ndarray):
-            point_arr = np.asarray(point, dtype=np.float32)
-            dist = np.linalg.norm(self.data - point_arr, axis=1)
-            idx = int(np.argmin(dist))
-            return float(dist[idx]), idx
+from ._scipy_compat import cKDTree
 
 from .agent import Agent
+from .helpers import UnionFind
 
 
 @dataclass
@@ -73,18 +38,7 @@ def merge_agents(
         return {}
 
     n = len(valid)
-    parent = list(range(n))
-
-    def find(x: int) -> int:
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    def union(x: int, y: int) -> None:
-        px, py = find(x), find(y)
-        if px != py:
-            parent[px] = py
+    uf = UnionFind(n)
 
     all_points = []
     point_to_agent = []
@@ -102,14 +56,10 @@ def merge_agents(
             for nb_idx in pt_neighbors:
                 j = point_to_agent_arr[nb_idx]
                 if j != i:
-                    union(i, j)
-
-    groups: Dict[int, List[int]] = {}
-    for i in range(n):
-        groups.setdefault(find(i), []).append(i)
+                    uf.union(i, j)
 
     neurons = {}
-    for neuron_id, agent_indices in enumerate(groups.values()):
+    for neuron_id, agent_indices in enumerate(uf.groups()):
         member_agents = [valid[i] for i in agent_indices]
         all_pts = np.vstack([np.array(a.path) for a in member_agents])
         all_synapses = []

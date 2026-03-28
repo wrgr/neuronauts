@@ -59,28 +59,16 @@ def _globalize_points(points_local: np.ndarray, box: RealBoxSpec) -> np.ndarray:
 def _connected_components(points: np.ndarray, radius_nm: float) -> list[list[int]]:
     if len(points) == 0:
         return []
-    parent = list(range(len(points)))
 
-    def find(x: int) -> int:
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
+    from .helpers import UnionFind
 
-    def union(a: int, b: int) -> None:
-        pa, pb = find(a), find(b)
-        if pa != pb:
-            parent[pa] = pb
-
+    uf = UnionFind(len(points))
     for i in range(len(points)):
         dist = np.linalg.norm(points[i + 1 :] - points[i], axis=1)
         for off in np.flatnonzero(dist <= radius_nm).tolist():
-            union(i, i + 1 + off)
+            uf.union(i, i + 1 + off)
 
-    groups: dict[int, list[int]] = {}
-    for i in range(len(points)):
-        groups.setdefault(find(i), []).append(i)
-    return list(groups.values())
+    return uf.groups()
 
 
 def _ordered_points(points: np.ndarray) -> np.ndarray:

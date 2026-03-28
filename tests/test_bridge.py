@@ -119,8 +119,9 @@ class BridgeHeadTest(unittest.TestCase):
     def test_predict_bridge_output_shape(self):
         model = SharedGrammarModel()
         model.eval()
+        D = model._init_kwargs["input_dim"]
         B, T = 4, 6
-        x = torch.randn(B, T, 3)
+        x = torch.randn(B, T, D)
         mask = torch.zeros(B, T, dtype=torch.bool)
         with torch.no_grad():
             out = model.predict_bridge(x, mask, x, mask)
@@ -129,7 +130,8 @@ class BridgeHeadTest(unittest.TestCase):
     def test_predict_bridge_midpoint_and_direction_are_finite(self):
         model = SharedGrammarModel()
         model.eval()
-        x = torch.randn(2, 5, 3)
+        D = model._init_kwargs["input_dim"]
+        x = torch.randn(2, 5, D)
         mask = torch.zeros(2, 5, dtype=torch.bool)
         with torch.no_grad():
             out = model.predict_bridge(x, mask, x, mask)
@@ -166,10 +168,11 @@ class BridgeHeadTest(unittest.TestCase):
         topology_y = np.array([e.label for e in topology_examples], dtype=np.float32)
 
         B = 4
+        D = model._init_kwargs["input_dim"]
         bridge_batch = {
-            "left_x": torch.randn(B, 5, 3),
+            "left_x": torch.randn(B, 5, D),
             "left_mask": torch.zeros(B, 5, dtype=torch.bool),
-            "right_x": torch.randn(B, 5, 3),
+            "right_x": torch.randn(B, 5, D),
             "right_mask": torch.zeros(B, 5, dtype=torch.bool),
             "target_midpoint": torch.randn(B, 3),
             "target_direction": torch.nn.functional.normalize(torch.randn(B, 3), dim=-1),
