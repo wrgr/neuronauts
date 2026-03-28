@@ -589,6 +589,9 @@ def cell_graph_train_step(
     margin: float = 0.5,
     max_pairs: int = 2048,
     rng: "np.random.Generator | None" = None,
+    edit_positive_pairs: "list[tuple[int, int]] | None" = None,
+    edit_negative_pairs: "list[tuple[int, int]] | None" = None,
+    edit_weight: float = 2.0,
 ) -> dict[str, float]:
     """One gradient step: contrastive loss over synapse embeddings.
 
@@ -609,6 +612,9 @@ def cell_graph_train_step(
     margin : desired cosine-similarity separation between pos and neg clusters
     max_pairs : cap on pairs sampled per call (controls memory and speed)
     rng : numpy RNG for pair sampling; defaults to a fresh unseeded generator
+    edit_positive_pairs : extra positive pairs from proofreader edit history
+    edit_negative_pairs : extra negative (split) pairs from proofreader edit history
+    edit_weight : loss multiplier for edit-derived pairs (default 2.0)
     """
     torch, _ = _require_torch()
     import torch.nn.functional as F
@@ -626,6 +632,17 @@ def cell_graph_train_step(
     emb_norm = F.normalize(embeddings, p=2, dim=-1)
 
     pos_pairs, neg_pairs = _sample_contrastive_pairs(graph.root_ids, max_pairs, rng)
+
+    # Merge in edit-history pairs (filtering out-of-range indices)
+    N = graph.n_synapses
+    if edit_positive_pairs:
+        for p in edit_positive_pairs:
+            if p[0] < N and p[1] < N:
+                pos_pairs.append(p)
+    if edit_negative_pairs:
+        for p in edit_negative_pairs:
+            if p[0] < N and p[1] < N:
+                neg_pairs.append(p)
 
     if not pos_pairs and not neg_pairs:
         return {"loss": 0.0, "pos_sim": 0.0, "neg_sim": 0.0, "n_pos": 0, "n_neg": 0}
@@ -672,6 +689,8 @@ def train_cell_gnn(
     *,
     config: "CellGNNConfig | None" = None,
     val_cache=None,
+    edit_pairs: "list | None" = None,
+    edit_weight: float = 2.0,
     verbose: bool = True,
 ) -> dict[str, list[float]]:
     """Train CellGNN over a BoxCache for ``config.epochs`` epochs.
@@ -691,6 +710,8 @@ def train_cell_gnn(
     cache : BoxCache (from dataset_builder)
     config : CellGNNConfig (defaults used if None)
     val_cache : optional BoxCache for validation
+    edit_pairs : optional list of EditPair from edit_history module
+    edit_weight : loss multiplier for edit-derived pairs (default 2.0)
     verbose : print per-epoch summary
 
     Returns
@@ -699,10 +720,26 @@ def train_cell_gnn(
     and (if val_cache provided) ``val_loss``.
     """
     torch, _ = _require_torch()
+    from .edit_history import edit_pairs_to_contrastive
 
     cfg = config or CellGNNConfig()
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate)
     rng = np.random.default_rng(cfg.seed)
+
+    # Pre-compute edit-history contrastive pairs per role
+    _edit_pos: dict[str, list[tuple[int, int]]] = {"pre": [], "post": []}
+    _edit_neg: dict[str, list[tuple[int, int]]] = {"pre": [], "post": []}
+    if edit_pairs:
+        for role in ("pre", "post"):
+            pos, neg = edit_pairs_to_contrastive(edit_pairs, role)
+            _edit_pos[role] = pos
+            _edit_neg[role] = neg
+        if verbose:
+            print(
+                f"Edit-history pairs: "
+                f"pre +{len(_edit_pos['pre'])}/-{len(_edit_neg['pre'])}  "
+                f"post +{len(_edit_pos['post'])}/-{len(_edit_neg['post'])}"
+            )
 
     history: dict[str, list[float]] = {
         "train_loss": [], "train_pos_sim": [], "train_neg_sim": [],
@@ -735,6 +772,9 @@ def train_cell_gnn(
                     margin=cfg.margin,
                     max_pairs=cfg.max_pairs_per_box,
                     rng=rng,
+                    edit_positive_pairs=_edit_pos[role] or None,
+                    edit_negative_pairs=_edit_neg[role] or None,
+                    edit_weight=edit_weight,
                 )
                 epoch_metrics["loss"].append(m["loss"])
                 epoch_metrics["pos_sim"].append(m["pos_sim"])
