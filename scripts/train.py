@@ -1061,6 +1061,182 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Subcommand: train-cell-gnn
+# ---------------------------------------------------------------------------
+
+def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
+    """Train CellGNN on a cached dataset with tangledness-aware sampling."""
+    torch = _require_torch()
+
+    from neuronauts.dataset_builder import BoxCache, load_dataset
+    from neuronauts.cell_graph import (
+        CellGNN,
+        CellGNNConfig,
+        train_cell_gnn,
+        save_cell_gnn,
+        load_cell_gnn,
+        select_cell_gnn_training_boxes,
+        rank_boxes_by_tangledness,
+        infer_cells,
+        build_synapse_graph,
+        connectivity_graph_from_cell_labels,
+    )
+    from neuronauts.line_graph import evaluate as lg_evaluate
+
+    cache = BoxCache(args.cache_dir)
+    records = cache.all_records()
+    if not records:
+        print(f"No cached boxes in {args.cache_dir}")
+        return 1
+
+    print(f"Cache: {len(records)} boxes in {args.cache_dir}")
+
+    # --- Tangledness ranking summary ---
+    ranked = rank_boxes_by_tangledness(
+        cache,
+        min_synapses=args.min_synapses,
+        min_positive_pairs=args.min_positive_pairs,
+    )
+    if not ranked:
+        print("No boxes pass min_synapses / min_positive_pairs filters.")
+        return 1
+
+    tangle_vals = [m["tangledness"] for _, m in ranked]
+    print(
+        f"Tangledness: {len(ranked)} boxes pass filters.  "
+        f"min={min(tangle_vals):.2f}  median={np.median(tangle_vals):.2f}  "
+        f"max={max(tangle_vals):.2f}"
+    )
+
+    # --- Spatial split ---
+    splits = select_cell_gnn_training_boxes(
+        cache,
+        max_train=args.max_train_boxes,
+        max_val=args.max_val_boxes,
+        min_tangledness=args.min_tangledness,
+        min_synapses=args.min_synapses,
+        min_positive_pairs=args.min_positive_pairs,
+        val_fraction=args.val_fraction,
+        test_fraction=args.test_fraction,
+        seed=args.seed,
+    )
+    n_train = len(splits["train"])
+    n_val = len(splits["val"])
+    n_test = len(splits["test"])
+    print(f"Split: train={n_train}  val={n_val}  test={n_test}")
+
+    if n_train == 0:
+        print("No training boxes after filtering / splitting.")
+        return 1
+
+    # Build train and val caches (in-memory subsets backed by the same disk cache)
+    train_cache = BoxCache(args.cache_dir)
+    train_cache._index = [
+        entry for entry in train_cache._index
+        if entry["box_hash"] in {r.box_hash for r in splits["train"]}
+    ]
+    val_cache = None
+    if n_val > 0:
+        val_cache = BoxCache(args.cache_dir)
+        val_cache._index = [
+            entry for entry in val_cache._index
+            if entry["box_hash"] in {r.box_hash for r in splits["val"]}
+        ]
+
+    # --- Model ---
+    cfg = CellGNNConfig(
+        d_model=args.d_model,
+        n_layers=args.n_layers,
+        n_heads=args.n_heads,
+        embedding_dim=args.embedding_dim,
+        epochs=args.epochs,
+        learning_rate=args.lr,
+        margin=args.margin,
+        max_pairs_per_box=args.max_pairs_per_box,
+        proximity_radius_nm=args.proximity_radius_nm,
+        partition_threshold=args.partition_threshold,
+        seed=args.seed,
+    )
+
+    if args.resume and Path(args.cell_gnn_output).exists():
+        print(f"Resuming from {args.cell_gnn_output}")
+        model = load_cell_gnn(args.cell_gnn_output)
+    else:
+        model = CellGNN(
+            d_model=cfg.d_model,
+            n_layers=cfg.n_layers,
+            n_heads=cfg.n_heads,
+            embedding_dim=cfg.embedding_dim,
+        )
+
+    print(f"CellGNN: d={cfg.d_model} layers={cfg.n_layers} heads={cfg.n_heads} emb={cfg.embedding_dim}")
+    print(f"Training: epochs={cfg.epochs} lr={cfg.learning_rate} margin={cfg.margin}")
+
+    # --- Train ---
+    t0 = time.time()
+    history = train_cell_gnn(
+        model,
+        train_cache,
+        config=cfg,
+        val_cache=val_cache,
+        verbose=True,
+    )
+    elapsed = time.time() - t0
+    print(f"Training complete in {elapsed:.1f}s")
+
+    # --- Save ---
+    save_cell_gnn(args.cell_gnn_output, model)
+    print(f"Saved model to {args.cell_gnn_output}")
+
+    # --- Evaluate on test set ---
+    if n_test > 0:
+        print(f"\nEvaluating on {n_test} test boxes …")
+        f1_scores = []
+        for rec in splits["test"]:
+            try:
+                _, synapses = cache.load(rec)
+            except Exception:
+                continue
+            pre_graph = build_synapse_graph(
+                synapses, "pre",
+                proximity_radius_nm=cfg.proximity_radius_nm,
+            )
+            post_graph = build_synapse_graph(
+                synapses, "post",
+                proximity_radius_nm=cfg.proximity_radius_nm,
+            )
+            pre_labels = infer_cells(
+                model, pre_graph,
+                threshold=cfg.partition_threshold,
+            )
+            post_labels = infer_cells(
+                model, post_graph,
+                threshold=cfg.partition_threshold,
+            )
+            cg = connectivity_graph_from_cell_labels(pre_labels, post_labels, synapses)
+            metrics = lg_evaluate(cg, synapses.pre_root_id, synapses.post_root_id)
+            f1_scores.append(metrics.f1)
+            print(f"  {rec.box_hash[:8]}: {metrics}")
+
+        if f1_scores:
+            print(
+                f"\nTest F1: mean={np.mean(f1_scores):.4f}  "
+                f"median={np.median(f1_scores):.4f}  "
+                f"min={min(f1_scores):.4f}  max={max(f1_scores):.4f}"
+            )
+
+    # --- Save history ---
+    log_dir = Path(args.log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    history_path = log_dir / "cell_gnn_history.json"
+    with history_path.open("w") as f:
+        json.dump(history, f, indent=2)
+    print(f"Training history saved to {history_path}")
+
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Argument parsing
 # ---------------------------------------------------------------------------
 
@@ -1511,6 +1687,37 @@ def parse_args(argv=None) -> argparse.Namespace:
         help="Optional path to write JSON summary stats.",
     )
     p_analyze.set_defaults(func=cmd_analyze_root_remap)
+
+    # train-cell-gnn
+    p_cell = sub.add_parser(
+        "train-cell-gnn",
+        help="Train CellGNN on cached boxes with tangledness-aware sampling.",
+    )
+    _add_common_args(p_cell)
+    p_cell.add_argument("--cell-gnn-output", default="models/cell_gnn.pt",
+                        help="Path to save the trained CellGNN checkpoint.")
+    p_cell.add_argument("--epochs", type=int, default=50)
+    p_cell.add_argument("--lr", type=float, default=1e-3)
+    p_cell.add_argument("--d-model", type=int, default=64)
+    p_cell.add_argument("--n-layers", type=int, default=3)
+    p_cell.add_argument("--n-heads", type=int, default=4)
+    p_cell.add_argument("--embedding-dim", type=int, default=32)
+    p_cell.add_argument("--margin", type=float, default=0.5,
+                        help="Contrastive loss margin (cosine sim gap).")
+    p_cell.add_argument("--max-pairs-per-box", type=int, default=2048)
+    p_cell.add_argument("--proximity-radius-nm", type=float, default=5000.0)
+    p_cell.add_argument("--partition-threshold", type=float, default=0.5)
+    p_cell.add_argument("--min-tangledness", type=float, default=0.0,
+                        help="Minimum tangledness score to include a box (0=all).")
+    p_cell.add_argument("--min-positive-pairs", type=int, default=2)
+    p_cell.add_argument("--max-train-boxes", type=int, default=200)
+    p_cell.add_argument("--max-val-boxes", type=int, default=30)
+    p_cell.add_argument("--val-fraction", type=float, default=0.15)
+    p_cell.add_argument("--test-fraction", type=float, default=0.15)
+    p_cell.add_argument("--resume", action="store_true",
+                        help="Resume from existing checkpoint if present.")
+    p_cell.add_argument("--log-dir", default="run_logs")
+    p_cell.set_defaults(func=cmd_train_cell_gnn)
 
     return root.parse_args(argv)
 
