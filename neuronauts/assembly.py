@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
-from .grammar import DEFAULT_PATH_FEATURE_MODE, featurize_path_points
+from .grammar import DEFAULT_PATH_FEATURE_MODE, PATH_ISO, featurize_path_points
 
 if TYPE_CHECKING:
     from .merge import ConnectivityGraph
@@ -235,15 +235,11 @@ def repartition_low_atomicity_group(
 # PR 4: Global GAT Assembly
 # ---------------------------------------------------------------------------
 
-# Isotropic scaling: convert MIP-2 voxel coords to 32-nm units (1 unit = 32 nm).
-# Keeps feature values in the same numerical range as raw voxel coords (~1–60)
-# while correctly weighting the Z axis at 40/32 = 1.25× relative to XY.
-_PATH_ISO = np.array([1.0, 1.0, 40.0 / 32.0], dtype=np.float32)
 
 
 def _path_seq_from_pts(points: np.ndarray) -> np.ndarray:
     """Convert an (K, 3) path-point array to the default shared feature mode."""
-    return featurize_path_points(points, mode=DEFAULT_PATH_FEATURE_MODE, iso_scale=_PATH_ISO)
+    return featurize_path_points(points, mode=DEFAULT_PATH_FEATURE_MODE, iso_scale=PATH_ISO)
 
 
 def _encode_neurons(neurons: dict, path_encoder) -> "tuple[list[int], object]":
@@ -266,7 +262,7 @@ def _encode_neurons(neurons: dict, path_encoder) -> "tuple[list[int], object]":
         featurize_path_points(
             neurons[nid].path_points,
             mode=path_feature_mode,
-            iso_scale=_PATH_ISO,
+            iso_scale=PATH_ISO,
         )
         for nid in node_ids
     ]

@@ -182,10 +182,7 @@ def build_synapse_graph(
                     agent_covisit[key] = agent_covisit.get(key, 0) + 1
 
     # Build edges via spatial proximity (KD-tree)
-    try:
-        from scipy.spatial import cKDTree
-    except ImportError:
-        from .merge import cKDTree
+    from ._scipy_compat import cKDTree
 
     tree = cKDTree(iso_positions)
     edge_dict: dict[tuple[int, int], SynapseEdge] = {}

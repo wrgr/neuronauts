@@ -630,11 +630,7 @@ def mesh_stepwise_features(
     if len(verts) == 0 or len(tris) == 0 or T == 0:
         return np.zeros((T, 3), dtype=np.float32)
 
-    try:
-        from scipy.spatial import cKDTree as _cKDTree
-    except ImportError:
-        # Fallback: return zeros if scipy is unavailable.
-        return np.zeros((T, 3), dtype=np.float32)
+    from ._scipy_compat import cKDTree as _cKDTree
 
     tree = _cKDTree(verts)
     k = min(k_nearest, len(verts))

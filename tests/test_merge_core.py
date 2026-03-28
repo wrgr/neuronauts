@@ -21,27 +21,26 @@ import numpy as np
 # ---------------------------------------------------------------------------
 
 def _import_merge_with_fallback():
-    """Import neuronauts.merge after hiding scipy so the fallback cKDTree is used.
+    """Import neuronauts._scipy_compat after hiding scipy so the fallback cKDTree is used.
 
     Carefully restores sys.modules to its exact original state after extracting
-    the fallback class, so that subsequent imports of neuronauts.merge from
-    other test modules receive the same (already-loaded) module object.
+    the fallback class, so that subsequent imports receive the same module.
     """
     import importlib
 
     # Snapshot the full module cache before we touch anything.
     saved_modules = dict(sys.modules)
 
-    # Hide scipy so the try/except in merge.py takes the fallback branch.
+    # Hide scipy so the try/except in _scipy_compat.py takes the fallback branch.
     for k in list(sys.modules):
         if k.startswith("scipy"):
             sys.modules.pop(k)
 
-    # Unload the real merge module so reload() will re-execute the try/except.
-    orig_merge = sys.modules.pop("neuronauts.merge", None)
+    # Unload the compat module so reload() will re-execute the try/except.
+    sys.modules.pop("neuronauts._scipy_compat", None)
 
     try:
-        import neuronauts.merge as m
+        import neuronauts._scipy_compat as m
         importlib.reload(m)
         FallbackKDTree = m.cKDTree
     finally:

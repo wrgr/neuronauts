@@ -15,7 +15,7 @@ from neuronauts.run import (
     _build_graph,
     _nearest_owner,
 )
-from neuronauts.merge import cKDTree
+from neuronauts._scipy_compat import cKDTree
 
 
 # ---------------------------------------------------------------------------

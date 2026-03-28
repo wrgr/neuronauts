@@ -4,16 +4,7 @@ from typing import Tuple
 
 import numpy as np
 
-try:
-    from scipy.spatial.distance import cdist
-except ImportError:
-    def cdist(left: np.ndarray, right: np.ndarray) -> np.ndarray:
-        left_arr = np.asarray(left, dtype=np.float32)
-        right_arr = np.asarray(right, dtype=np.float32)
-        if len(left_arr) == 0 or len(right_arr) == 0:
-            return np.zeros((len(left_arr), len(right_arr)), dtype=np.float32)
-        diff = left_arr[:, None, :] - right_arr[None, :, :]
-        return np.linalg.norm(diff, axis=-1).astype(np.float32, copy=False)
+from ._scipy_compat import cdist
 
 from .agent import AgentConfig
 from .helpers import safe_normalize

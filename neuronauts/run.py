@@ -25,7 +25,8 @@ from .fetch import (
 from .grammar import DEFAULT_PATH_FEATURE_MODE, PATH_ISO, featurize_path_points
 from .helpers import UnionFind
 from .line_graph import LineGraphMetrics, evaluate
-from .merge import ConnectivityGraph, MergedNeuron, cKDTree
+from ._scipy_compat import cKDTree
+from .merge import ConnectivityGraph, MergedNeuron
 from .vectorized import run_agents_vectorized
 
 # Lazy imports for CellGNN (only needed when --cell-gnn-checkpoint is set)
