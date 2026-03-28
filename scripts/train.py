@@ -1172,6 +1172,28 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
     print(f"CellGNN: d={cfg.d_model} layers={cfg.n_layers} heads={cfg.n_heads} emb={cfg.embedding_dim}")
     print(f"Training: epochs={cfg.epochs} lr={cfg.learning_rate} margin={cfg.margin}")
 
+    # --- Optional edit-history pairs ---
+    edit_pairs = None
+    edit_pairs_tsv = getattr(args, "edit_pairs_tsv", None)
+    if edit_pairs_tsv and Path(edit_pairs_tsv).exists():
+        from neuronauts.edit_history import EditPair
+        import csv
+
+        edit_pairs = []
+        with open(edit_pairs_tsv, "r", encoding="utf-8", newline="") as fh:
+            reader = csv.DictReader(fh, delimiter="\t")
+            for row in reader:
+                edit_pairs.append(EditPair(
+                    synapse_i=int(row["synapse_i"]),
+                    synapse_j=int(row["synapse_j"]),
+                    label=int(row["label"]),
+                    role=row["role"],
+                    source_root_a=int(row["source_root_a"]),
+                    source_root_b=int(row["source_root_b"]),
+                    edit_type=row["edit_type"],
+                ))
+        print(f"Loaded {len(edit_pairs)} edit-history pairs from {edit_pairs_tsv}")
+
     # --- Train ---
     t0 = time.time()
     history = train_cell_gnn(
@@ -1179,6 +1201,8 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
         train_cache,
         config=cfg,
         val_cache=val_cache,
+        edit_pairs=edit_pairs,
+        edit_weight=getattr(args, "edit_weight", 2.0),
         verbose=True,
     )
     elapsed = time.time() - t0
@@ -1233,6 +1257,497 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
         json.dump(history, f, indent=2)
     print(f"Training history saved to {history_path}")
 
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: evaluate (CellGNN vs beam-search baseline)
+# ---------------------------------------------------------------------------
+
+def cmd_evaluate(args: argparse.Namespace) -> int:
+    """Evaluate CellGNN checkpoint and optionally compare against beam-search baseline."""
+    torch = _require_torch()
+
+    from neuronauts.dataset_builder import BoxCache, load_dataset
+    from neuronauts.cell_graph import (
+        CellGNN,
+        CellGNNConfig,
+        build_synapse_graph,
+        connectivity_graph_from_cell_labels,
+        infer_cells,
+        load_cell_gnn,
+        select_cell_gnn_training_boxes,
+    )
+    from neuronauts.line_graph import evaluate as lg_evaluate, evaluate_sampled
+
+    cache = BoxCache(args.cache_dir)
+    records = cache.all_records()
+    if not records:
+        print(f"No cached boxes in {args.cache_dir}")
+        return 1
+
+    # --- Spatial split to get the test set ---
+    splits = select_cell_gnn_training_boxes(
+        cache,
+        min_synapses=args.min_synapses,
+        min_positive_pairs=args.min_positive_pairs,
+        val_fraction=args.val_fraction,
+        test_fraction=args.test_fraction,
+        seed=args.seed,
+    )
+    eval_split = args.split
+    eval_records = splits.get(eval_split, [])
+    if not eval_records:
+        print(f"No boxes in '{eval_split}' split.")
+        return 1
+    print(f"Evaluating on {len(eval_records)} {eval_split} boxes")
+
+    # --- Load CellGNN ---
+    cell_gnn_path = args.cell_gnn_checkpoint
+    if not Path(cell_gnn_path).exists():
+        print(f"CellGNN checkpoint not found: {cell_gnn_path}")
+        return 1
+    model = load_cell_gnn(cell_gnn_path)
+    model.eval()
+    print(f"Loaded CellGNN from {cell_gnn_path}")
+
+    # --- Optional grammar model for baseline ---
+    grammar_model = None
+    baseline_enabled = args.grammar_checkpoint is not None
+    if baseline_enabled:
+        from neuronauts.shared_grammar_model import load_shared_grammar_model
+        grammar_path = args.grammar_checkpoint
+        if not Path(grammar_path).exists():
+            print(f"Grammar checkpoint not found: {grammar_path}; skipping baseline.")
+            baseline_enabled = False
+        else:
+            grammar_model = load_shared_grammar_model(grammar_path)
+            grammar_model.eval()
+            print(f"Loaded grammar model from {grammar_path} (for baseline)")
+
+    # --- Evaluate ---
+    gnn_f1s, gnn_precs, gnn_recs = [], [], []
+    baseline_f1s, baseline_precs, baseline_recs = [], [], []
+
+    for rec in eval_records:
+        try:
+            volume_chunk, synapses = cache.load(rec)
+        except Exception:
+            continue
+        if len(synapses.pre_pt) < 5:
+            continue
+
+        # CellGNN evaluation
+        pre_graph = build_synapse_graph(
+            synapses, "pre",
+            proximity_radius_nm=args.proximity_radius_nm,
+        )
+        post_graph = build_synapse_graph(
+            synapses, "post",
+            proximity_radius_nm=args.proximity_radius_nm,
+        )
+        pre_labels = infer_cells(
+            model, pre_graph,
+            threshold=args.partition_threshold,
+        )
+        post_labels = infer_cells(
+            model, post_graph,
+            threshold=args.partition_threshold,
+        )
+        cg = connectivity_graph_from_cell_labels(pre_labels, post_labels, synapses)
+        m = lg_evaluate(cg, synapses.pre_root_id, synapses.post_root_id)
+        gnn_f1s.append(m.f1)
+        gnn_precs.append(m.precision)
+        gnn_recs.append(m.recall)
+
+        # Beam-search baseline (uses grammar + agent simulation or skeleton)
+        baseline_m = None
+        if baseline_enabled and grammar_model is not None:
+            try:
+                score_fn = _make_live_merge_score_fn(grammar_model)
+                from neuronauts.run import HeuristicConfig, _build_graph, simulate_paths_and_hits
+                from neuronauts.fields import compute_membrane_field
+
+                if getattr(volume_chunk, "data", None) is not None and volume_chunk.data.size > 0:
+                    mf = compute_membrane_field(volume_chunk.data)
+                    path_arr, synapse_hits, path_lengths, _ = simulate_paths_and_hits(
+                        volume_chunk.data,
+                        synapses.pre_pt, synapses.post_pt,
+                        verbose=False,
+                        membrane_field_override=mf,
+                    )
+                    graph = _build_graph(
+                        path_arr=path_arr,
+                        path_lengths=path_lengths,
+                        synapse_hits=synapse_hits,
+                        pre_pts=synapses.pre_pt,
+                        post_pts=synapses.post_pt,
+                        pre_seg_ids=synapses.pre_seg_id,
+                        post_seg_ids=synapses.post_seg_id,
+                        learned_merge_score_fn=score_fn,
+                        heuristic_config=HeuristicConfig.learned(),
+                    )
+                    baseline_m = lg_evaluate(graph, synapses.pre_root_id, synapses.post_root_id)
+            except Exception as exc:
+                print(f"  [W] baseline failed for {rec.box_hash[:8]}: {exc}")
+
+        baseline_str = ""
+        if baseline_m is not None:
+            baseline_f1s.append(baseline_m.f1)
+            baseline_precs.append(baseline_m.precision)
+            baseline_recs.append(baseline_m.recall)
+            baseline_str = (
+                f"  baseline: F1={baseline_m.f1:.3f} P={baseline_m.precision:.3f} "
+                f"R={baseline_m.recall:.3f}"
+            )
+
+        print(
+            f"  {rec.box_hash[:8]} ({rec.n_synapses} syn): "
+            f"GNN F1={m.f1:.3f} P={m.precision:.3f} R={m.recall:.3f}"
+            f"{baseline_str}"
+        )
+
+    # --- Summary ---
+    print(f"\n{'='*60}")
+    print(f"CellGNN ({len(gnn_f1s)} boxes):")
+    print(
+        f"  F1:        mean={np.mean(gnn_f1s):.4f}  median={np.median(gnn_f1s):.4f}  "
+        f"min={min(gnn_f1s):.4f}  max={max(gnn_f1s):.4f}"
+    )
+    print(
+        f"  Precision: mean={np.mean(gnn_precs):.4f}  "
+        f"Recall: mean={np.mean(gnn_recs):.4f}"
+    )
+
+    if baseline_f1s:
+        print(f"\nBeam-search baseline ({len(baseline_f1s)} boxes):")
+        print(
+            f"  F1:        mean={np.mean(baseline_f1s):.4f}  median={np.median(baseline_f1s):.4f}  "
+            f"min={min(baseline_f1s):.4f}  max={max(baseline_f1s):.4f}"
+        )
+        print(
+            f"  Precision: mean={np.mean(baseline_precs):.4f}  "
+            f"Recall: mean={np.mean(baseline_recs):.4f}"
+        )
+        delta = np.mean(gnn_f1s) - np.mean(baseline_f1s)
+        print(f"\n  Delta F1 (GNN - baseline): {delta:+.4f}")
+
+    # --- Save results ---
+    log_dir = Path(args.log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    results = {
+        "split": eval_split,
+        "n_boxes": len(gnn_f1s),
+        "cell_gnn_checkpoint": cell_gnn_path,
+        "gnn": {
+            "f1_mean": float(np.mean(gnn_f1s)),
+            "f1_median": float(np.median(gnn_f1s)),
+            "precision_mean": float(np.mean(gnn_precs)),
+            "recall_mean": float(np.mean(gnn_recs)),
+        },
+    }
+    if baseline_f1s:
+        results["baseline"] = {
+            "f1_mean": float(np.mean(baseline_f1s)),
+            "f1_median": float(np.median(baseline_f1s)),
+            "precision_mean": float(np.mean(baseline_precs)),
+            "recall_mean": float(np.mean(baseline_recs)),
+        }
+        results["delta_f1"] = float(np.mean(gnn_f1s) - np.mean(baseline_f1s))
+    results_path = log_dir / "evaluate_results.json"
+    with results_path.open("w") as f:
+        json.dump(results, f, indent=2)
+    print(f"\nResults saved to {results_path}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: sweep (hyperparameter sweep over spatial val split)
+# ---------------------------------------------------------------------------
+
+def cmd_sweep(args: argparse.Namespace) -> int:
+    """Hyperparameter sweep for CellGNN using spatial train/val split."""
+    torch = _require_torch()
+    import itertools
+
+    from neuronauts.dataset_builder import BoxCache
+    from neuronauts.cell_graph import (
+        CellGNN,
+        CellGNNConfig,
+        train_cell_gnn,
+        save_cell_gnn,
+        infer_cells,
+        build_synapse_graph,
+        connectivity_graph_from_cell_labels,
+        select_cell_gnn_training_boxes,
+    )
+    from neuronauts.line_graph import evaluate as lg_evaluate
+
+    cache = BoxCache(args.cache_dir)
+    records = cache.all_records()
+    if not records:
+        print(f"No cached boxes in {args.cache_dir}")
+        return 1
+
+    # Parse sweep ranges
+    d_models = [int(x) for x in args.d_models.split(",")]
+    n_layers_list = [int(x) for x in args.n_layers_list.split(",")]
+    proximity_radii = [float(x) for x in args.proximity_radii.split(",")]
+    partition_thresholds = [float(x) for x in args.partition_thresholds.split(",")]
+
+    combos = list(itertools.product(d_models, n_layers_list, proximity_radii, partition_thresholds))
+    print(f"Sweep: {len(combos)} configurations to evaluate")
+
+    # Spatial split
+    splits = select_cell_gnn_training_boxes(
+        cache,
+        min_synapses=args.min_synapses,
+        min_positive_pairs=args.min_positive_pairs,
+        val_fraction=args.val_fraction,
+        test_fraction=args.test_fraction,
+        seed=args.seed,
+    )
+    n_train = len(splits["train"])
+    n_val = len(splits["val"])
+    print(f"Split: train={n_train}  val={n_val}  test={len(splits['test'])}")
+    if n_train == 0 or n_val == 0:
+        print("Need at least 1 train and 1 val box.")
+        return 1
+
+    train_cache = BoxCache(args.cache_dir)
+    train_cache._index = [
+        entry for entry in train_cache._index
+        if entry["box_hash"] in {r.box_hash for r in splits["train"]}
+    ]
+    val_cache = BoxCache(args.cache_dir)
+    val_cache._index = [
+        entry for entry in val_cache._index
+        if entry["box_hash"] in {r.box_hash for r in splits["val"]}
+    ]
+
+    results = []
+    best_f1 = -1.0
+    best_config = None
+
+    for i, (d_model, n_layers, prox_r, part_t) in enumerate(combos):
+        print(f"\n--- Config {i+1}/{len(combos)}: d_model={d_model} n_layers={n_layers} "
+              f"proximity_radius={prox_r} partition_threshold={part_t} ---")
+
+        cfg = CellGNNConfig(
+            d_model=d_model,
+            n_layers=n_layers,
+            epochs=args.epochs,
+            learning_rate=args.lr,
+            proximity_radius_nm=prox_r,
+            partition_threshold=part_t,
+            seed=args.seed,
+        )
+        model = CellGNN(d_model=d_model, n_layers=n_layers)
+
+        t0 = time.time()
+        history = train_cell_gnn(
+            model, train_cache,
+            config=cfg,
+            val_cache=val_cache,
+            verbose=False,
+        )
+        elapsed = time.time() - t0
+
+        # Evaluate on val set
+        val_f1s = []
+        for rec in splits["val"]:
+            try:
+                _, synapses = cache.load(rec)
+            except Exception:
+                continue
+            pre_graph = build_synapse_graph(synapses, "pre", proximity_radius_nm=prox_r)
+            post_graph = build_synapse_graph(synapses, "post", proximity_radius_nm=prox_r)
+            pre_labels = infer_cells(model, pre_graph, threshold=part_t)
+            post_labels = infer_cells(model, post_graph, threshold=part_t)
+            cg = connectivity_graph_from_cell_labels(pre_labels, post_labels, synapses)
+            m = lg_evaluate(cg, synapses.pre_root_id, synapses.post_root_id)
+            val_f1s.append(m.f1)
+
+        mean_f1 = float(np.mean(val_f1s)) if val_f1s else 0.0
+        final_loss = history["train_loss"][-1] if history["train_loss"] else float("nan")
+
+        entry = {
+            "d_model": d_model,
+            "n_layers": n_layers,
+            "proximity_radius_nm": prox_r,
+            "partition_threshold": part_t,
+            "val_f1_mean": mean_f1,
+            "final_train_loss": final_loss,
+            "elapsed_s": elapsed,
+        }
+        results.append(entry)
+
+        print(f"  val_f1={mean_f1:.4f}  train_loss={final_loss:.4f}  {elapsed:.1f}s")
+
+        if mean_f1 > best_f1:
+            best_f1 = mean_f1
+            best_config = entry
+            # Save best model
+            best_path = Path(args.best_output)
+            best_path.parent.mkdir(parents=True, exist_ok=True)
+            save_cell_gnn(str(best_path), model)
+
+    # Summary
+    print(f"\n{'='*60}")
+    print("Sweep results (sorted by val_f1):")
+    results.sort(key=lambda x: x["val_f1_mean"], reverse=True)
+    for r in results:
+        print(
+            f"  d={r['d_model']} L={r['n_layers']} rad={r['proximity_radius_nm']} "
+            f"thr={r['partition_threshold']}  → F1={r['val_f1_mean']:.4f}  "
+            f"loss={r['final_train_loss']:.4f}"
+        )
+
+    if best_config:
+        print(f"\nBest: d={best_config['d_model']} L={best_config['n_layers']} "
+              f"rad={best_config['proximity_radius_nm']} "
+              f"thr={best_config['partition_threshold']} "
+              f"→ F1={best_config['val_f1_mean']:.4f}")
+        print(f"Best model saved to {args.best_output}")
+
+    # Save results JSON
+    log_dir = Path(args.log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    sweep_path = log_dir / "sweep_results.json"
+    with sweep_path.open("w") as f:
+        json.dump({"sweep": results, "best": best_config}, f, indent=2)
+    print(f"Sweep results saved to {sweep_path}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: scale-test (memory/runtime on larger boxes)
+# ---------------------------------------------------------------------------
+
+def cmd_scale_test(args: argparse.Namespace) -> int:
+    """Test CellGNN graph construction and inference at different scales."""
+    torch = _require_torch()
+    import tracemalloc
+
+    from neuronauts.dataset_builder import BoxCache
+    from neuronauts.cell_graph import (
+        CellGNN,
+        build_synapse_graph,
+        connectivity_graph_from_cell_labels,
+        infer_cells,
+        load_cell_gnn,
+    )
+
+    cache = BoxCache(args.cache_dir)
+    records = cache.all_records()
+    if not records:
+        print(f"No cached boxes in {args.cache_dir}")
+        return 1
+
+    # Filter and sort by synapse count
+    eligible = [r for r in records if r.n_synapses >= args.min_synapses]
+    eligible.sort(key=lambda r: r.n_synapses)
+    if not eligible:
+        print(f"No boxes with ≥{args.min_synapses} synapses")
+        return 1
+
+    # Select boxes at different scales
+    n_select = min(args.n_boxes, len(eligible))
+    if n_select < len(eligible):
+        indices = np.linspace(0, len(eligible) - 1, n_select, dtype=int)
+        selected = [eligible[i] for i in indices]
+    else:
+        selected = eligible
+
+    # Load model if checkpoint provided
+    model = None
+    if args.cell_gnn_checkpoint and Path(args.cell_gnn_checkpoint).exists():
+        model = load_cell_gnn(args.cell_gnn_checkpoint)
+        model.eval()
+        print(f"Loaded CellGNN from {args.cell_gnn_checkpoint}")
+    else:
+        model = CellGNN(d_model=64, n_layers=3)
+        model.eval()
+        print("Using untrained CellGNN (no checkpoint)")
+
+    print(f"\nScale test: {len(selected)} boxes, {selected[0].n_synapses}–{selected[-1].n_synapses} synapses")
+    print(f"{'n_syn':>8} {'n_edges_pre':>12} {'n_edges_post':>13} "
+          f"{'graph_ms':>10} {'infer_ms':>10} {'peak_MB':>10} {'n_pre_cells':>12} {'n_post_cells':>13}")
+
+    results = []
+    for rec in selected:
+        try:
+            _, synapses = cache.load(rec)
+        except Exception as exc:
+            print(f"  [W] failed to load {rec.box_hash}: {exc}")
+            continue
+
+        n_syn = len(synapses.pre_pt)
+        tracemalloc.start()
+
+        # Graph construction
+        t0 = time.time()
+        pre_graph = build_synapse_graph(
+            synapses, "pre",
+            proximity_radius_nm=args.proximity_radius_nm,
+        )
+        post_graph = build_synapse_graph(
+            synapses, "post",
+            proximity_radius_nm=args.proximity_radius_nm,
+        )
+        graph_ms = (time.time() - t0) * 1000
+
+        # Inference
+        t0 = time.time()
+        pre_labels = infer_cells(model, pre_graph, threshold=args.partition_threshold)
+        post_labels = infer_cells(model, post_graph, threshold=args.partition_threshold)
+        infer_ms = (time.time() - t0) * 1000
+
+        _, peak_bytes = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        peak_mb = peak_bytes / (1024 * 1024)
+
+        n_pre_cells = len(set(pre_labels.tolist()))
+        n_post_cells = len(set(post_labels.tolist()))
+
+        entry = {
+            "box_hash": rec.box_hash[:8],
+            "n_synapses": n_syn,
+            "n_edges_pre": len(pre_graph.edges),
+            "n_edges_post": len(post_graph.edges),
+            "graph_ms": graph_ms,
+            "infer_ms": infer_ms,
+            "peak_mb": peak_mb,
+            "n_pre_cells": n_pre_cells,
+            "n_post_cells": n_post_cells,
+        }
+        results.append(entry)
+
+        print(
+            f"{n_syn:>8} {len(pre_graph.edges):>12} {len(post_graph.edges):>13} "
+            f"{graph_ms:>10.1f} {infer_ms:>10.1f} {peak_mb:>10.1f} "
+            f"{n_pre_cells:>12} {n_post_cells:>13}"
+        )
+
+    # Summary
+    if results:
+        print(f"\n{'='*60}")
+        syns = [r["n_synapses"] for r in results]
+        graph_times = [r["graph_ms"] for r in results]
+        infer_times = [r["infer_ms"] for r in results]
+        peaks = [r["peak_mb"] for r in results]
+        print(f"Synapse range: {min(syns)}–{max(syns)}")
+        print(f"Graph construction: {min(graph_times):.0f}–{max(graph_times):.0f} ms")
+        print(f"Inference: {min(infer_times):.0f}–{max(infer_times):.0f} ms")
+        print(f"Peak memory: {min(peaks):.1f}–{max(peaks):.1f} MB")
+
+    # Save
+    log_dir = Path(args.log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    scale_path = log_dir / "scale_test_results.json"
+    with scale_path.open("w") as f:
+        json.dump(results, f, indent=2)
+    print(f"\nResults saved to {scale_path}")
     return 0
 
 
@@ -1717,7 +2232,71 @@ def parse_args(argv=None) -> argparse.Namespace:
     p_cell.add_argument("--resume", action="store_true",
                         help="Resume from existing checkpoint if present.")
     p_cell.add_argument("--log-dir", default="run_logs")
+    p_cell.add_argument("--edit-pairs-tsv", default=None,
+                        help="TSV of edit-history pairs (from neuronauts.edit_history build-pairs).")
+    p_cell.add_argument("--edit-weight", type=float, default=2.0,
+                        help="Loss multiplier for edit-derived contrastive pairs.")
     p_cell.set_defaults(func=cmd_train_cell_gnn)
+
+    # evaluate
+    p_eval = sub.add_parser(
+        "evaluate",
+        help="Evaluate CellGNN checkpoint and compare against beam-search baseline.",
+    )
+    _add_common_args(p_eval)
+    p_eval.add_argument("--cell-gnn-checkpoint", required=True,
+                        help="Path to trained CellGNN checkpoint.")
+    p_eval.add_argument("--grammar-checkpoint", default=None,
+                        help="Grammar model checkpoint for beam-search baseline comparison.")
+    p_eval.add_argument("--proximity-radius-nm", type=float, default=5000.0)
+    p_eval.add_argument("--partition-threshold", type=float, default=0.5)
+    p_eval.add_argument("--min-positive-pairs", type=int, default=2)
+    p_eval.add_argument("--val-fraction", type=float, default=0.15)
+    p_eval.add_argument("--test-fraction", type=float, default=0.15)
+    p_eval.add_argument("--split", default="test", choices=["val", "test"],
+                        help="Which split to evaluate on (default: test).")
+    p_eval.add_argument("--log-dir", default="run_logs")
+    p_eval.set_defaults(func=cmd_evaluate)
+
+    # sweep
+    p_sweep = sub.add_parser(
+        "sweep",
+        help="Hyperparameter sweep for CellGNN using spatial train/val split.",
+    )
+    _add_common_args(p_sweep)
+    p_sweep.add_argument("--d-models", default="32,64,128",
+                         help="Comma-separated d_model values to sweep.")
+    p_sweep.add_argument("--n-layers-list", default="2,3,4",
+                         help="Comma-separated n_layers values to sweep.")
+    p_sweep.add_argument("--proximity-radii", default="3000,5000,8000",
+                         help="Comma-separated proximity_radius_nm values.")
+    p_sweep.add_argument("--partition-thresholds", default="0.3,0.5,0.7",
+                         help="Comma-separated partition_threshold values.")
+    p_sweep.add_argument("--epochs", type=int, default=20,
+                         help="Epochs per configuration (shorter for sweep).")
+    p_sweep.add_argument("--lr", type=float, default=1e-3)
+    p_sweep.add_argument("--min-positive-pairs", type=int, default=2)
+    p_sweep.add_argument("--val-fraction", type=float, default=0.15)
+    p_sweep.add_argument("--test-fraction", type=float, default=0.15)
+    p_sweep.add_argument("--best-output", default="models/cell_gnn_best_sweep.pt",
+                         help="Path to save the best model from the sweep.")
+    p_sweep.add_argument("--log-dir", default="run_logs")
+    p_sweep.set_defaults(func=cmd_sweep)
+
+    # scale-test
+    p_scale = sub.add_parser(
+        "scale-test",
+        help="Test CellGNN graph construction and inference at different box scales.",
+    )
+    _add_common_args(p_scale)
+    p_scale.add_argument("--cell-gnn-checkpoint", default=None,
+                         help="Optional CellGNN checkpoint (uses untrained if absent).")
+    p_scale.add_argument("--proximity-radius-nm", type=float, default=5000.0)
+    p_scale.add_argument("--partition-threshold", type=float, default=0.5)
+    p_scale.add_argument("--n-boxes", type=int, default=10,
+                         help="Number of boxes to test across the scale range.")
+    p_scale.add_argument("--log-dir", default="run_logs")
+    p_scale.set_defaults(func=cmd_scale_test)
 
     return root.parse_args(argv)
 

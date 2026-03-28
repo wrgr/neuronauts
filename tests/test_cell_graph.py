@@ -712,3 +712,152 @@ class TestEditHistory:
         assert neg == [(2, 3)]
         # Post pairs should be excluded for role="pre"
         assert (4, 5) not in pos
+
+
+# ---------------------------------------------------------------------------
+# End-to-end training validation
+# ---------------------------------------------------------------------------
+
+class TestEndToEndTraining:
+    """Validate that the CellGNN training pipeline runs end-to-end,
+    loss converges, and checkpoints can be saved/loaded."""
+
+    def test_training_loss_converges(self):
+        """Train CellGNN for several epochs and verify loss decreases."""
+        from neuronauts.cell_graph import train_cell_gnn
+        syn = _make_synapses(n_cells=4, synapses_per_cell=6, seed=42)
+        model = CellGNN(d_model=32, n_layers=2, n_heads=2, embedding_dim=16)
+
+        # Use a mock cache that yields a single box
+        class _MockCache:
+            def iter_records(self, shuffle=False, rng=None):
+                return [_MockRecord()]
+            def load(self, record):
+                return None, syn
+
+        class _MockRecord:
+            n_positive_pairs = 10
+            n_synapses = 24
+            box_hash = "test0000"
+
+        cfg = CellGNNConfig(
+            d_model=32, n_layers=2, n_heads=2, embedding_dim=16,
+            epochs=15, learning_rate=1e-3, proximity_radius_nm=100000.0,
+            seed=42,
+        )
+        history = train_cell_gnn(model, _MockCache(), config=cfg, verbose=False)
+
+        assert len(history["train_loss"]) == 15
+        # Loss should decrease: early avg > late avg
+        early = np.mean(history["train_loss"][:3])
+        late = np.mean(history["train_loss"][-3:])
+        assert late < early, f"Loss did not converge: early={early:.4f} late={late:.4f}"
+
+    def test_checkpoint_save_load_roundtrip(self, tmp_path):
+        """Save and reload a CellGNN checkpoint; verify inference matches."""
+        syn = _make_synapses(n_cells=3, synapses_per_cell=4, seed=7)
+        model = CellGNN(d_model=32, n_layers=2, embedding_dim=16)
+        model.eval()
+
+        graph = build_synapse_graph(syn, "pre", proximity_radius_nm=100000.0)
+        labels_before = infer_cells(model, graph, threshold=0.5)
+
+        ckpt_path = str(tmp_path / "cell_gnn_test.pt")
+        save_cell_gnn(ckpt_path, model)
+        loaded = load_cell_gnn(ckpt_path)
+        labels_after = infer_cells(loaded, graph, threshold=0.5)
+
+        np.testing.assert_array_equal(labels_before, labels_after)
+
+    def test_training_with_edit_pairs(self):
+        """Verify edit-history pairs are accepted and don't crash training."""
+        from neuronauts.edit_history import EditPair
+        from neuronauts.cell_graph import train_cell_gnn
+
+        syn = _make_synapses(n_cells=3, synapses_per_cell=5, seed=11)
+        model = CellGNN(d_model=32, n_layers=2, embedding_dim=16)
+
+        edit_pairs = [
+            EditPair(0, 5, label=1, role="pre", source_root_a=1, source_root_b=2, edit_type="merge"),
+            EditPair(1, 10, label=0, role="pre", source_root_a=1, source_root_b=3, edit_type="split"),
+            EditPair(2, 8, label=1, role="post", source_root_a=1, source_root_b=2, edit_type="merge"),
+        ]
+
+        class _MockCache:
+            def iter_records(self, shuffle=False, rng=None):
+                return [_MockRecord()]
+            def load(self, record):
+                return None, syn
+
+        class _MockRecord:
+            n_positive_pairs = 5
+            n_synapses = 15
+            box_hash = "edit0000"
+
+        cfg = CellGNNConfig(
+            d_model=32, n_layers=2, epochs=3, proximity_radius_nm=100000.0, seed=42,
+        )
+        history = train_cell_gnn(
+            model, _MockCache(), config=cfg,
+            edit_pairs=edit_pairs, edit_weight=2.0,
+            verbose=False,
+        )
+        assert len(history["train_loss"]) == 3
+        assert all(l >= 0 for l in history["train_loss"])
+
+    def test_cell_graph_train_step_with_edit_pairs(self):
+        """cell_graph_train_step accepts edit pair arguments."""
+        syn = _make_synapses(n_cells=3, synapses_per_cell=4)
+        graph = build_synapse_graph(syn, "pre", proximity_radius_nm=100000.0)
+        model = CellGNN(d_model=32, n_layers=2, embedding_dim=16)
+        opt = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+        m = cell_graph_train_step(
+            model, opt, graph,
+            edit_positive_pairs=[(0, 4), (1, 5)],
+            edit_negative_pairs=[(0, 8)],
+            edit_weight=3.0,
+        )
+        assert m["n_pos"] >= 2  # at least the injected pairs
+        assert m["n_neg"] >= 1
+
+    def test_evaluate_subcommand_args_parse(self):
+        """Verify the evaluate subcommand parses without error."""
+        import sys
+        sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
+        from scripts.train import parse_args
+        args = parse_args([
+            "evaluate",
+            "--cache-dir", "data/boxes",
+            "--cell-gnn-checkpoint", "models/cell_gnn.pt",
+        ])
+        assert args.command == "evaluate"
+        assert args.cell_gnn_checkpoint == "models/cell_gnn.pt"
+        assert args.split == "test"
+
+    def test_sweep_subcommand_args_parse(self):
+        """Verify the sweep subcommand parses without error."""
+        import sys
+        sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
+        from scripts.train import parse_args
+        args = parse_args([
+            "sweep",
+            "--cache-dir", "data/boxes",
+            "--d-models", "32,64",
+            "--n-layers-list", "2,3",
+        ])
+        assert args.command == "sweep"
+        assert args.d_models == "32,64"
+
+    def test_scale_test_subcommand_args_parse(self):
+        """Verify the scale-test subcommand parses without error."""
+        import sys
+        sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
+        from scripts.train import parse_args
+        args = parse_args([
+            "scale-test",
+            "--cache-dir", "data/boxes",
+            "--min-synapses", "50",
+        ])
+        assert args.command == "scale-test"
+        assert args.min_synapses == 50
