@@ -55,10 +55,10 @@ def compute_membrane_vectors(
     gy = sobel(smooth, axis=1)
     gz = sobel(smooth, axis=2)
 
+    from .helpers import safe_normalize
+
     vectors = np.stack([-gx, -gy, -gz], axis=-1)
-    mag = np.linalg.norm(vectors, axis=-1, keepdims=True)
-    mag = np.where(mag < 1e-8, 1.0, mag)
-    return (vectors / mag).astype(np.float32)
+    return safe_normalize(vectors, axis=-1).astype(np.float32)
 
 
 def compute_synapse_attraction_field(

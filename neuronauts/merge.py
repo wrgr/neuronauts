@@ -44,6 +44,7 @@ except ImportError:
             return float(dist[idx]), idx
 
 from .agent import Agent
+from .helpers import UnionFind
 
 
 @dataclass
@@ -73,18 +74,7 @@ def merge_agents(
         return {}
 
     n = len(valid)
-    parent = list(range(n))
-
-    def find(x: int) -> int:
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    def union(x: int, y: int) -> None:
-        px, py = find(x), find(y)
-        if px != py:
-            parent[px] = py
+    uf = UnionFind(n)
 
     all_points = []
     point_to_agent = []
@@ -102,14 +92,10 @@ def merge_agents(
             for nb_idx in pt_neighbors:
                 j = point_to_agent_arr[nb_idx]
                 if j != i:
-                    union(i, j)
-
-    groups: Dict[int, List[int]] = {}
-    for i in range(n):
-        groups.setdefault(find(i), []).append(i)
+                    uf.union(i, j)
 
     neurons = {}
-    for neuron_id, agent_indices in enumerate(groups.values()):
+    for neuron_id, agent_indices in enumerate(uf.groups()):
         member_agents = [valid[i] for i in agent_indices]
         all_pts = np.vstack([np.array(a.path) for a in member_agents])
         all_synapses = []

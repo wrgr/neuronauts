@@ -16,6 +16,7 @@ except ImportError:
         return np.linalg.norm(diff, axis=-1).astype(np.float32, copy=False)
 
 from .agent import AgentConfig
+from .helpers import safe_normalize
 
 
 def run_agents_vectorized(
@@ -72,11 +73,10 @@ def run_agents_vectorized(
         scale = np.minimum(mem_val / (config.membrane_threshold + 1e-6), 1.0)
         repulsion = mem_vec * scale[:, None]
 
-        vel_norm = vel / (np.linalg.norm(vel, axis=1, keepdims=True) + 1e-8)
+        vel_norm = safe_normalize(vel, axis=1)
         dot = np.einsum("ij,ij->i", vel_norm, mem_vec)[:, None]
         wall_follow = vel_norm - dot * mem_vec
-        wf_mag = np.linalg.norm(wall_follow, axis=1, keepdims=True)
-        wall_follow = wall_follow / (wf_mag + 1e-8)
+        wall_follow = safe_normalize(wall_follow, axis=1)
 
         pix = np.clip(pi, 1, shape_int - 2)
         exp_grad = np.stack(
@@ -90,22 +90,22 @@ def run_agents_vectorized(
             ],
             axis=1,
         ).astype(np.float32) * 0.5
-        exp_mag = np.linalg.norm(exp_grad, axis=1, keepdims=True)
-        exp_dir = exp_grad / (exp_mag + 1e-8)
+        exp_dir = safe_normalize(exp_grad, axis=1)
 
         if S > 0:
             dists = cdist(pos, synapse_pts)
             nearest = np.argmin(dists, axis=1)
             nd = dists[np.arange(len(pos)), nearest]
-            syn_dir = (synapse_pts[nearest] - pos) / (nd[:, None] + 1e-8)
+            syn_dir = safe_normalize(synapse_pts[nearest] - pos, axis=1)
             syn_weight = np.clip(config.synapse_capture_radius / (nd + 1e-8), 0, 1)[:, None]
         else:
             dists = None
             syn_dir = np.zeros((len(pos), 3), dtype=np.float32)
             syn_weight = np.zeros((len(pos), 1), dtype=np.float32)
 
-        noise = rng.standard_normal((len(pos), 3)).astype(np.float32)
-        noise /= np.linalg.norm(noise, axis=1, keepdims=True) + 1e-8
+        noise = safe_normalize(
+            rng.standard_normal((len(pos), 3)).astype(np.float32), axis=1,
+        )
 
         delta_v = (
             config.w_membrane_repulsion * repulsion

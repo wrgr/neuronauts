@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from neuronauts.fetch import SynapseTable, make_test_volume, SyntheticBenchmarkConfig
+from neuronauts.helpers import UnionFind
 from neuronauts.run import _scaffold_union_from_seg_ids
 
 
@@ -60,26 +61,18 @@ class SynapseTableSchemaTest(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class ScaffoldUnionTest(unittest.TestCase):
-    def _parent_and_find(self, agents):
-        parent = {a: a for a in agents}
-
-        def find(x):
-            while parent[x] != x:
-                parent[x] = parent[parent[x]]
-                x = parent[x]
-            return x
-
-        return parent, find
+    def _make_uf(self, agents):
+        return UnionFind.from_keys(agents)
 
     def test_noop_when_seg_ids_none(self):
         agents = np.array([0, 1, 2], dtype=np.int32)
         role_hits = np.array([[True, False], [False, True], [True, True]], dtype=bool)
-        parent, find = self._parent_and_find([0, 1, 2])
-        _scaffold_union_from_seg_ids(agents, role_hits, None, parent)
+        uf = self._make_uf([0, 1, 2])
+        _scaffold_union_from_seg_ids(agents, role_hits, None, uf)
         # Parent unchanged — all still self-rooted.
-        self.assertEqual(find(0), 0)
-        self.assertEqual(find(1), 1)
-        self.assertEqual(find(2), 2)
+        self.assertEqual(uf.find(0), 0)
+        self.assertEqual(uf.find(1), 1)
+        self.assertEqual(uf.find(2), 2)
 
     def test_same_seg_id_agents_are_unioned(self):
         # Agents 0 and 1 both hit synapse 0, which has seg_id=99.
@@ -87,49 +80,49 @@ class ScaffoldUnionTest(unittest.TestCase):
         agents = np.array([0, 1, 2], dtype=np.int32)
         role_hits = np.array([[True, False], [True, False], [False, True]], dtype=bool)
         seg_ids = np.array([99, 77], dtype=np.int64)  # per synapse
-        parent, find = self._parent_and_find([0, 1, 2])
-        _scaffold_union_from_seg_ids(agents, role_hits, seg_ids, parent)
+        uf = self._make_uf([0, 1, 2])
+        _scaffold_union_from_seg_ids(agents, role_hits, seg_ids, uf)
         # Agents 0 and 1 should be in the same group.
-        self.assertEqual(find(0), find(1))
+        self.assertEqual(uf.find(0), uf.find(1))
         # Agent 2 should be separate.
-        self.assertNotEqual(find(2), find(0))
+        self.assertNotEqual(uf.find(2), uf.find(0))
 
     def test_multi_seg_agent_skipped(self):
         # Agent 0 hits synapses with TWO different seg_ids → not merged.
         agents = np.array([0, 1], dtype=np.int32)
         role_hits = np.array([[True, True], [True, False]], dtype=bool)
         seg_ids = np.array([10, 20], dtype=np.int64)
-        parent, find = self._parent_and_find([0, 1])
-        _scaffold_union_from_seg_ids(agents, role_hits, seg_ids, parent)
+        uf = self._make_uf([0, 1])
+        _scaffold_union_from_seg_ids(agents, role_hits, seg_ids, uf)
         # Agent 0 spans two segs → skipped; agent 1 only has seg 10.
         # They should NOT be merged because agent 0 was skipped.
-        self.assertNotEqual(find(0), find(1))
+        self.assertNotEqual(uf.find(0), uf.find(1))
 
     def test_zero_seg_id_is_ignored(self):
         # Seg_id == 0 is treated as "unknown", should not trigger merging.
         agents = np.array([0, 1], dtype=np.int32)
         role_hits = np.array([[True, False], [False, True]], dtype=bool)
         seg_ids = np.array([0, 0], dtype=np.int64)
-        parent, find = self._parent_and_find([0, 1])
-        _scaffold_union_from_seg_ids(agents, role_hits, seg_ids, parent)
-        self.assertNotEqual(find(0), find(1))
+        uf = self._make_uf([0, 1])
+        _scaffold_union_from_seg_ids(agents, role_hits, seg_ids, uf)
+        self.assertNotEqual(uf.find(0), uf.find(1))
 
     def test_three_agents_same_seg_id_all_merged(self):
         agents = np.array([0, 1, 2], dtype=np.int32)
         role_hits = np.array([[True, False], [True, False], [True, False]], dtype=bool)
         seg_ids = np.array([42, 99], dtype=np.int64)
-        parent, find = self._parent_and_find([0, 1, 2])
-        _scaffold_union_from_seg_ids(agents, role_hits, seg_ids, parent)
-        self.assertEqual(find(0), find(1))
-        self.assertEqual(find(1), find(2))
+        uf = self._make_uf([0, 1, 2])
+        _scaffold_union_from_seg_ids(agents, role_hits, seg_ids, uf)
+        self.assertEqual(uf.find(0), uf.find(1))
+        self.assertEqual(uf.find(1), uf.find(2))
 
     def test_no_hits_agent_skipped(self):
         agents = np.array([0, 1], dtype=np.int32)
         role_hits = np.array([[False, False], [True, False]], dtype=bool)
         seg_ids = np.array([5, 6], dtype=np.int64)
-        parent, find = self._parent_and_find([0, 1])
-        _scaffold_union_from_seg_ids(agents, role_hits, seg_ids, parent)
-        self.assertNotEqual(find(0), find(1))
+        uf = self._make_uf([0, 1])
+        _scaffold_union_from_seg_ids(agents, role_hits, seg_ids, uf)
+        self.assertNotEqual(uf.find(0), uf.find(1))
 
 
 # ---------------------------------------------------------------------------
