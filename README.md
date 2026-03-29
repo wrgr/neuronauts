@@ -4,39 +4,53 @@
 
 ## Architecture overview
 
-The system is organized into five learned layers plus a global topological merge:
-
 ```
-EM volume + CAVE synapses
-        │
-        ▼
-1. Perception          fetch.py · fields.py · vectorized.py · membrane_unet.py
-   Agent traces, 2.5D membrane U-Net, synapse hits
-
-        ▼
-2. Scaffold init       run.py (_scaffold_union_from_seg_ids)
-   CAVE seg-IDs pre-group agents → collapse search space 10×
-
-        ▼
-3. Shared Grammar      grammar.py · shared_grammar_model.py
-   Transformer PathEncoder ([CLS] token, multi-modal fusion)
-   MergeScorer · BridgeHead · multitask training (merge + atomicity + bridge)
-
-        ▼
-4. Global Assembly     assembly.py · shared_grammar_model.py
-   SparseGATLayer · GlobalAssemblyGAT
-   Score edges with soft-F1 surrogate → trained end-to-end on line-graph F1
-
-        ▼
-5. Topological Merge   cell_graph.py · edit_history.py
-   CellGNN: reachability-based GNN embeds synapses via K message-passing rounds
-   Cluster embeddings → full cell assignments
-   Edit-history pairs from proofreader merges/splits for hard-example training
-
-        ▼
-6. Evaluation          line_graph.py
-   Synapse line-graph F1  (primary scalar throughout)
+                        CAVE synapses + (optional EM volume)
+                                    │
+              ┌─────────────────────┼─────────────────────┐
+              ▼                     ▼                     ▼
+     1. Agent Perception    2. Skeleton Graph     3. CellGNN (direct)
+        fields.py              skeleton_graph.py     cell_graph.py
+        vectorized.py          --graph-source        topology_model.py
+        Sobel membrane           skeleton
+        + agent traces                                Reachability GNN
+                                                      embeds synapses,
+              │                     │                 clusters into cells
+              └──────────┬──────────┘                     │
+                         ▼                                │
+              4. Scaffold Init                            │
+                 run.py                                   │
+                 CAVE seg-IDs pre-group                   │
+                 → 10× search reduction                   │
+                         │                                │
+                         ▼                                │
+              5. Shared Grammar                           │
+                 grammar.py                               │
+                 shared_grammar_model.py                  │
+                 Transformer [CLS] encoder                │
+                 Merge + atomicity + bridge                │
+                         │                                │
+                         ▼                                │
+              6. Global Assembly                          │
+                 assembly.py                              │
+                 Beam search with calibrated              │
+                 probabilities + GAT refinement            │
+                         │                                │
+                         └──────────┬─────────────────────┘
+                                    ▼
+                            7. Evaluation
+                               line_graph.py
+                               Synapse line-graph F1
 ```
+
+**Two independent training paths converge at evaluation:**
+
+| Path | Entry point | What it trains | Needs EM? | Needs simulation? |
+|---|---|---|---|---|
+| **Grammar** | `train.py train` | Merge scorer, atomicity head, bridge predictor | No (fast path) | No (fast path) |
+| **CellGNN** | `train.py train-cell-gnn` | Synapse-level GNN for full cell reconstruction | No | No |
+
+Both paths are evaluated against line-graph F1 on held-out boxes.
 
 ## Current pipeline status
 
@@ -48,29 +62,32 @@ As of 2026-03-29, the v2 architecture is **fully implemented and tested**.
 |---|---|---|
 | Transformer path encoding | `grammar.py` | Multi-modal fusion with [CLS] token |
 | Merge scoring + bridge head | `shared_grammar_model.py` | Multitask training (merge + atomicity + bridge) |
-| Scaffold-aware init | `run.py` | CAVE seg-ID grouping, ~10× search reduction |
+| Calibrated probability scoring | `assembly.py` | Temperature-scaled sigmoid, log-probability beam search |
+| Scaffold-aware init | `run.py` | CAVE seg-ID grouping, ~10x search reduction |
 | Global assembly GAT | `assembly.py`, `shared_grammar_model.py` | Sparse attention, soft-F1 surrogate loss |
 | CellGNN topological merge | `cell_graph.py` | 40+ tests, tangledness-aware sampling, spatial splits |
+| Topology cell quality | `topology_model.py` | AttentionArborValidator scores inferred cell coherence |
+| Skeleton-based graphs | `skeleton_graph.py` | Alternative to agent sim, CAVE skeleton connectivity |
 | Edit-history supervision | `edit_history.py` | Contrastive pairs from proofreader merges/splits |
-| 2.5D membrane U-Net | `membrane_unet.py` | InstanceNorm2d, context slices |
 | CAVE data pipeline | `dataset_builder.py`, `fetch.py` | Synapse-seeded boxes, retry with backoff, no-EM mode |
-| Training CLI | `scripts/train.py` | 8 subcommands: build-dataset, train, train-cell-gnn, evaluate, sweep, scale-test, remap-roots, run |
+| Training CLI | `scripts/train.py` | 8 subcommands (see below) |
 | Pipeline inspector | `scripts/inspect_pipeline.py` | 6-stage Neuroglancer visualization |
 | Line-graph F1 evaluation | `line_graph.py` | Primary + sampled-pair variants |
 
 ### Test coverage
 
-- **42 test files**, covering all major modules
-- Critical integration tests for `cmd_train_cell_gnn`, `cmd_evaluate`, `cmd_sweep`, `cmd_scale_test`
+- **36 test files**, 600+ tests covering all major modules
+- Integration tests for all CLI subcommands (`train-cell-gnn`, `evaluate`, `sweep`, `scale-test`)
 - Edge case coverage: degenerate inputs, threshold boundaries, out-of-range indices
 - Mocked CAVE integration tests (no network required)
+- Probability conversion roundtrips and log-probability beam search
 
 ### What's next
 
 1. **Real data training** — Run `fetch_cave_boxes.py` on a machine with CAVE access, then train CellGNN on 50-80 real MICrONS boxes
 2. **Head-to-head evaluation** — Compare CellGNN vs grammar baseline on test split
 3. **Hyperparameter sweep** — Grid search over `d_model`, `n_layers`, `proximity_radius`, `partition_threshold`
-4. **Cell-level plausibility** (Phase 1 of topological merge roadmap) — Re-partition low-atomicity cells
+4. **Cell-level plausibility** (Phase 1 of topological merge roadmap) — Re-partition low-atomicity cells using topology validator scores
 
 See `docs/TODO.md` for the full prioritized backlog and `docs/global_topological_merge_plan.md` for the 4-phase roadmap.
 
@@ -87,13 +104,6 @@ Run one synthetic benchmark:
 
 ```bash
 python -m neuronauts.run
-```
-
-Run with a trained grammar checkpoint:
-
-```bash
-python -m neuronauts.run \
-  --shared-grammar-checkpoint models/shared_grammar_smoke.pt
 ```
 
 ## Training on real MICrONS data
@@ -185,12 +195,13 @@ python scripts/train.py train-cell-gnn \
   --edit-weight 2.0
 ```
 
-### 5. Evaluate CellGNN vs baseline
+### 5. Evaluate CellGNN (with optional topology quality scoring)
 
 ```bash
 python scripts/train.py evaluate \
   --cache-dir data/boxes \
   --cell-gnn-checkpoint models/cell_gnn.pt \
+  --topology-checkpoint models/topology_validator.pt \
   --split test \
   --log-dir run_logs/eval
 ```
@@ -253,6 +264,17 @@ python scripts/train.py train \
   --epochs 30
 ```
 
+### Skeleton-based training (no agent simulation)
+
+```bash
+python scripts/train.py train \
+  --cache-dir data/boxes \
+  --grammar-output models/shared_grammar.pt \
+  --graph-source skeleton \
+  --skeleton-version 1412 \
+  --epochs 30
+```
+
 ### Static data (offline synapse counts)
 
 ```bash
@@ -260,28 +282,6 @@ python -m neuronauts.synapse_root_counts_static \
   --version 1078 \
   --static-dir data/microns_static \
   --output run_logs/synapse_root_counts_static.tsv
-```
-
-## Install extras
-
-```bash
-pip install -e ".[membrane]"   # 2.5D membrane U-Net (InstanceNorm2d)
-pip install -e ".[topology]"   # torch grammar + GAT training
-```
-
-## Membrane U-Net (2.5D)
-
-The current U-Net fuses a central Z-slice with +/-2 neighbouring slices as extra input channels, providing 3D context at 2D inference cost.
-
-```bash
-python scripts/train_membrane_unet.py \
-  --dataset-dir /path/to/unet_data \
-  --output models/membrane_unet.pt
-
-python scripts/cache_membrane_volume.py \
-  --checkpoint models/membrane_unet.pt \
-  --center-nm 1153592,793592,655640 \
-  --cache-dir cache/membranes
 ```
 
 ## Shared grammar training (offline datasets)
@@ -301,18 +301,14 @@ python scripts/train_shared_grammar.py \
   --output models/shared_grammar.pt
 ```
 
-## Assembly hypothesis reranker
+## Topology validator training
+
+Train the AttentionArborValidator for cell quality scoring:
 
 ```bash
-python scripts/export_assembly_ranking_dataset.py \
-  --output data/assembly_ranking.npz \
-  --cases 3 \
-  --thresholds=-0.5,0.0,0.5 \
-  --beam-widths=1,2,4
-
-python scripts/train_assembly_ranker.py \
-  --dataset data/assembly_ranking.npz \
-  --output models/assembly_reranker.npz
+python scripts/train_topology_model.py \
+  --dataset data/topology_dataset.npz \
+  --output models/topology_validator.pt
 ```
 
 ## Visualization
@@ -336,66 +332,54 @@ python scripts/inspect_pipeline.py \
 ## Project layout
 
 ```text
-neuronauts/
+neuronauts/                     28 modules
   __init__.py               Public API: Agent, ConnectivityGraph, MergedNeuron,
-                              BridgeGraph, LineGraphMetrics, evaluate, UnionFind
+                              BridgeGraph, LineGraphMetrics, evaluate, UnionFind,
+                              CandidateMerge, logit_to_probability
   agent.py                  Agent config and step logic
-  assembly.py               GlobalAssemblyGAT, gat_refine_connectivity,
-                              label_graph_edges
-  assembly_dataset.py       Hypothesis feature extraction
+  assembly.py               Beam search with calibrated probabilities,
+                              logit_to_probability, probability_to_log_odds,
+                              gat_refine_connectivity, repartition
   cell_graph.py             CellGNN: synapse-level GNN for topological merge,
                               build_synapse_graph, infer_cells,
-                              partition_from_embeddings, train_cell_gnn
+                              score_cell_quality, train_cell_gnn
   cave_root_mapping.py      Root ID mapping across materialization versions
-  dataset_builder.py        BoxCache, select_synapse_seeded_boxes,
-                              select_boxes_from_nucleus_table, build_dataset
+  dataset_builder.py        BoxCache, select_synapse_seeded_boxes, build_dataset
   dijkstra.py               BridgeGraph (Dijkstra bridge proposals)
-  edit_history.py            Proofreader merge/split pairs for CellGNN training
-  experiment_driver.py      Canonical experiment cycle driver
-  fetch.py                  MICrONS fetch, SynapseTable, SyntheticBenchmark,
-                              skeleton/mesh feature extractors, retry with backoff
-  fields.py                 Membrane, exploration, synapse attraction fields
+  edit_history.py           Proofreader merge/split pairs for CellGNN training
+  fetch.py                  MICrONS fetch, SynapseTable, retry with backoff
+  fields.py                 Sobel membrane field, exploration field
   grammar.py                TorchPathEncoder (Transformer+CLS), MergeScorer,
-                              PathBatch, build_multimodal_path_sequence
+                              build_multimodal_path_sequence
   helpers.py                UnionFind, safe_normalize, pairwise_edges
-  hypothesis_reranker.py    Assembly reranker
   line_graph.py             Synapse line-graph F1 (primary metric)
-  membrane_unet.py          2.5D MembraneUNet (InstanceNorm2d, context slices)
   merge.py                  MergedNeuron, ConnectivityGraph, union-find merge
   merge_dataset.py          Local merge example construction
   run.py                    Main runner, HeuristicConfig, simulate_paths_and_hits
-  shared_grammar_model.py   SharedGrammarModel, BridgeHead, GlobalAssemblyGAT,
-                              GATTrainingConfig, gat_train_step,
-                              train_global_assembly_gat, multitask_train_step
+  shared_grammar_model.py   SharedGrammarModel, BridgeHead, GlobalAssemblyGAT
   skeleton_graph.py         Skeleton-backed graph with leakage guards
-  synapse_root_counts_static.py  Offline static MICrONS synapse counts
   topology_dataset.py       Atomicity example construction
-  topology_model.py         AttentionArborValidator
+  topology_model.py         AttentionArborValidator (cell quality scoring)
   training_batches.py       Batch padding utilities
   vectorized.py             Vectorized agent simulation
   viz.py                    Matplotlib visualization helpers
-  _scipy_compat.py          Scipy fallbacks (cKDTree, cdist, gaussian_filter, sobel)
+  _scipy_compat.py          Scipy fallbacks (cKDTree, cdist, sobel)
 
-scripts/
+scripts/                        9 scripts
   train.py                  End-to-end training CLI (8 subcommands)
   fetch_cave_boxes.py       Standalone CAVE box fetcher (no token required)
   inspect_pipeline.py       6-stage pipeline inspector with Neuroglancer
-  cache_membrane_volume.py  Predict + cache membrane for a real box
-  export_assembly_ranking_dataset.py
-  export_merge_dataset.py
-  export_topology_dataset.py
-  train_assembly_ranker.py
-  train_membrane_unet.py
-  train_shared_grammar.py
-  train_topology_model.py
-  run_research_cycle.py     Canonical research cycle (export -> train -> validate)
-  validate_viz.py           Grammar validation visualizer with Neuroglancer
-  codex_optimize.py         Codex outer-loop optimizer (legacy)
-  gemini_researcher.py      Gemini outer-loop optimizer (legacy)
+  train_shared_grammar.py   Standalone grammar training
+  train_topology_model.py   Topology validator training
+  export_merge_dataset.py   Export merge supervision examples
+  export_topology_dataset.py Export topology/atomicity examples
+  inspect_topology_metric.py Debug topology metric balance
+  analyze_minnie65_boxes.py  Box statistics analysis
 
-tests/                      42 test files
+tests/                          36 test files, 600+ tests
   test_pipeline_commands.py  CellGNN subcommand integration (23 tests)
-  test_cell_graph.py         CellGNN core (40+ tests)
+  test_cell_graph.py         CellGNN core (50+ tests incl. quality scoring)
+  test_assembly.py           Beam search + probability (19 tests)
   test_gat_training.py       GAT training (20+ tests)
   test_run.py                Integration / oracle regression
   ...                        (see tests/ directory for full listing)
@@ -421,10 +405,12 @@ experiments/
 | Coordinate-free path descriptors | Reusable across volumes without registration |
 | CAVE scaffold init | Collapses search space ~10x before learned grammar decisions |
 | Transformer + [CLS] token | Global fragment embedding; multi-modal fusion of path, skeleton, mesh |
+| Calibrated probability scoring | Temperature-scaled sigmoid converts logits to principled probabilities for beam search and bridge costs |
 | Soft-F1 surrogate loss for GAT | Differentiable approximation of the terminal metric |
 | `HeuristicConfig.learned()` | Spatial thresholds become candidate generators, not hard decisions |
-| 2.5D UNet with InstanceNorm2d | 3D context at 2D inference cost; stable for batch size 1 |
 | CellGNN with tangledness sampling | Focuses training on hard examples where cells overlap spatially |
+| Topology validator for cell quality | AttentionArborValidator scores structural coherence of inferred cells |
+| Skeleton graph alternative | CAVE skeletons provide connectivity without agent simulation or EM volumes |
 | Edit-history contrastive pairs | Proofreader merges/splits provide ground-truth hard negatives |
 | Retry with exponential backoff | Network resilience for CAVE data fetching |
 
