@@ -8,12 +8,10 @@ from functools import lru_cache
 
 import numpy as np
 
-from .assembly_dataset import hypothesis_features
 from .agent import AgentConfig
 from .assembly import CandidateMerge, beam_search_merge_groups, gat_refine_connectivity, logit_to_probability, repartition_low_atomicity_group
 from .dijkstra import BridgeGraph
 from .fields import compute_exploration_field, compute_membrane_field, compute_membrane_vectors
-from .membrane_unet import load_model as _load_membrane_model, predict_membranes as _predict_membranes
 from .fetch import (
     RealBoxSpec,
     SyntheticBenchmarkConfig,
@@ -282,9 +280,10 @@ def _load_shared_atomicity_score_fn(checkpoint_path: str):
 
 @lru_cache(maxsize=4)
 def _load_assembly_reranker(checkpoint_path: str):
-    from .hypothesis_reranker import load_linear_reranker
-
-    return load_linear_reranker(checkpoint_path)
+    raise ImportError(
+        "hypothesis_reranker has been removed. Use beam search (the default) "
+        "instead of --assembly-reranker-checkpoint."
+    )
 
 
 def _scaffold_union_from_seg_ids(
@@ -1277,9 +1276,10 @@ def run(
         mf = membrane_field_override.astype(np.float32, copy=False)
         source = "override"
     elif membrane_unet_checkpoint is not None:
-        _unet_model, _unet_device = _load_membrane_model(membrane_unet_checkpoint)
-        mf = _predict_membranes(_unet_model, volume, device=_unet_device)
-        source = f"UNet({membrane_unet_checkpoint})"
+        raise ImportError(
+            "membrane_unet has been removed. Use Sobel membrane fields (the default) "
+            "or provide a precomputed membrane_field_override."
+        )
     else:
         mf = compute_membrane_field(volume, sigma=MEMBRANE_SIGMA)
         source = "Sobel"

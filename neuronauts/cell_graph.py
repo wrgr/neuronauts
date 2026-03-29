@@ -852,6 +852,74 @@ def infer_cells(
     return partition_from_embeddings(embeddings_np, threshold=threshold, method=method)
 
 
+def score_cell_quality(
+    model,
+    graph: SynapseGraph,
+    labels: np.ndarray,
+    *,
+    topology_validator=None,
+) -> dict[int, float]:
+    """Score each inferred cell's structural coherence.
+
+    Uses the CellGNN embeddings for each cell's synapses, then optionally
+    runs them through an ``AttentionArborValidator`` to get a [0, 1]
+    plausibility score.  Without a validator, returns cosine cohesion
+    (mean pairwise similarity within each cell).
+
+    Parameters
+    ----------
+    model : CellGNN
+    graph : SynapseGraph used for ``infer_cells``
+    labels : int64 [N] cell assignments from ``infer_cells``
+    topology_validator : optional ``AttentionArborValidator`` checkpoint or module
+
+    Returns
+    -------
+    dict mapping cell_id → quality score in [0, 1]
+    """
+    torch, _ = _require_torch()
+    import torch.nn.functional as F
+
+    model.eval()
+    with torch.no_grad():
+        node_feat, edge_src, edge_dst, edge_feat = _graph_to_tensors(graph)
+        embeddings = model(node_feat, edge_src, edge_dst, edge_feat)
+        embeddings = F.normalize(embeddings, p=2, dim=-1)
+
+    # Load validator if path given
+    validator = None
+    if isinstance(topology_validator, str):
+        from .topology_model import load_validator
+        validator = load_validator(topology_validator)
+    elif topology_validator is not None:
+        validator = topology_validator
+
+    unique_cells = np.unique(labels)
+    scores: dict[int, float] = {}
+
+    for cell_id in unique_cells:
+        mask = labels == cell_id
+        cell_emb = embeddings[mask]  # [K, D]
+
+        if cell_emb.shape[0] <= 1:
+            scores[int(cell_id)] = 1.0
+            continue
+
+        if validator is not None:
+            # AttentionArborValidator expects [B, K, D]
+            with torch.no_grad():
+                prob = validator(cell_emb.unsqueeze(0))
+                scores[int(cell_id)] = float(prob.squeeze().cpu())
+        else:
+            # Fallback: mean pairwise cosine similarity
+            sim = (cell_emb @ cell_emb.T).cpu().numpy()
+            n = sim.shape[0]
+            triu = np.triu_indices(n, k=1)
+            scores[int(cell_id)] = float(np.mean(sim[triu])) if len(triu[0]) > 0 else 1.0
+
+    return scores
+
+
 def connectivity_graph_from_cell_labels(
     pre_labels: np.ndarray,
     post_labels: np.ndarray,

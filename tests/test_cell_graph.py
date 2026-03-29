@@ -22,6 +22,7 @@ from neuronauts.cell_graph import (
     rank_boxes_by_tangledness,
     save_cell_gnn,
     score_box_tangledness,
+    score_cell_quality,
     select_cell_gnn_training_boxes,
     spatial_train_val_test_split,
 )
@@ -320,6 +321,48 @@ class TestInferCells:
         labels = infer_cells(model, graph)
         unique = sorted(set(labels.tolist()))
         assert unique == list(range(len(unique)))
+
+
+# ---------------------------------------------------------------------------
+# score_cell_quality
+# ---------------------------------------------------------------------------
+
+class TestScoreCellQuality:
+    def test_returns_scores_for_each_cell(self):
+        model = CellGNN(node_input_dim=3, d_model=16, n_layers=2,
+                        n_heads=2, embedding_dim=8)
+        syn = _make_synapses(n_cells=3, synapses_per_cell=4)
+        graph = build_synapse_graph(syn, "pre", proximity_radius_nm=10_000.0)
+        labels = infer_cells(model, graph)
+        scores = score_cell_quality(model, graph, labels)
+        unique_cells = set(labels.tolist())
+        assert set(scores.keys()) == unique_cells
+        for v in scores.values():
+            assert 0.0 <= v <= 1.0 or np.isclose(v, 0.0) or np.isclose(v, 1.0)
+
+    def test_single_synapse_cell_gets_perfect_score(self):
+        model = CellGNN(node_input_dim=3, d_model=16, n_layers=2,
+                        n_heads=2, embedding_dim=8)
+        syn = _make_synapses(n_cells=3, synapses_per_cell=4)
+        graph = build_synapse_graph(syn, "pre", proximity_radius_nm=10_000.0)
+        # Force each synapse into its own cell
+        labels = np.arange(graph.n_synapses, dtype=np.int64)
+        scores = score_cell_quality(model, graph, labels)
+        for v in scores.values():
+            assert v == 1.0
+
+    def test_with_topology_validator(self):
+        from neuronauts.topology_model import AttentionArborValidator
+        model = CellGNN(node_input_dim=3, d_model=16, n_layers=2,
+                        n_heads=2, embedding_dim=8)
+        validator = AttentionArborValidator(embed_dim=8)
+        syn = _make_synapses(n_cells=2, synapses_per_cell=5)
+        graph = build_synapse_graph(syn, "pre", proximity_radius_nm=10_000.0)
+        labels = infer_cells(model, graph)
+        scores = score_cell_quality(model, graph, labels,
+                                    topology_validator=validator)
+        for v in scores.values():
+            assert 0.0 <= v <= 1.0
 
 
 # ---------------------------------------------------------------------------

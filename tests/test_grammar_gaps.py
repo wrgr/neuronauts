@@ -1,5 +1,5 @@
 """Tests filling coverage gaps in grammar.py, training_batches.py,
-topology_model.py, and experiment_driver.py."""
+and topology_model.py."""
 
 import tempfile
 import unittest
@@ -17,7 +17,6 @@ from neuronauts.grammar import (
     path_feature_names,
 )
 from neuronauts.training_batches import pad_nested_path_sequences
-from neuronauts.experiment_driver import parse_validation_metrics
 
 try:
     import torch
@@ -316,58 +315,6 @@ class AttentionArborValidatorTest(unittest.TestCase):
         self.assertEqual(cfg.epochs, 100)
         self.assertEqual(cfg.batch_size, 32)
         self.assertAlmostEqual(cfg.learning_rate, 1e-3)
-
-
-# ---------------------------------------------------------------------------
-# parse_validation_metrics (experiment_driver.py)
-# ---------------------------------------------------------------------------
-
-class ParseValidationMetricsTest(unittest.TestCase):
-    _SAMPLE_OUTPUT = (
-        "LineGraph F1=0.742  P=0.810  R=0.685  "
-        "TP=54 FP=13 FN=25  (true edges=79, est edges=67)\n"
-        "\nval_f1 = 0.742\n"
-    )
-
-    def test_parses_val_f1(self):
-        m = parse_validation_metrics(self._SAMPLE_OUTPUT)
-        self.assertAlmostEqual(m["val_f1"], 0.742, places=3)
-
-    def test_parses_precision(self):
-        m = parse_validation_metrics(self._SAMPLE_OUTPUT)
-        self.assertAlmostEqual(m["precision"], 0.810, places=3)
-
-    def test_parses_recall(self):
-        m = parse_validation_metrics(self._SAMPLE_OUTPUT)
-        self.assertAlmostEqual(m["recall"], 0.685, places=3)
-
-    def test_parses_tp_fp_fn_as_int(self):
-        m = parse_validation_metrics(self._SAMPLE_OUTPUT)
-        self.assertEqual(m["tp"], 54)
-        self.assertEqual(m["fp"], 13)
-        self.assertEqual(m["fn"], 25)
-
-    def test_empty_string_returns_all_none(self):
-        m = parse_validation_metrics("")
-        for key in ("val_f1", "precision", "recall", "tp", "fp", "fn"):
-            self.assertIsNone(m[key])
-
-    def test_partial_output_returns_none_for_missing_fields(self):
-        m = parse_validation_metrics("val_f1 = 0.500")
-        self.assertAlmostEqual(m["val_f1"], 0.500, places=3)
-        self.assertIsNone(m["precision"])
-
-    def test_zero_values_parse_correctly(self):
-        text = "P=0.000  R=0.000  TP=0 FP=0 FN=10\nval_f1 = 0.000"
-        m = parse_validation_metrics(text)
-        self.assertAlmostEqual(m["val_f1"], 0.0)
-        self.assertEqual(m["tp"], 0)
-        self.assertEqual(m["fn"], 10)
-
-    def test_returns_dict_with_all_expected_keys(self):
-        m = parse_validation_metrics("")
-        expected_keys = {"val_f1", "precision", "recall", "tp", "fp", "fn"}
-        self.assertEqual(set(m.keys()), expected_keys)
 
 
 if __name__ == "__main__":

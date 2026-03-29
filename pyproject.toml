@@ -48,7 +48,6 @@ llm = [
 
 [project.scripts]
 neuronauts = "neuronauts.run:main"
-neuronauts-qa = "neuronauts.qa_agent_cli:main"
 
 [tool.setuptools]
 packages = ["neuronauts"]
