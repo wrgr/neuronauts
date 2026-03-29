@@ -5,18 +5,14 @@ display it interactively (``plt.show()``) or save it with ``fig.savefig()``.
 Matplotlib is treated as an optional dependency — import errors are caught
 at the module boundary and re-raised with an actionable install message.
 
-Three plotting families are provided:
+Six plotting families are provided:
 
-1. **Scaffold plots** — show synapse positions coloured by seg_id or root_id
-   so you can visually verify that scaffold groupings make sense before
-   training.
-
-2. **Bridge plots** — overlay Dijkstra bridge proposals on a synapse scatter,
-   useful for checking that the bridge head is proposing plausible connections.
-
-3. **F1-history plots** — line charts for tracking line-graph F1 across
-   experiment ledger runs, helping the outer research loop stay grounded in
-   terminal metrics.
+1. **Scaffold plots** — synapse positions coloured by seg_id or root_id.
+2. **Bridge plots** — Dijkstra bridge proposals overlaid on synapse scatter.
+3. **F1-history plots** — line-graph F1 across experiments or epochs.
+4. **Segment-purity diagnostic** — per-segment scaffold quality bars.
+5. **CellGNN plots** — inferred cell labels and quality scores.
+6. **Training dashboard** — loss curves, merge probability histograms.
 """
 
 from __future__ import annotations
@@ -418,11 +414,304 @@ def plot_scaffold_purity(
     return fig
 
 
+# ---------------------------------------------------------------------------
+# 5. CellGNN cell-label and quality plots
+# ---------------------------------------------------------------------------
+
+def plot_cell_labels(
+    pre_pt: np.ndarray,
+    post_pt: np.ndarray,
+    pre_labels: np.ndarray,
+    post_labels: np.ndarray,
+    *,
+    pre_root_id: np.ndarray | None = None,
+    post_root_id: np.ndarray | None = None,
+    title: str = "CellGNN inferred cells vs ground truth",
+    projection: str = "xy",
+    point_size: float = 18.0,
+) -> "matplotlib.figure.Figure":
+    """Side-by-side comparison of CellGNN cell assignments vs ground truth.
+
+    Left column: coloured by inferred cell label.
+    Right column: coloured by ground-truth root_id (if provided).
+    """
+    _, plt, _ = _require_matplotlib()
+    axis_map = {"xy": (0, 1), "xz": (0, 2), "yz": (1, 2)}
+    ax0, ax1 = axis_map.get(projection, (0, 1))
+    axis_labels = "xyz"
+
+    has_truth = pre_root_id is not None and post_root_id is not None
+    n_cols = 2 if has_truth else 1
+
+    fig, axes = plt.subplots(2, n_cols, figsize=(6 * n_cols, 10))
+    if n_cols == 1:
+        axes = axes.reshape(2, 1)
+    fig.suptitle(title)
+
+    for row, (pts, labels, root_ids, side) in enumerate((
+        (pre_pt, pre_labels, pre_root_id, "Pre"),
+        (post_pt, post_labels, post_root_id, "Post"),
+    )):
+        x, y = pts[:, ax0], pts[:, ax1]
+        ax = axes[row, 0]
+        ax.scatter(x, y, c=_id_to_color_array(labels),
+                   s=point_size, alpha=0.75, linewidths=0)
+        n_cells = len(np.unique(labels))
+        ax.set_title(f"{side} — inferred ({n_cells} cells)")
+        ax.set_xlabel(axis_labels[ax0])
+        ax.set_ylabel(axis_labels[ax1])
+
+        if has_truth and root_ids is not None:
+            ax2 = axes[row, 1]
+            ax2.scatter(x, y, c=_id_to_color_array(root_ids),
+                        s=point_size, alpha=0.75, linewidths=0)
+            n_true = len(np.unique(root_ids))
+            ax2.set_title(f"{side} — ground truth ({n_true} cells)")
+            ax2.set_xlabel(axis_labels[ax0])
+            ax2.set_ylabel(axis_labels[ax1])
+
+    fig.tight_layout()
+    return fig
+
+
+def plot_cell_quality(
+    quality_scores: dict[int, float],
+    *,
+    title: str = "Cell quality scores",
+    threshold: float = 0.5,
+    figsize: tuple[float, float] = (10, 4),
+) -> "matplotlib.figure.Figure":
+    """Bar chart and histogram of per-cell quality scores.
+
+    Left panel: bar chart sorted by quality (descending).
+    Right panel: distribution histogram with threshold line.
+
+    Parameters
+    ----------
+    quality_scores:
+        Mapping ``cell_id → quality`` from ``score_cell_quality()``.
+    threshold:
+        Quality threshold drawn as a vertical/horizontal reference line.
+    """
+    _, plt, _ = _require_matplotlib()
+
+    cell_ids = sorted(quality_scores.keys(), key=lambda k: quality_scores[k], reverse=True)
+    values = [quality_scores[k] for k in cell_ids]
+
+    fig, axes = plt.subplots(1, 2, figsize=figsize)
+    fig.suptitle(title)
+
+    # Bar chart
+    colors = ["steelblue" if v >= threshold else "coral" for v in values]
+    axes[0].bar(range(len(values)), values, color=colors, alpha=0.8)
+    axes[0].axhline(threshold, color="grey", linestyle=":", linewidth=1,
+                     label=f"threshold={threshold}")
+    axes[0].set_xlabel("cell rank")
+    axes[0].set_ylabel("quality score")
+    axes[0].set_ylim(0, 1.05)
+    axes[0].set_title(f"Per-cell quality ({sum(1 for v in values if v >= threshold)}/{len(values)} pass)")
+    axes[0].legend(fontsize=8)
+
+    # Histogram
+    axes[1].hist(values, bins=20, range=(0, 1.01), color="steelblue",
+                 alpha=0.8, edgecolor="white")
+    axes[1].axvline(threshold, color="coral", linestyle="--", linewidth=1.5,
+                     label=f"threshold={threshold}")
+    axes[1].set_xlabel("quality score")
+    axes[1].set_ylabel("cell count")
+    axes[1].set_title("Quality distribution")
+    axes[1].legend(fontsize=8)
+
+    fig.tight_layout()
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# 6. Training dashboard
+# ---------------------------------------------------------------------------
+
+def plot_training_history(
+    history: dict[str, list[float]],
+    *,
+    title: str = "Training history",
+    figsize: tuple[float, float] = (12, 4),
+) -> "matplotlib.figure.Figure":
+    """Multi-panel line chart of training metrics over epochs.
+
+    Accepts the history dict returned by ``train_cell_gnn()`` or loaded
+    from ``cell_gnn_history.json``.  Common keys: ``train_loss``,
+    ``train_pos_sim``, ``train_neg_sim``, ``val_loss``.
+
+    Parameters
+    ----------
+    history:
+        Mapping ``metric_name → [value_epoch_1, value_epoch_2, ...]``.
+    """
+    _, plt, _ = _require_matplotlib()
+
+    # Group metrics into panels
+    loss_keys = [k for k in history if "loss" in k.lower()]
+    sim_keys = [k for k in history if "sim" in k.lower()]
+    f1_keys = [k for k in history if "f1" in k.lower()]
+    other_keys = [k for k in history if k not in loss_keys + sim_keys + f1_keys]
+
+    panels = []
+    if loss_keys:
+        panels.append(("Loss", loss_keys))
+    if sim_keys:
+        panels.append(("Similarity", sim_keys))
+    if f1_keys:
+        panels.append(("F1", f1_keys))
+    if other_keys:
+        panels.append(("Other", other_keys))
+    if not panels:
+        panels = [("Metrics", list(history.keys()))]
+
+    n = len(panels)
+    fig, axes = plt.subplots(1, n, figsize=(figsize[0], figsize[1]))
+    if n == 1:
+        axes = [axes]
+    fig.suptitle(title)
+
+    for ax, (panel_title, keys) in zip(axes, panels):
+        for key in keys:
+            values = history[key]
+            ax.plot(range(1, len(values) + 1), values, "o-", label=key,
+                    markersize=3, linewidth=1.5)
+        ax.set_xlabel("epoch")
+        ax.set_ylabel(panel_title.lower())
+        ax.set_title(panel_title)
+        ax.legend(fontsize=7)
+        ax.grid(axis="y", linestyle=":", alpha=0.5)
+
+    fig.tight_layout()
+    return fig
+
+
+def plot_merge_probabilities(
+    probabilities: Sequence[float],
+    *,
+    threshold: float = 0.5,
+    title: str = "Merge candidate probabilities",
+    figsize: tuple[float, float] = (8, 4),
+) -> "matplotlib.figure.Figure":
+    """Histogram of merge candidate probabilities with accept/reject regions.
+
+    Parameters
+    ----------
+    probabilities:
+        List of ``CandidateMerge.probability`` values from a single box.
+    threshold:
+        Decision boundary separating accept (right) from reject (left).
+    """
+    _, plt, _ = _require_matplotlib()
+
+    probs = np.asarray(probabilities, dtype=np.float64)
+    n_accept = int(np.sum(probs >= threshold))
+    n_reject = len(probs) - n_accept
+
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.hist(probs, bins=30, range=(0, 1), color="steelblue",
+            alpha=0.8, edgecolor="white")
+    ax.axvline(threshold, color="coral", linestyle="--", linewidth=2,
+               label=f"threshold={threshold}")
+
+    # Shade regions
+    ax.axvspan(0, threshold, alpha=0.05, color="coral")
+    ax.axvspan(threshold, 1, alpha=0.05, color="steelblue")
+
+    ax.set_xlabel("merge probability")
+    ax.set_ylabel("candidate count")
+    ax.set_title(f"{title}  (accept={n_accept}, reject={n_reject})")
+    ax.legend(fontsize=9)
+    ax.set_xlim(0, 1)
+    fig.tight_layout()
+    return fig
+
+
+def plot_evaluation_summary(
+    results: dict,
+    *,
+    title: str = "Evaluation summary",
+    figsize: tuple[float, float] = (10, 5),
+) -> "matplotlib.figure.Figure":
+    """Summary dashboard from ``evaluate_results.json``.
+
+    Shows GNN F1/precision/recall and optional baseline comparison
+    as grouped bars.
+
+    Parameters
+    ----------
+    results:
+        Dict loaded from ``evaluate_results.json`` (as written by
+        ``cmd_evaluate``).  Expected keys: ``gnn``, optional ``baseline``.
+    """
+    _, plt, _ = _require_matplotlib()
+
+    gnn = results.get("gnn", {})
+    baseline = results.get("baseline")
+
+    metrics = ["f1_mean", "precision_mean", "recall_mean"]
+    labels = ["F1", "Precision", "Recall"]
+    gnn_vals = [gnn.get(m, 0.0) for m in metrics]
+
+    fig, ax = plt.subplots(figsize=figsize)
+    x = np.arange(len(labels))
+    width = 0.35
+
+    bars_gnn = ax.bar(x - (width / 2 if baseline else 0), gnn_vals,
+                       width, label="CellGNN", color="steelblue", alpha=0.85)
+
+    if baseline:
+        baseline_vals = [baseline.get(m, 0.0) for m in metrics]
+        bars_base = ax.bar(x + width / 2, baseline_vals,
+                            width, label="Grammar baseline", color="coral", alpha=0.85)
+
+    # Value labels on bars
+    for bar in bars_gnn:
+        h = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width() / 2, h + 0.01,
+                f"{h:.3f}", ha="center", va="bottom", fontsize=9)
+    if baseline:
+        for bar in bars_base:
+            h = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width() / 2, h + 0.01,
+                    f"{h:.3f}", ha="center", va="bottom", fontsize=9)
+
+    ax.set_ylabel("score")
+    ax.set_title(f"{title}  ({results.get('n_boxes', '?')} boxes, {results.get('split', '?')} split)")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels)
+    ax.set_ylim(0, 1.15)
+    ax.legend()
+    ax.grid(axis="y", linestyle=":", alpha=0.5)
+
+    if baseline:
+        delta = gnn.get("f1_mean", 0) - baseline.get("f1_mean", 0)
+        ax.text(0.98, 0.02, f"Delta F1: {delta:+.4f}",
+                transform=ax.transAxes, ha="right", va="bottom",
+                fontsize=10, fontweight="bold",
+                color="green" if delta > 0 else "red")
+
+    fig.tight_layout()
+    return fig
+
+
 __all__ = [
+    # scaffold
     "plot_scaffold_synapses",
     "plot_scaffold_groups",
+    "plot_scaffold_purity",
+    # bridge
     "plot_bridge_proposals",
+    # F1 history
     "plot_f1_history",
     "plot_f1_history_from_ledger",
-    "plot_scaffold_purity",
+    # CellGNN
+    "plot_cell_labels",
+    "plot_cell_quality",
+    # training dashboard
+    "plot_training_history",
+    "plot_merge_probabilities",
+    "plot_evaluation_summary",
 ]
