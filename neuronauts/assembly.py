@@ -13,17 +13,50 @@ if TYPE_CHECKING:
     from .merge import ConnectivityGraph
 
 
+def logit_to_probability(logit: float, temperature: float = 1.0) -> float:
+    """Convert a raw logit to a calibrated probability via sigmoid.
+
+    Parameters
+    ----------
+    logit:
+        Unbounded scalar (output of a merge/atomicity/bridge scorer).
+    temperature:
+        Positive scaling factor.  ``temperature > 1`` flattens the sigmoid
+        (less confident); ``temperature < 1`` sharpens it.  Default 1.0
+        is the uncalibrated baseline.
+
+    Returns
+    -------
+    float in (0, 1).
+    """
+    scaled = float(np.clip(logit / max(temperature, 1e-8), -30.0, 30.0))
+    return float(1.0 / (1.0 + np.exp(-scaled)))
+
+
+def probability_to_log_odds(p: float) -> float:
+    """Convert a probability to log-odds (inverse sigmoid)."""
+    p = float(np.clip(p, 1e-7, 1.0 - 1e-7))
+    return float(np.log(p / (1.0 - p)))
+
+
 @dataclass(frozen=True)
 class CandidateMerge:
     left_agent: int
     right_agent: int
     score: float
+    probability: float = 0.5
+    """Calibrated merge probability in (0, 1).  Derived from ``score``
+    via temperature-scaled sigmoid.  Default 0.5 (maximum uncertainty)."""
 
 
 @dataclass(frozen=True)
 class BeamState:
     groups: tuple[frozenset[int], ...]
     score: float
+    log_probability: float = 0.0
+    """Accumulated log-probability of the accept/reject sequence leading
+    to this state.  Used for principled beam ranking when
+    ``use_log_probability=True``."""
 
 
 def _canonical_groups(groups: tuple[frozenset[int], ...]) -> tuple[frozenset[int], ...]:
@@ -54,38 +87,70 @@ def beam_search_merge_groups(
     beam_width: int = 4,
     atomicity_score_fn=None,
     atomicity_weight: float = 0.25,
+    use_log_probability: bool = False,
+    atomicity_temperature: float = 1.0,
 ) -> tuple[frozenset[int], ...]:
-    """Explore a small beam of accept/reject decisions over candidate merges."""
-    initial = BeamState(groups=_canonical_groups(tuple(frozenset({agent_id}) for agent_id in agent_ids)), score=0.0)
+    """Explore a small beam of accept/reject decisions over candidate merges.
+
+    When *use_log_probability* is True the beam is ranked by accumulated
+    log-probability instead of raw logit sums.  Each accept adds
+    ``log(candidate.probability)`` and each reject adds
+    ``log(1 - candidate.probability)``, giving a principled product-of-
+    probabilities ranking.  Atomicity scores are converted to probabilities
+    via ``logit_to_probability`` with *atomicity_temperature*.
+    """
+    initial = BeamState(
+        groups=_canonical_groups(tuple(frozenset({agent_id}) for agent_id in agent_ids)),
+        score=0.0,
+        log_probability=0.0,
+    )
     beam = [initial]
 
     for candidate in candidates:
         expanded: list[BeamState] = []
         for state in beam:
-            expanded.append(state)
+            # Reject branch
+            if use_log_probability:
+                reject_lp = state.log_probability + float(np.log(max(1.0 - candidate.probability, 1e-7)))
+                expanded.append(BeamState(groups=state.groups, score=state.score, log_probability=reject_lp))
+            else:
+                expanded.append(state)
+
             merged_groups = _merge_groups(state.groups, candidate.left_agent, candidate.right_agent)
             if merged_groups == state.groups:
                 continue
 
+            # Accept branch
             accept_score = state.score + float(candidate.score)
+            accept_lp = state.log_probability + float(np.log(max(candidate.probability, 1e-7)))
+
             if atomicity_score_fn is not None:
                 target_group = next(group for group in merged_groups if candidate.left_agent in group and candidate.right_agent in group)
-                accept_score += float(atomicity_weight) * float(atomicity_score_fn(tuple(sorted(target_group))))
-            expanded.append(BeamState(groups=merged_groups, score=accept_score))
+                atom_logit = float(atomicity_score_fn(tuple(sorted(target_group))))
+                accept_score += float(atomicity_weight) * atom_logit
+                atom_prob = logit_to_probability(atom_logit, temperature=atomicity_temperature)
+                accept_lp += float(atomicity_weight) * float(np.log(max(atom_prob, 1e-7)))
+
+            expanded.append(BeamState(groups=merged_groups, score=accept_score, log_probability=accept_lp))
 
         dedup: dict[tuple[frozenset[int], ...], BeamState] = {}
+        rank_key = (lambda state: state.log_probability) if use_log_probability else (lambda state: state.score)
         for state in expanded:
             prev = dedup.get(state.groups)
-            if prev is None or state.score > prev.score:
+            if prev is None or rank_key(state) > rank_key(prev):
                 dedup[state.groups] = state
-        beam = sorted(dedup.values(), key=lambda state: state.score, reverse=True)[: max(1, beam_width)]
+        beam = sorted(dedup.values(), key=rank_key, reverse=True)[: max(1, beam_width)]
 
     return beam[0].groups if beam else initial.groups
 
 
-def _score_to_affinity(score: float) -> float:
-    clipped = float(np.clip(score, -30.0, 30.0))
-    return float(1.0 / (1.0 + np.exp(-clipped)))
+def _score_to_affinity(score: float, temperature: float = 1.0) -> float:
+    """Convert a merge logit to a [0, 1] affinity value.
+
+    This is a convenience alias for ``logit_to_probability`` used in
+    spectral-cut repartitioning.
+    """
+    return logit_to_probability(score, temperature=temperature)
 
 
 def _fallback_bipartition(affinity: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

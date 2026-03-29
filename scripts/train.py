@@ -1276,6 +1276,7 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
         connectivity_graph_from_cell_labels,
         infer_cells,
         load_cell_gnn,
+        score_cell_quality,
         select_cell_gnn_training_boxes,
     )
     from neuronauts.line_graph import evaluate as lg_evaluate, evaluate_sampled
@@ -1310,6 +1311,14 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
     model = load_cell_gnn(cell_gnn_path)
     model.eval()
     print(f"Loaded CellGNN from {cell_gnn_path}")
+
+    # --- Optional topology validator for cell quality scoring ---
+    topology_validator = None
+    topology_ckpt = getattr(args, "topology_checkpoint", None)
+    if topology_ckpt and Path(topology_ckpt).exists():
+        from neuronauts.topology_model import load_validator
+        topology_validator = load_validator(topology_ckpt)
+        print(f"Loaded topology validator from {topology_ckpt}")
 
     # --- Optional grammar model for baseline ---
     grammar_model = None
@@ -1360,6 +1369,18 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
         gnn_precs.append(m.precision)
         gnn_recs.append(m.recall)
 
+        # Cell quality scoring (topology validator or cosine cohesion)
+        pre_quality = score_cell_quality(
+            model, pre_graph, pre_labels,
+            topology_validator=topology_validator,
+        )
+        post_quality = score_cell_quality(
+            model, post_graph, post_labels,
+            topology_validator=topology_validator,
+        )
+        all_quality = list(pre_quality.values()) + list(post_quality.values())
+        mean_quality = float(np.mean(all_quality)) if all_quality else 0.0
+
         # Beam-search baseline (uses grammar + agent simulation or skeleton)
         baseline_m = None
         if baseline_enabled and grammar_model is not None:
@@ -1403,7 +1424,8 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
 
         print(
             f"  {rec.box_hash[:8]} ({rec.n_synapses} syn): "
-            f"GNN F1={m.f1:.3f} P={m.precision:.3f} R={m.recall:.3f}"
+            f"GNN F1={m.f1:.3f} P={m.precision:.3f} R={m.recall:.3f} "
+            f"quality={mean_quality:.3f}"
             f"{baseline_str}"
         )
 
@@ -2248,6 +2270,8 @@ def parse_args(argv=None) -> argparse.Namespace:
                         help="Path to trained CellGNN checkpoint.")
     p_eval.add_argument("--grammar-checkpoint", default=None,
                         help="Grammar model checkpoint for beam-search baseline comparison.")
+    p_eval.add_argument("--topology-checkpoint", default=None,
+                        help="Topology validator checkpoint for cell quality scoring.")
     p_eval.add_argument("--proximity-radius-nm", type=float, default=5000.0)
     p_eval.add_argument("--partition-threshold", type=float, default=0.5)
     p_eval.add_argument("--min-positive-pairs", type=int, default=2)

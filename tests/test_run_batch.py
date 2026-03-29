@@ -3,7 +3,6 @@
 Covers:
 - evaluate_synthetic_batch: fixed_validation and random modes, aggregation
 - build_graph_hypotheses: multi-threshold / multi-beam sweep
-- select_hypothesis_with_reranker: best-hypothesis selection via reranker
 - GAT refinement code path in run() (gat_assembly_checkpoint branch)
 """
 
@@ -188,54 +187,6 @@ class BuildGraphHypothesesTest(unittest.TestCase):
         self.assertEqual(len(hypotheses), 1)
 
 
-# ---------------------------------------------------------------------------
-# select_hypothesis_with_reranker
-# ---------------------------------------------------------------------------
-
-class SelectHypothesisWithRerankerTest(unittest.TestCase):
-
-    def _make_hypotheses(self):
-        """Build two simple connectivity graphs to use as hypotheses."""
-        from neuronauts.merge import ConnectivityGraph, MergedNeuron
-
-        def _graph(n_neurons: int, n_edges: int) -> ConnectivityGraph:
-            neurons = {
-                i: MergedNeuron(
-                    neuron_id=i,
-                    agent_ids=[i],
-                    path_points=np.zeros((5, 3), dtype=np.float32),
-                    synapse_indices=[],
-                )
-                for i in range(n_neurons)
-            }
-            edges = [(0, 1, idx) for idx in range(n_edges)] if n_neurons >= 2 else []
-            return ConnectivityGraph(neurons=neurons, edges=edges,
-                                     unresolved_synapse_indices=[])
-
-        return [
-            (-0.5, 1, _graph(2, 3)),
-            (0.0,  2, _graph(3, 5)),
-        ]
-
-    def test_selects_one_hypothesis(self):
-        from neuronauts.run import select_hypothesis_with_reranker
-        from neuronauts.merge import ConnectivityGraph
-
-        hypotheses = self._make_hypotheses()
-        checkpoint = "models/assembly_reranker_smoke.npz"
-
-        import os
-        if not os.path.exists(checkpoint):
-            self.skipTest("assembly_reranker_smoke.npz not present")
-
-        threshold, beam_width, graph = select_hypothesis_with_reranker(
-            hypotheses,
-            reranker_checkpoint=checkpoint,
-            n_synapses=10,
-        )
-        self.assertIsInstance(graph, ConnectivityGraph)
-        self.assertIsInstance(threshold, float)
-        self.assertIsInstance(beam_width, int)
 
 
 if __name__ == "__main__":

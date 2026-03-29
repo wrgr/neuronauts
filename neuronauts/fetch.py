@@ -178,6 +178,8 @@ def fetch_synapses(
     datastack: str = MICRONS_DATASTACK,
     cave_server: str = CAVE_SERVER,
     token: Optional[str] = None,
+    max_retries: int = 4,
+    initial_backoff_s: float = 2.0,
 ) -> SynapseTable:
     _install_system_trust_store()
     try:
@@ -194,10 +196,24 @@ def fetch_synapses(
         (np.array([x0, y0, z0], dtype=np.float32) / syn_vox).astype(np.int64).tolist(),
         (np.array([x1, y1, z1], dtype=np.float32) / syn_vox).astype(np.int64).tolist(),
     ]
-    df = client.materialize.synapse_query(
-        bounding_box=bbox_synapse_units,
-        bounding_box_column="ctr_pt_position",
-    )
+
+    last_exc: Exception | None = None
+    df = None
+    for attempt in range(max(1, int(max_retries))):
+        try:
+            df = client.materialize.synapse_query(
+                bounding_box=bbox_synapse_units,
+                bounding_box_column="ctr_pt_position",
+            )
+            break
+        except Exception as exc:
+            last_exc = exc
+            if attempt + 1 >= max(1, int(max_retries)):
+                raise
+            time.sleep(float(initial_backoff_s) * (2 ** attempt))
+    if df is None:
+        assert last_exc is not None
+        raise last_exc
 
     if len(df) == 0:
         empty = np.zeros((0, 3), dtype=np.float32)

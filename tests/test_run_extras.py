@@ -118,8 +118,9 @@ class EvaluateSyntheticCaseTest(unittest.TestCase):
 class BuildBridgeGraphWithScoreFnTest(unittest.TestCase):
     """R2 — MEDIUM: verify cost sign convention when bridge_score_fn is used.
 
-    Positive logits → cost=0 (free edge).
-    Negative logits → cost>0 (penalised edge).
+    Bridge costs are now computed as ``-log(sigmoid(logit))``:
+    - Positive logits → probability near 1 → cost near 0
+    - Negative logits → probability near 0 → cost >> 0
     A sign-flip here silently routes bridges towards the wrong endpoints.
     """
 
@@ -147,26 +148,27 @@ class BuildBridgeGraphWithScoreFnTest(unittest.TestCase):
                     seen.add(key)
                     yield u, v, cost
 
-    def test_positive_logit_score_fn_gives_zero_cost_inter_edges(self):
+    def test_positive_logit_score_fn_gives_near_zero_cost_inter_edges(self):
         from neuronauts.run import _build_bridge_graph
 
         def always_positive(seq_a, seq_b):
-            return 5.0  # large positive logit → cost should be 0
+            return 5.0  # large positive logit → prob ~0.993 → cost ~0.007
 
         neurons = self._make_neurons(3)
         bridge = _build_bridge_graph(neurons, bridge_score_fn=always_positive)
         for u, v, cost in self._iter_edges(bridge):
             if u // 2 != v // 2:  # inter-neuron edge
-                self.assertAlmostEqual(
-                    cost, 0.0, places=6,
-                    msg=f"expected cost=0 for positive logit, got {cost} on edge ({u},{v})",
+                # cost = -log(sigmoid(5)) ≈ 0.0067
+                self.assertLess(
+                    cost, 0.1,
+                    msg=f"expected near-zero cost for positive logit, got {cost} on edge ({u},{v})",
                 )
 
     def test_negative_logit_score_fn_gives_positive_cost_inter_edges(self):
         from neuronauts.run import _build_bridge_graph
 
         def always_negative(seq_a, seq_b):
-            return -3.0  # negative logit → cost = max(0, -(-3)) = 3
+            return -3.0  # negative logit → prob ~0.047 → cost ~3.05
 
         neurons = self._make_neurons(3)
         bridge = _build_bridge_graph(neurons, bridge_score_fn=always_negative)
@@ -179,12 +181,14 @@ class BuildBridgeGraphWithScoreFnTest(unittest.TestCase):
         for cost in inter_costs:
             self.assertGreater(cost, 0.0, "expected positive cost for negative logit")
 
-    def test_score_fn_cost_equals_max_zero_neg_logit(self):
-        """cost = max(0, -logit) for each pair."""
+    def test_score_fn_cost_equals_neg_log_sigmoid(self):
+        """cost = -log(sigmoid(logit)) for each pair."""
+        import math
         from neuronauts.run import _build_bridge_graph
 
         fixed_logit = -2.5
-        expected_cost = 2.5
+        prob = 1.0 / (1.0 + math.exp(-fixed_logit))
+        expected_cost = -math.log(prob)
 
         def fixed(seq_a, seq_b):
             return fixed_logit
@@ -198,24 +202,24 @@ class BuildBridgeGraphWithScoreFnTest(unittest.TestCase):
         ]
         self.assertTrue(len(inter_costs) > 0)
         for cost in inter_costs:
-            self.assertAlmostEqual(cost, expected_cost, places=5)
+            self.assertAlmostEqual(cost, expected_cost, places=4)
 
     def test_max_bridge_cost_prunes_high_cost_edges(self):
         from neuronauts.run import _build_bridge_graph
 
         def always_negative(seq_a, seq_b):
-            return -100.0  # cost = 100
+            return -100.0  # prob ≈ 0 → cost = -log(1e-7) ≈ 16.1
 
         neurons = self._make_neurons(3)
         bridge = _build_bridge_graph(
-            neurons, bridge_score_fn=always_negative, max_bridge_cost=50.0
+            neurons, bridge_score_fn=always_negative, max_bridge_cost=5.0
         )
         inter_costs = [
             cost
             for u, v, cost in self._iter_edges(bridge)
             if u // 2 != v // 2
         ]
-        # All should be pruned since cost=100 > max=50.
+        # All should be pruned since cost ≈ 16.1 > max=5.0.
         self.assertEqual(len(inter_costs), 0, "expected all inter edges pruned")
 
     def test_intra_neuron_edges_always_zero_cost(self):

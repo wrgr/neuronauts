@@ -1,6 +1,6 @@
 # CellGNN Training Pipeline — Open Items
 
-Status as of 2026-03-28.  Items are ordered by dependency — complete
+Status as of 2026-03-29.  Items are ordered by dependency — complete
 earlier items before later ones.
 
 ---
@@ -9,6 +9,17 @@ earlier items before later ones.
 
 The CellGNN has been validated on synthetic boxes.  Training on real
 MICrONS data is the critical next step.
+
+**Infrastructure improvements (2026-03-29):**
+
+- ✅ `fetch_synapses` now retries with exponential backoff (4 attempts,
+  2s/4s/8s/16s) on transient network failures — matching the pattern
+  already used by `fetch_root_skeleton`
+- ✅ Full build-dataset pipeline validated end-to-end with mocked CAVE
+  client (`TestBuildDatasetMockedCave`, 2 tests)
+- ✅ Retry behavior verified under simulated transient failures
+
+**Next:** Run the CAVE-only fetch on a machine with outbound network access.
 
 ### 1a. CAVE-only boxes (no auth token required)
 
@@ -166,18 +177,17 @@ python scripts/train.py sweep \
 
 ## 6. Test Coverage Gaps
 
-### Critical (no existing tests)
+### Critical — ✅ DONE (tests/test_pipeline_commands.py, 21 tests passing)
 
-- [ ] `cmd_train_cell_gnn` integration test (full function with mock cache)
-- [ ] `cmd_evaluate` integration test (checkpoint load → eval → JSON output)
-- [ ] `cmd_sweep` integration test (2-config grid → best model saved)
-- [ ] `cmd_scale_test` integration test (tracemalloc profiling)
+- [x] `cmd_train_cell_gnn` integration test (full training + edit-pairs TSV + resume)
+- [x] `cmd_evaluate` integration test (checkpoint load → eval → JSON output, val/test splits, missing checkpoint)
+- [x] `cmd_sweep` integration test (2-config grid → best model saved)
+- [x] `cmd_scale_test` integration test (with/without checkpoint)
 
-### Medium priority
+### Medium priority — ✅ DONE
 
-- [ ] Edit-pairs TSV loading / malformed input handling
-- [ ] `partition_from_embeddings` with threshold=0.0 and threshold=1.0
-- [ ] `spatial_train_val_test_split` with 1–2 boxes (degenerate case)
-- [ ] `cell_graph_train_step` with out-of-range edit pair indices
-- [ ] `train_cell_gnn` with `edit_weight=0.0` (should behave like no
-      edit pairs)
+- [x] Edit-pairs TSV loading (`test_training_with_edit_pairs_tsv`)
+- [x] `partition_from_embeddings` with threshold=0.0 and threshold=1.0
+- [x] `spatial_train_val_test_split` with 1–2 boxes (degenerate case)
+- [x] `cell_graph_train_step` with out-of-range edit pair indices
+- [x] `train_cell_gnn` with `edit_weight=0.0` (behaves like no edit pairs)
