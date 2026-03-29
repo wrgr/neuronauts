@@ -1,6 +1,7 @@
 """neuronauts — end-to-end connectome inference from electron microscopy data."""
 
 from .agent import Agent, AgentConfig
+from .assembly import CandidateMerge, logit_to_probability, probability_to_log_odds
 from .dijkstra import BridgeGraph, BridgePath
 from .helpers import UnionFind, pairwise_edges, safe_normalize
 from .line_graph import LineGraphMetrics, evaluate, evaluate_sampled
@@ -21,6 +22,10 @@ __all__ = [
     "LineGraphMetrics",
     "evaluate",
     "evaluate_sampled",
+    # probability
+    "CandidateMerge",
+    "logit_to_probability",
+    "probability_to_log_odds",
     # helpers
     "UnionFind",
     "safe_normalize",

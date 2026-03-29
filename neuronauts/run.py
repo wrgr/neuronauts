@@ -10,7 +10,7 @@ import numpy as np
 
 from .assembly_dataset import hypothesis_features
 from .agent import AgentConfig
-from .assembly import CandidateMerge, beam_search_merge_groups, gat_refine_connectivity, repartition_low_atomicity_group
+from .assembly import CandidateMerge, beam_search_merge_groups, gat_refine_connectivity, logit_to_probability, repartition_low_atomicity_group
 from .dijkstra import BridgeGraph
 from .fields import compute_exploration_field, compute_membrane_field, compute_membrane_vectors
 from .membrane_unet import load_model as _load_membrane_model, predict_membranes as _predict_membranes
@@ -105,6 +105,8 @@ MEMBRANE_CACHE_DIR = "cache/membranes"
 SHARED_GRAMMAR_CHECKPOINT = None
 ASSEMBLY_RERANKER_CHECKPOINT = None
 LEARNED_MERGE_SCORE_THRESHOLD = 0.0
+MERGE_PROBABILITY_THRESHOLD = 0.5
+MERGE_TEMPERATURE = 1.0
 BEAM_WIDTH = 1
 BEAM_MAX_CANDIDATES = 24
 ATOMICITY_SCORE_WEIGHT = 0.25
@@ -388,6 +390,7 @@ def _merge_role_groups(
     atomicity_score_weight: float = ATOMICITY_SCORE_WEIGHT,
     role_seg_ids: np.ndarray | None = None,
     heuristic_config: "HeuristicConfig | None" = None,
+    merge_temperature: float = MERGE_TEMPERATURE,
 ) -> tuple[dict[int, MergedNeuron], dict[int, list[int]], dict[int, cKDTree], int]:
     """Merge agent paths into neuron groups, optionally seeded by scaffold seg_ids.
 
@@ -464,7 +467,8 @@ def _merge_role_groups(
             if len(seq_a) == 0 or len(seq_b) == 0:
                 continue
             score = float(learned_merge_score_fn(seq_a, seq_b))
-            candidate_merges.append(CandidateMerge(left_agent=agent_a, right_agent=agent_b, score=score))
+            prob = logit_to_probability(score, temperature=merge_temperature)
+            candidate_merges.append(CandidateMerge(left_agent=agent_a, right_agent=agent_b, score=score, probability=prob))
         elif hcfg.use_learned_decisions:
             # Learned mode but no scorer yet: union optimistically so downstream
             # GAT refinement (PR 4) can make the real acceptance/rejection call.
@@ -626,9 +630,12 @@ def _build_bridge_graph(
                 if seq_u is None or seq_v is None or len(seq_u) == 0 or len(seq_v) == 0:
                     cost = float(np.linalg.norm(endpoint_pos[u] - endpoint_pos[v]))
                 else:
-                    # Bridge score fn returns a logit; convert to non-negative cost.
+                    # Bridge score fn returns a logit; convert to non-negative
+                    # cost via -log(probability).  High-probability bridges
+                    # get low cost; low-probability bridges get high cost.
                     raw = float(bridge_score_fn(seq_u, seq_v))
-                    cost = max(0.0, -raw)
+                    prob = logit_to_probability(raw)
+                    cost = -float(np.log(max(prob, 1e-7)))
             else:
                 cost = float(np.linalg.norm(endpoint_pos[u] - endpoint_pos[v]))
 
