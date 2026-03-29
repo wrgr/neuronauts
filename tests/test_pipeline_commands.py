@@ -523,6 +523,199 @@ class TestTrainStepEditEdgeCases:
 # fetch_cave_boxes.py argument parsing
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Integration: build-dataset with mocked CAVE client
+# ---------------------------------------------------------------------------
+
+class TestBuildDatasetMockedCave:
+    """End-to-end build-dataset test using a mock CAVEclient.
+
+    Verifies the full flow: select_synapse_seeded_boxes → fetch_synapses →
+    save_synapse_only → BoxCache on disk — without network access.
+    """
+
+    @staticmethod
+    def _make_cave_dataframe(n_synapses=50, seed=42):
+        """Build a pandas-like DataFrame mimicking CAVE synapse_query output."""
+        import pandas as pd
+
+        rng = np.random.default_rng(seed)
+        n_cells = 5
+        ctr = rng.integers(200_000, 600_000, size=(n_synapses, 3))
+        pre = ctr + rng.integers(-500, 500, size=(n_synapses, 3))
+        post = ctr + rng.integers(-500, 500, size=(n_synapses, 3))
+        pre_root = rng.choice(n_cells, size=n_synapses) + 1
+        post_root = rng.choice(n_cells, size=n_synapses) + 1
+
+        df = pd.DataFrame({
+            "ctr_pt_position": [row.tolist() for row in ctr],
+            "pre_pt_position": [row.tolist() for row in pre],
+            "post_pt_position": [row.tolist() for row in post],
+            "pre_pt_root_id": pre_root.astype(np.int64),
+            "post_pt_root_id": post_root.astype(np.int64),
+            "pre_pt_supervoxel_id": (pre_root * 100 + rng.integers(0, 5, size=n_synapses)).astype(np.int64),
+            "post_pt_supervoxel_id": (post_root * 100 + rng.integers(0, 5, size=n_synapses)).astype(np.int64),
+        })
+        df.index = np.arange(n_synapses, dtype=np.int64)
+        return df
+
+    def test_build_dataset_end_to_end(self, tmp_path, monkeypatch):
+        """Full build-dataset flow with mocked CAVE produces a valid BoxCache."""
+        from neuronauts.dataset_builder import (
+            BoxCache,
+            build_dataset,
+            select_synapse_seeded_boxes,
+        )
+
+        cave_df = self._make_cave_dataframe(n_synapses=60, seed=0)
+
+        # Mock CAVEclient so no network is needed
+        class _MockMaterialize:
+            def synapse_query(self, **kwargs):
+                if "bounding_box" in kwargs:
+                    # Per-box fetch: return a subset
+                    return cave_df.iloc[:25].copy()
+                # Selection query: return all
+                return cave_df.copy()
+
+        class _MockClient:
+            version = 1412
+            materialize = _MockMaterialize()
+
+        def mock_cave_client(*a, **kw):
+            return _MockClient()
+
+        # Patch caveclient import inside dataset_builder and fetch
+        monkeypatch.setattr(
+            "neuronauts.dataset_builder.select_synapse_seeded_boxes.__module__",
+            "neuronauts.dataset_builder",
+        )
+
+        import neuronauts.fetch as fetch_mod
+        import neuronauts.dataset_builder as db_mod
+
+        # Patch the CAVEclient constructor in both modules
+        original_fetch = fetch_mod.fetch_synapses
+
+        def patched_select(n, **kwargs):
+            """select_synapse_seeded_boxes with mocked CAVE."""
+            import types
+            # Inline mock: replicate core logic without CAVE network
+            rng = np.random.default_rng(kwargs.get("seed", 42))
+            syn_vox = np.array((4, 4, 40), dtype=np.float64)
+            positions = []
+            for pos in cave_df["ctr_pt_position"].values:
+                arr = np.asarray(pos, dtype=np.float64)
+                nm = (arr * syn_vox).astype(int)
+                positions.append((int(nm[0]), int(nm[1]), int(nm[2])))
+            k = min(n, len(positions))
+            chosen = rng.choice(len(positions), size=k, replace=False)
+            from neuronauts.fetch import RealBoxSpec
+            return [
+                RealBoxSpec(
+                    center_nm=positions[i],
+                    side_um=kwargs.get("box_side_um", 6.0),
+                    mip=2,
+                )
+                for i in chosen
+            ]
+
+        def patched_fetch(bbox_nm, mip=2, version=None, **kwargs):
+            """fetch_synapses with mocked CAVE data."""
+            from neuronauts.fetch import SynapseTable, SYNAPSE_VOXEL_SIZE_NM, MIP_VOXEL_SIZES
+            df = cave_df.iloc[:25].copy()
+            syn_vox = np.array(SYNAPSE_VOXEL_SIZE_NM, dtype=np.float32)
+            vox = MIP_VOXEL_SIZES[mip]
+            bbox_origin_vox = np.array([
+                bbox_nm[0][0] / vox[0],
+                bbox_nm[0][1] / vox[1],
+                bbox_nm[0][2] / vox[2],
+            ], dtype=np.float32)
+
+            def pts_to_voxels(col):
+                pts = np.stack(df[col].values)
+                pts_nm = pts * syn_vox
+                pts_vox = pts_nm / np.array(vox, dtype=np.float32)
+                return (pts_vox - bbox_origin_vox).astype(np.float32)
+
+            return SynapseTable(
+                pre_pt=pts_to_voxels("pre_pt_position"),
+                post_pt=pts_to_voxels("post_pt_position"),
+                pre_root_id=df["pre_pt_root_id"].values.astype(np.int64),
+                post_root_id=df["post_pt_root_id"].values.astype(np.int64),
+                synapse_id=df.index.values.astype(np.int64),
+                pre_seg_id=df["pre_pt_supervoxel_id"].values.astype(np.int64),
+                post_seg_id=df["post_pt_supervoxel_id"].values.astype(np.int64),
+            )
+
+        monkeypatch.setattr(db_mod, "select_synapse_seeded_boxes", patched_select)
+        monkeypatch.setattr(db_mod, "fetch_synapses", patched_fetch)
+
+        # Run the pipeline
+        cache_dir = str(tmp_path / "cave_boxes")
+        cache = BoxCache(cache_dir)
+        specs = patched_select(5, seed=0, box_side_um=6.0)
+        assert len(specs) == 5
+
+        records = build_dataset(
+            specs, cache,
+            min_synapses=5,
+            max_synapses=300,
+            min_positive_pairs=0,
+            no_em=True,
+            verbose=False,
+        )
+
+        # Verify cache on disk
+        assert len(records) > 0
+        reloaded = BoxCache(cache_dir)
+        assert len(reloaded) == len(records)
+
+        # Verify each record loads correctly
+        for rec in reloaded.all_records():
+            assert rec.n_synapses == 25
+            assert not rec.has_volume
+            _, syn = reloaded.load(rec)
+            assert syn.pre_pt.shape == (25, 3)
+            assert syn.post_pt.shape == (25, 3)
+            assert len(syn.pre_root_id) == 25
+            assert syn.pre_seg_id is not None
+
+    def test_fetch_synapses_retry_on_transient_failure(self, monkeypatch):
+        """fetch_synapses retries on transient errors before succeeding."""
+        import neuronauts.fetch as fetch_mod
+
+        cave_df = self._make_cave_dataframe(n_synapses=20, seed=1)
+        call_count = [0]
+
+        class _MockMaterialize:
+            def synapse_query(self, **kwargs):
+                call_count[0] += 1
+                if call_count[0] <= 2:
+                    raise ConnectionError("transient network error")
+                return cave_df.copy()
+
+        class _MockClient:
+            version = 1412
+            materialize = _MockMaterialize()
+
+        monkeypatch.setattr(fetch_mod, "_install_system_trust_store", lambda: None)
+
+        # Patch sleep to avoid actual delays in tests
+        monkeypatch.setattr(fetch_mod.time, "sleep", lambda s: None)
+
+        # We need to mock the caveclient import inside fetch_synapses
+        import types
+        mock_caveclient = types.ModuleType("caveclient")
+        mock_caveclient.CAVEclient = lambda *a, **kw: _MockClient()
+        monkeypatch.setitem(__import__("sys").modules, "caveclient", mock_caveclient)
+
+        bbox = ((100_000, 100_000, 100_000), (200_000, 200_000, 200_000))
+        result = fetch_mod.fetch_synapses(bbox, max_retries=4, initial_backoff_s=0.01)
+        assert call_count[0] == 3  # failed twice, succeeded third
+        assert result.pre_pt.shape[0] == 20
+
+
 class TestFetchCaveBoxesArgs:
     def test_dry_run_no_network(self):
         """--dry-run should exit 0 without making network calls,
