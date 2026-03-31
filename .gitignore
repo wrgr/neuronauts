@@ -32,3 +32,6 @@ htmlcov/
 .DS_Store
 Thumbs.db
 /data
+
+# Training and fetch logs
+*.log
