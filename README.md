@@ -447,3 +447,8 @@ experiments/
 - Silversmith, W. `cloud-volume`. https://github.com/seung-lab/cloud-volume
 - CAVEconnectome. `CAVEclient`. https://github.com/CAVEconnectome/CAVEclient
 - Bae, J. A. et al. Digital museum of retinal ganglion cells. *Cell* 2024.
+
+
+
+CONSIDER: 
+Cross check with recent reviews (at least 3 - markowitz, helmstaedler, lichtman)
