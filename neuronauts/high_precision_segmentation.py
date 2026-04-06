@@ -337,13 +337,21 @@ class HighPrecisionSegmentation3D:
 
         Combines intensity-based and membrane-based signals.
         """
-        # Simple thresholding on intensity
-        intensity_prob = volume > np.median(volume[volume > 0])
+        # Use percentile-based intensity threshold
+        nonzero = volume[volume > 0]
+        if len(nonzero) > 0:
+            intensity_threshold = np.percentile(nonzero, 40)
+            intensity_prob = (volume.astype(np.float32) - volume.min()) / (
+                volume.max() - volume.min() + 1e-6
+            )
+        else:
+            intensity_prob = np.zeros_like(volume, dtype=np.float32)
 
         if membrane_field is not None:
-            # Membrane provides strong evidence
-            membrane_prob = 1.0 - membrane_field
-            combined = 0.6 * intensity_prob + 0.4 * membrane_prob
+            # Inverted membrane (low membrane = likely neurite interior)
+            membrane_prob = 1.0 - np.clip(membrane_field, 0, 1)
+            # Weight toward membrane signal in boundary regions
+            combined = 0.5 * intensity_prob + 0.5 * membrane_prob
         else:
             combined = intensity_prob.astype(np.float32)
 
@@ -366,35 +374,68 @@ class HighPrecisionSegmentation3D:
         else:
             dist = ndimage.distance_transform_edt(foreground_mask)
 
-        # Find local maxima as seeds
+        # Find local maxima at multiple scales
         struct = ndimage.generate_binary_structure(3, 1)
-        local_max = ndimage.maximum_filter(dist, footprint=struct) == dist
-        local_max = local_max & foreground_mask
+
+        # Large-scale maxima (cell bodies)
+        local_max_large = ndimage.maximum_filter(dist, size=5) == dist
+        valid_dist = dist[foreground_mask]
+        if len(valid_dist) > 0:
+            local_max_large = local_max_large & (dist > np.percentile(valid_dist, 30))
+
+        # Small-scale maxima (processes)
+        local_max_small = ndimage.maximum_filter(dist, footprint=struct) == dist
+        if len(valid_dist) > 0:
+            local_max_small = local_max_small & (dist > np.percentile(valid_dist, 50))
+
+        local_max = (local_max_large | local_max_small) & foreground_mask
 
         # Label seeds
         seeds, num_seeds = ndimage.label(local_max)
 
         if num_seeds == 0:
-            # No clear seeds, use simple thresholding
-            labels, num = ndimage.label(foreground_mask)
-            return labels, num
+            # Use distance-based seeding
+            if len(valid_dist) > 0:
+                dist_thresh = np.percentile(valid_dist, 60)
+                seeds = ndimage.label(dist > dist_thresh)[0]
+                num_seeds = seeds.max()
+            else:
+                labels, num = ndimage.label(foreground_mask)
+                return labels, num
 
-        # Watershed-like segmentation using distance-based growth
-        labels = seeds.copy()
+        # Watershed-like segmentation: distance-based growth
+        labels = np.zeros_like(seeds, dtype=np.int32)
+        labels[seeds > 0] = seeds[seeds > 0]  # Copy seed labels
         struct = ndimage.generate_binary_structure(3, 1)
 
-        for _ in range(100):
+        # Iteratively grow regions
+        for iteration in range(200):
             old_labels = labels.copy()
             unlabeled = foreground_mask & (labels == 0)
+
             if not unlabeled.any():
                 break
 
-            # Grow each seed
-            for seed_id in range(1, num_seeds + 1):
-                seed_region = labels == seed_id
-                expanded = ndimage.binary_dilation(seed_region, structure=struct)
-                expanded = expanded & foreground_mask & unlabeled
-                labels[expanded] = seed_id
+            # Dilate all labeled regions by 1 voxel
+            dilated = ndimage.binary_dilation(labels > 0, structure=struct)
+            newly_labeled = dilated & unlabeled
+
+            if not newly_labeled.any():
+                break
+
+            # Assign newly labeled voxels to nearest seed (by proximity)
+            # Use distance to prefer internal growth
+            for y, x, z in np.ndindex(newly_labeled.shape):
+                if newly_labeled[y, x, z]:
+                    # Find neighboring labeled voxels
+                    neighbors = labels[
+                        max(0, y - 1) : min(labels.shape[0], y + 2),
+                        max(0, x - 1) : min(labels.shape[1], x + 2),
+                        max(0, z - 1) : min(labels.shape[2], z + 2),
+                    ]
+                    neighbor_labels = neighbors[neighbors > 0]
+                    if len(neighbor_labels) > 0:
+                        labels[y, x, z] = neighbor_labels[0]
 
             if np.array_equal(old_labels, labels):
                 break

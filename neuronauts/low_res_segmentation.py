@@ -547,19 +547,30 @@ class LowResNeuronSegmentationPipeline:
             binary_mask = low_res_vol > np.median(low_res_vol[low_res_vol > 0])
             distance_map = ndimage.distance_transform_edt(binary_mask).astype(np.float32)
 
-        # Find local maxima as neuron seeds
+        # Find local maxima at multiple scales for robust seed detection
         struct = ndimage.generate_binary_structure(3, 1)
-        local_max = ndimage.maximum_filter(distance_map, footprint=struct) == distance_map
 
-        # Filter seeds by intensity/membrane
+        # Large-scale maxima (neuron bodies)
+        local_max_large = ndimage.maximum_filter(distance_map, size=5) == distance_map
+        local_max_large = local_max_large & (distance_map > np.percentile(distance_map, 40))
+
+        # Small-scale maxima (branches)
+        local_max_small = ndimage.maximum_filter(distance_map, footprint=struct) == distance_map
+        local_max_small = local_max_small & (distance_map > np.percentile(distance_map, 50))
+
+        local_max = local_max_large | local_max_small
+
+        # Filter seeds by membrane (prefer interior, avoid boundaries)
         if membrane_field is not None:
-            local_max = local_max & (low_res_mem < 0.6)  # Seeds in neuritic regions
+            local_max = local_max & (low_res_mem < 0.5)
 
         seeds, num_seeds = ndimage.label(local_max)
 
-        if num_seeds == 0:
-            # No clear seeds, use larger peaks
-            local_max = ndimage.maximum_filter(distance_map, size=3) == distance_map
+        # Ensure we have enough seeds
+        if num_seeds < 2:
+            # Try aggressive seeding: use percentile-based thresholding
+            dist_thresh = np.percentile(distance_map, 70)
+            local_max = distance_map > dist_thresh
             seeds, num_seeds = ndimage.label(local_max)
 
         if num_seeds == 0:
