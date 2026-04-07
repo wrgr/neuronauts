@@ -203,41 +203,63 @@ class ConservativeScaffoldingPipeline:
     ) -> tuple[np.ndarray, int]:
         """Conservatively grow cell bodies to arbors.
 
-        Stops when confidence drops.
+        Per-voxel gate: absolute intensity floor AND low membrane value.
+        Per-cell stop: when its frontier has no admissible voxels.
         """
         grown = cell_labels.copy()
         struct = ndimage.generate_binary_structure(3, 1)
 
-        for iteration in range(self.max_merge_iterations):
-            # Compute confidence for next growth step
-            confidence = self._compute_growth_confidence(
-                volume,
-                grown,
-                num_cells,
-                membrane_field,
-            )
+        # Absolute intensity floor from arbor_threshold percentile of whole volume
+        intensity_floor = np.percentile(volume, self.arbor_threshold)
+        # Membrane ceiling: voxels above this are considered boundary
+        if membrane_field is not None:
+            mem_ceiling = np.percentile(membrane_field, 100.0 - self.arbor_threshold)
+        else:
+            mem_ceiling = None
 
-            if confidence < self.confidence_threshold:
-                # Stop - not confident enough
+        active = np.ones(num_cells + 1, dtype=bool)
+        active[0] = False
+
+        for iteration in range(self.max_merge_iterations):
+            if not active.any():
                 return grown, iteration
 
-            # Grow one layer
             old_grown = grown.copy()
 
             for cell_id in range(1, num_cells + 1):
+                if not active[cell_id]:
+                    continue
                 cell_region = grown == cell_id
                 expanded = ndimage.binary_dilation(cell_region, structure=struct)
-                expanded = expanded & (grown == 0)  # Only into unlabeled space
+                frontier = expanded & (grown == 0)
 
-                # Only expand if high enough intensity
-                expansion_threshold = np.percentile(
-                    volume[expanded] if np.any(expanded) else [0],
-                    self.arbor_threshold,
-                )
-                grown[expanded & (volume > expansion_threshold)] = cell_id
+                if not frontier.any():
+                    active[cell_id] = False
+                    continue
+
+                # Absolute intensity gate
+                admit = frontier & (volume > intensity_floor)
+                # Membrane gate
+                if mem_ceiling is not None:
+                    admit &= membrane_field < mem_ceiling
+
+                if not admit.any():
+                    active[cell_id] = False
+                    continue
+
+                # Per-cell frontier confidence: mean intensity of admitted voxels
+                frontier_conf = float(np.mean(volume[admit]) / 255.0)
+                if mem_ceiling is not None:
+                    frontier_conf = 0.6 * frontier_conf + 0.4 * (
+                        1.0 - float(np.mean(membrane_field[admit]))
+                    )
+                if frontier_conf < self.confidence_threshold:
+                    active[cell_id] = False
+                    continue
+
+                grown[admit] = cell_id
 
             if np.array_equal(old_grown, grown):
-                # No growth this iteration - stop
                 return grown, iteration + 1
 
         return grown, self.max_merge_iterations

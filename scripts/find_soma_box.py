@@ -71,7 +71,7 @@ def main():
 
     # EM
     em_url = "precomputed://https://bossdb-open-data.s3.amazonaws.com/iarpa_microns/minnie/minnie65/em"
-    cv = CloudVolume(em_url, mip=4, use_https=True, fill_missing=True, progress=False)
+    cv = CloudVolume(em_url, mip=3, use_https=True, fill_missing=True, progress=False)
     em_vox_nm = np.array(cv.resolution)
     print(f"EM voxel: {em_vox_nm} nm")
     bem = (bbox_nm / em_vox_nm[None, :]).astype(int)
@@ -85,24 +85,34 @@ def main():
     vol = em.astype(np.uint8)
     mem = ndimage.gaussian_filter(1.0 - vol.astype(np.float32) / 255.0, sigma=1.0)
 
-    # Save center slice for visual confirmation
-    try:
-        from PIL import Image
-        out = Path("data/cave_slices")
-        out.mkdir(parents=True, exist_ok=True)
-        z = vol.shape[2] // 2
-        Image.fromarray(vol[:, :, z]).save(out / "soma_box_z_mid.png")
-        print(f"Saved slice to {out/'soma_box_z_mid.png'}")
-    except Exception as e:
-        print(f"slice save failed: {e}")
-
     print("\n=== SCAFFOLDING ===")
     sc = ConservativeScaffoldingPipeline(
-        cell_body_threshold=80, arbor_threshold=55,
-        confidence_threshold=0.45, min_scaffold_size=100, max_merge_iterations=12,
+        cell_body_threshold=85, arbor_threshold=40,
+        confidence_threshold=0.55, min_scaffold_size=200, max_merge_iterations=20,
     )
     res = sc.scaffold_volume(vol, membrane_field=mem)
     print(sc.report(res))
+
+    # Save slice + segmentation overlay
+    try:
+        from PIL import Image
+        out = Path("data/cave_slices"); out.mkdir(parents=True, exist_ok=True)
+        z = vol.shape[2] // 2
+        gray = vol[:, :, z]
+        Image.fromarray(gray).save(out / "mip3_slice.png")
+
+        lab = res.labels[:, :, z]
+        rng = np.random.default_rng(0)
+        palette = rng.integers(40, 255, size=(int(res.labels.max()) + 1, 3), dtype=np.uint8)
+        palette[0] = 0
+        rgb = palette[lab]
+        base = np.stack([gray]*3, axis=-1)
+        overlay = np.where(lab[..., None] > 0, (0.5*base + 0.5*rgb).astype(np.uint8), base)
+        Image.fromarray(overlay).save(out / "mip3_seg_overlay.png")
+        Image.fromarray(rgb).save(out / "mip3_seg.png")
+        print(f"Saved {out}/mip3_slice.png, mip3_seg.png, mip3_seg_overlay.png")
+    except Exception as e:
+        print(f"viz failed: {e}")
 
     if len(pre_local):
         purity = evaluate_neuron_purity(res.labels, pre_local, post_local, pre_root, post_root)
