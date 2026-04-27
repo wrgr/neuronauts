@@ -498,7 +498,7 @@ def partition_from_embeddings(
     embeddings: np.ndarray,
     *,
     threshold: float = 0.5,
-    method: str = "agglomerative",
+    method: str = "complete",
 ) -> np.ndarray:
     """Cluster synapse embeddings into cell assignments.
 
@@ -509,7 +509,11 @@ def partition_from_embeddings(
     threshold : float
         Cosine similarity threshold for same-cell assignment.
     method : str
-        "agglomerative" (default) or "greedy".
+        "complete" (default) — complete-linkage: every pair within a cluster
+        must individually have cosine sim >= threshold.  Prevents single-linkage
+        chaining where one high-sim bridge contaminates unrelated synapses.
+        "agglomerative" — legacy single-linkage (deprecated; chaining artefacts).
+        "greedy" — greedy assignment from first unassigned node.
 
     Returns
     -------
@@ -544,7 +548,50 @@ def partition_from_embeddings(
             next_label += 1
         return labels
 
-    # Agglomerative: bottom-up merging by cosine similarity
+    if method == "complete":
+        # Complete-linkage: merge clusters only when ALL cross-cluster pairs
+        # meet the threshold.  Equivalent to finding cliques in the sim graph.
+        # For N <= _ANN_PARTITION_THRESHOLD use the full similarity matrix.
+        if N <= _ANN_PARTITION_THRESHOLD:
+            sim = normed @ normed.T  # [N, N]
+            upper_tri = np.triu_indices(N, k=1)
+            sims = sim[upper_tri]
+            order = np.argsort(-sims)
+            cluster = np.arange(N, dtype=np.int64)  # cluster[i] = cluster id of i
+
+            for idx in order:
+                if sims[idx] < threshold:
+                    break
+                i, j = int(upper_tri[0][idx]), int(upper_tri[1][idx])
+                ci, cj = cluster[i], cluster[j]
+                if ci == cj:
+                    continue
+                mi = np.where(cluster == ci)[0]
+                mj = np.where(cluster == cj)[0]
+                # All cross-cluster pairs must have sim >= threshold
+                if np.all(sim[np.ix_(mi, mj)] >= threshold):
+                    cluster[cluster == cj] = ci
+
+            unique = np.unique(cluster)
+            remap = {int(old): new for new, old in enumerate(unique)}
+            return np.array([remap[int(c)] for c in cluster], dtype=np.int64)
+        else:
+            # For large N fall back to single-linkage ANN (still fast, may chain)
+            from ._scipy_compat import cKDTree
+            from .helpers import UnionFind
+            max_dist = float(np.sqrt(max(0.0, 2.0 * (1.0 - threshold))))
+            tree = cKDTree(normed)
+            pairs = tree.query_pairs(r=max_dist, output_type="ndarray")
+            uf = UnionFind(N)
+            if len(pairs) > 0:
+                for a, b in pairs:
+                    uf.union(int(a), int(b))
+            labels = np.array([uf.find(i) for i in range(N)], dtype=np.int64)
+            unique_roots = sorted(set(labels.tolist()))
+            remap2 = {r: idx for idx, r in enumerate(unique_roots)}
+            return np.array([remap2[l] for l in labels], dtype=np.int64)
+
+    # "agglomerative" — legacy single-linkage (kept for backward compat)
     from .helpers import UnionFind
     from ._scipy_compat import cKDTree
 
