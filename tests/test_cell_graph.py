@@ -130,7 +130,7 @@ class TestCellGNN:
         node_feat = torch.randn(N, 3)
         edge_src = torch.randint(0, N, (E,))
         edge_dst = torch.randint(0, N, (E,))
-        edge_feat = torch.randn(E, 4)
+        edge_feat = torch.randn(E, 5)
         out = model(node_feat, edge_src, edge_dst, edge_feat)
         assert out.shape == (N, 8)
 
@@ -139,7 +139,7 @@ class TestCellGNN:
                         n_heads=2, embedding_dim=8)
         node_feat = torch.randn(5, 3)
         empty = torch.zeros(0, dtype=torch.long)
-        edge_feat = torch.zeros(0, 4)
+        edge_feat = torch.zeros(0, 5)
         out = model(node_feat, empty, empty, edge_feat)
         assert out.shape == (5, 8)
 
@@ -150,7 +150,7 @@ class TestCellGNN:
         # Self-loop only
         edge_src = torch.tensor([0])
         edge_dst = torch.tensor([0])
-        edge_feat = torch.randn(1, 4)
+        edge_feat = torch.randn(1, 5)
         out = model(node_feat, edge_src, edge_dst, edge_feat)
         assert out.shape == (1, 8)
 
@@ -183,7 +183,7 @@ class TestGraphToTensors:
         _, es, ed, ef = _graph_to_tensors(graph)
         # 1 undirected → 2 directed + 3 self-loops = 5 total
         assert len(es) == 5
-        assert ef.shape == (5, 4)
+        assert ef.shape == (5, 5)
 
 
 # ---------------------------------------------------------------------------
@@ -457,7 +457,7 @@ class TestPersistence:
         node_feat = torch.randn(5, 3)
         edge_src = torch.tensor([0, 1, 2])
         edge_dst = torch.tensor([1, 2, 0])
-        edge_feat = torch.randn(3, 4)
+        edge_feat = torch.randn(3, 5)
 
         with torch.no_grad():
             out1 = model(node_feat, edge_src, edge_dst, edge_feat)

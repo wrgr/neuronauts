@@ -65,6 +65,7 @@ class SynapseEdge:
     same_scaffold: float  # 1.0 if same scaffold group, 0.0 otherwise
     grammar_score: float  # pairwise grammar merge score (if available), else 0.0
     shared_agents: int    # number of agents that visited both synapses
+    shared_partners: int = 0  # shared connectivity targets on the opposite side
 
 
 @dataclass
@@ -106,6 +107,7 @@ def build_synapse_graph(
     grammar_scores: dict[tuple[int, int], float] | None = None,
     proximity_radius_nm: float = 5000.0,
     max_edges_per_node: int = 32,
+    partner_seg_ids: np.ndarray | None = None,
 ) -> SynapseGraph:
     """Build a synapse-level evidence graph for one side (pre or post).
 
@@ -128,6 +130,11 @@ def build_synapse_graph(
         Maximum distance (in isotropic nm) for creating proximity edges.
     max_edges_per_node :
         Cap on edges per synapse to keep the graph sparse.
+    partner_seg_ids :
+        Seg IDs from the *opposite* side (post_seg_id when role="pre", or
+        pre_seg_id when role="post").  Used to compute shared-partner counts:
+        how many connectivity targets two synapse groups share, which is a
+        strong signal that they belong to the same cell.
     """
     if role == "pre":
         positions = synapses.pre_pt.copy().astype(np.float32)
@@ -181,11 +188,44 @@ def build_synapse_graph(
                            int(max(visited[i], visited[j])))
                     agent_covisit[key] = agent_covisit.get(key, 0) + 1
 
+    # Shared-partner lookup: per scaffold group → set of partner seg_ids
+    # Two synapses from the same pre-cell should connect to overlapping post targets.
+    synapse_to_group: dict[int, int] = {}
+    group_partners: dict[int, set[int]] = {}
+    if partner_seg_ids is not None and len(partner_seg_ids) == n:
+        # Build group membership for the current side
+        if seg_ids is not None:
+            for i, sid in enumerate(seg_ids):
+                synapse_to_group[i] = int(sid)
+        elif scaffold_groups is not None:
+            for gid, syn_indices in scaffold_groups.items():
+                for si in syn_indices:
+                    synapse_to_group[si] = gid
+        else:
+            # No grouping info — treat each synapse as its own group
+            for i in range(n):
+                synapse_to_group[i] = i
+
+        for i in range(n):
+            gid = synapse_to_group.get(i, i)
+            pid = int(partner_seg_ids[i])
+            if pid > 0:
+                group_partners.setdefault(gid, set()).add(pid)
+
     # Build edges via spatial proximity (KD-tree)
     from ._scipy_compat import cKDTree
 
     tree = cKDTree(iso_positions)
     edge_dict: dict[tuple[int, int], SynapseEdge] = {}
+
+    def _shared_partner_count(a: int, b: int) -> int:
+        if not group_partners:
+            return 0
+        ga = synapse_to_group.get(a, a)
+        gb = synapse_to_group.get(b, b)
+        pa = group_partners.get(ga, set())
+        pb = group_partners.get(gb, set())
+        return len(pa & pb)
 
     # Proximity edges
     pairs = tree.query_pairs(r=proximity_radius_nm, output_type="ndarray")
@@ -200,10 +240,12 @@ def build_synapse_graph(
             if grammar_scores is not None:
                 gs = grammar_scores.get(key, 0.0)
             sa = agent_covisit.get(key, 0)
+            sp = _shared_partner_count(key[0], key[1])
             edge_dict[key] = SynapseEdge(
                 src=key[0], dst=key[1],
                 distance=dist, same_scaffold=same_scaf,
                 grammar_score=gs, shared_agents=sa,
+                shared_partners=sp,
             )
 
     # Scaffold edges (ensure all same-scaffold synapses are connected)
@@ -219,10 +261,12 @@ def build_synapse_graph(
                         iso_positions[key[0]] - iso_positions[key[1]]))
                     gs = grammar_scores.get(key, 0.0) if grammar_scores else 0.0
                     sa = agent_covisit.get(key, 0)
+                    sp = _shared_partner_count(key[0], key[1])
                     edge_dict[key] = SynapseEdge(
                         src=key[0], dst=key[1],
                         distance=dist, same_scaffold=1.0,
                         grammar_score=gs, shared_agents=sa,
+                        shared_partners=sp,
                     )
 
     return SynapseGraph(
@@ -239,7 +283,7 @@ def build_synapse_graph(
 # 2. CellGNN -- sparse message-passing for cell membership
 # ---------------------------------------------------------------------------
 
-_EDGE_FEAT_DIM = 4  # distance, same_scaffold, grammar_score, shared_agents
+_EDGE_FEAT_DIM = 5  # distance, same_scaffold, grammar_score, shared_agents, shared_partners
 # Below this synapse count use exact O(N²) similarity; above use ANN sparse path.
 _ANN_PARTITION_THRESHOLD = 500
 
@@ -251,7 +295,7 @@ def _graph_to_tensors(graph: SynapseGraph):
     -------
     node_feat : Tensor [N, 3]  (isotropic position, centered)
     edge_src, edge_dst : Tensor [2E]  (bidirectional)
-    edge_feat : Tensor [2E, 4]  (distance, same_scaffold, grammar_score, shared_agents)
+    edge_feat : Tensor [2E, 5]  (distance, same_scaffold, grammar_score, shared_agents, shared_partners)
     """
     torch, _ = _require_torch()
     N = graph.n_synapses
@@ -282,14 +326,15 @@ def _graph_to_tensors(graph: SynapseGraph):
                 e.distance / max(scale, 1e-6),  # normalized distance
                 e.same_scaffold,
                 e.grammar_score,
-                min(e.shared_agents, 10) / 10.0,  # clamp & normalize
+                min(e.shared_agents, 10) / 10.0,   # clamp & normalize
+                min(e.shared_partners, 5) / 5.0,   # clamp & normalize
             ])
 
     # Self-loops
     for i in range(N):
         src_list.append(i)
         dst_list.append(i)
-        feat_list.append([0.0, 1.0, 1.0, 0.0])
+        feat_list.append([0.0, 1.0, 1.0, 0.0, 0.0])
 
     edge_src = torch.tensor(src_list, dtype=torch.long)
     edge_dst = torch.tensor(dst_list, dtype=torch.long)
@@ -1447,18 +1492,22 @@ def cell_gnn_assembly(
                 f"post: {len(post_grammar_scores)} scored pairs"
             )
 
-    # Build synapse graphs
+    # Build synapse graphs — pass opposite-side seg_ids for shared-partner feature
+    post_seg_ids = getattr(synapses, "post_seg_id", None)
+    pre_seg_ids = getattr(synapses, "pre_seg_id", None)
     pre_graph = build_synapse_graph(
         synapses, "pre",
         synapse_hits=synapse_hits,
         grammar_scores=pre_grammar_scores,
         proximity_radius_nm=proximity_radius_nm,
+        partner_seg_ids=post_seg_ids,
     )
     post_graph = build_synapse_graph(
         synapses, "post",
         synapse_hits=synapse_hits,
         grammar_scores=post_grammar_scores,
         proximity_radius_nm=proximity_radius_nm,
+        partner_seg_ids=pre_seg_ids,
     )
 
     if verbose:

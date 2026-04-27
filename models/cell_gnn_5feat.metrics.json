@@ -1,0 +1,23 @@
+{
+  "val_f1_mean": 0.1407,
+  "test_f1_mean": 0.2687,
+  "test_f1_median": 0.2740,
+  "calibrated_threshold": 0.99,
+  "training_boxes": 37,
+  "epochs": 50,
+  "d_model": 64,
+  "n_layers": 3,
+  "n_heads": 4,
+  "embedding_dim": 32,
+  "pos_sim_final": 0.959,
+  "neg_sim_final": 0.053,
+  "edge_features": 5,
+  "feature_names": ["distance", "same_scaffold", "grammar_score", "shared_agents", "shared_partners"],
+  "comparison": {
+    "4feat_test_f1_mean": 0.2638,
+    "4feat_test_f1_median": 0.2353,
+    "4feat_threshold": 0.99,
+    "delta_f1_mean": 0.0049,
+    "delta_f1_median": 0.0387
+  }
+}
