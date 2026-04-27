@@ -240,6 +240,8 @@ def build_synapse_graph(
 # ---------------------------------------------------------------------------
 
 _EDGE_FEAT_DIM = 4  # distance, same_scaffold, grammar_score, shared_agents
+# Below this synapse count use exact O(N²) similarity; above use ANN sparse path.
+_ANN_PARTITION_THRESHOLD = 500
 
 
 def _graph_to_tensors(graph: SynapseGraph):
@@ -471,21 +473,30 @@ def partition_from_embeddings(
 
     # Agglomerative: bottom-up merging by cosine similarity
     from .helpers import UnionFind
+    from ._scipy_compat import cKDTree
 
     uf = UnionFind(N)
 
-    # Compute pairwise similarities and merge above threshold
-    sim_matrix = normed @ normed.T
-    # Process in order of decreasing similarity
-    upper_tri = np.triu_indices(N, k=1)
-    sims = sim_matrix[upper_tri]
-    order = np.argsort(-sims)
-
-    for idx in order:
-        if sims[idx] < threshold:
-            break
-        i, j = int(upper_tri[0][idx]), int(upper_tri[1][idx])
-        uf.union(i, j)
+    if N > _ANN_PARTITION_THRESHOLD:
+        # Sparse ANN path: for normalized embeddings, cosine_sim ≥ t ↔ L2 ≤ sqrt(2*(1-t)).
+        # query_pairs returns only close pairs, keeping memory O(N·k) instead of O(N²).
+        max_dist = float(np.sqrt(max(0.0, 2.0 * (1.0 - threshold))))
+        tree = cKDTree(normed)
+        pairs = tree.query_pairs(r=max_dist, output_type="ndarray")
+        if len(pairs) > 0:
+            for a, b in pairs:
+                uf.union(int(a), int(b))
+    else:
+        # Exact path: full pairwise matrix, fine for small N.
+        sim_matrix = normed @ normed.T
+        upper_tri = np.triu_indices(N, k=1)
+        sims = sim_matrix[upper_tri]
+        order = np.argsort(-sims)
+        for idx in order:
+            if sims[idx] < threshold:
+                break
+            i, j = int(upper_tri[0][idx]), int(upper_tri[1][idx])
+            uf.union(i, j)
 
     # Convert to contiguous labels
     labels = np.array([uf.find(i) for i in range(N)], dtype=np.int64)

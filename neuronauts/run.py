@@ -1302,47 +1302,6 @@ def run(
         print(f"  {time.time() - t1:.2f}s | {hit_count}/{len(all_syn_pts)} sites hit, {alive.sum()} alive")
     t2 = time.time()
 
-    # --- CellGNN assembly path (alternative to beam search) ---
-    if cell_gnn_checkpoint is not None:
-        from .cell_graph import cell_gnn_assembly, load_cell_gnn
-
-        if verbose:
-            print("CellGNN assembly …")
-        cell_gnn_model = load_cell_gnn(cell_gnn_checkpoint)
-        grammar_fn = None
-        if shared_grammar_checkpoint:
-            grammar_fn = _load_shared_merge_score_fn(shared_grammar_checkpoint)
-        # Build a minimal SynapseTable-like object for cell_gnn_assembly
-        from .fetch import SynapseTable
-        syn_table = SynapseTable(
-            pre_pt=pre_pts,
-            post_pt=post_pts,
-            pre_root_id=pre_root_ids,
-            post_root_id=post_root_ids,
-            synapse_id=np.arange(len(pre_pts), dtype=np.int64),
-            pre_seg_id=pre_seg_ids,
-            post_seg_id=post_seg_ids,
-        )
-        graph = cell_gnn_assembly(
-            syn_table,
-            cell_gnn_model,
-            grammar_score_fn=grammar_fn,
-            synapse_hits=synapse_hits,
-            proximity_radius_nm=cell_gnn_proximity_radius_nm,
-            partition_threshold=cell_gnn_partition_threshold,
-            verbose=verbose,
-        )
-        if verbose:
-            print(
-                f"  CellGNN assembly {time.time() - t2:.2f}s | "
-                f"{len(graph.neurons)} neurons, {len(graph.edges)} edges"
-            )
-        metrics = evaluate(graph, pre_root_ids, post_root_ids)
-        if verbose:
-            print(f"\nTotal: {time.time() - t0:.2f}s")
-            print(f"Result: {metrics}")
-        return metrics
-
     score_fn = learned_merge_score_fn
     atomicity_fn = None
     if score_fn is None and shared_grammar_checkpoint:
@@ -1445,6 +1404,48 @@ def run(
                 f"pre_split={pre_stats.get('cells_split', 0)} "
                 f"post_split={post_stats.get('cells_split', 0)}"
                 f"{f1_text}"
+            )
+
+    # --- CellGNN re-partition (runs after beam search, uses its groups as scaffold) ---
+    if cell_gnn_checkpoint is not None:
+        from .cell_graph import cell_gnn_assembly, load_cell_gnn
+        from .fetch import SynapseTable
+        t_gnn = time.time()
+        if verbose:
+            print("CellGNN re-partition …")
+        cell_gnn_model = load_cell_gnn(cell_gnn_checkpoint)
+        # Promote beam-search neuron assignments to scaffold labels so CellGNN
+        # starts from the grammar's best groupings rather than raw CAVE seg IDs.
+        new_pre_seg = np.zeros(len(pre_pts), dtype=np.int64)
+        new_post_seg = np.zeros(len(post_pts), dtype=np.int64)
+        for _nid, _neuron in graph.neurons.items():
+            for _si in _neuron.synapse_indices:
+                if _neuron.role == "pre" and 0 <= _si < len(pre_pts):
+                    new_pre_seg[_si] = _nid + 1
+                elif _neuron.role == "post" and 0 <= _si < len(post_pts):
+                    new_post_seg[_si] = _nid + 1
+        syn_table_gnn = SynapseTable(
+            pre_pt=pre_pts,
+            post_pt=post_pts,
+            pre_root_id=pre_root_ids,
+            post_root_id=post_root_ids,
+            synapse_id=np.arange(len(pre_pts), dtype=np.int64),
+            pre_seg_id=new_pre_seg,
+            post_seg_id=new_post_seg,
+        )
+        graph = cell_gnn_assembly(
+            syn_table_gnn,
+            cell_gnn_model,
+            grammar_score_fn=score_fn,
+            synapse_hits=synapse_hits,
+            proximity_radius_nm=cell_gnn_proximity_radius_nm,
+            partition_threshold=cell_gnn_partition_threshold,
+            verbose=verbose,
+        )
+        if verbose:
+            print(
+                f"  CellGNN refine {time.time() - t_gnn:.2f}s | "
+                f"{len(graph.neurons)} neurons, {len(graph.edges)} edges"
             )
 
     # --- PR 4: Global GAT refinement ---
