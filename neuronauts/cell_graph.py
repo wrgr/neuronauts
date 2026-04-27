@@ -466,6 +466,34 @@ class CellGNN:
 # 3. Partition from embeddings
 # ---------------------------------------------------------------------------
 
+
+class _UF:
+    """Minimal union-find (path-compressed, no external deps)."""
+
+    def __init__(self, n: int) -> None:
+        self._p = list(range(n))
+
+    def find(self, x: int) -> int:
+        while self._p[x] != x:
+            self._p[x] = self._p[self._p[x]]  # path halving
+            x = self._p[x]
+        return x
+
+    def union(self, x: int, y: int) -> None:
+        self._p[self.find(x)] = self.find(y)
+
+    def copy(self) -> "_UF":
+        uf = _UF.__new__(_UF)
+        uf._p = self._p[:]
+        return uf
+
+    def labels(self) -> list[int]:
+        """Return contiguous 0-based labels [N]."""
+        roots = [self.find(i) for i in range(len(self._p))]
+        unique_roots = sorted(set(roots))
+        remap = {r: idx for idx, r in enumerate(unique_roots)}
+        return [remap[r] for r in roots]
+
 def partition_from_embeddings(
     embeddings: np.ndarray,
     *,
@@ -906,6 +934,184 @@ def infer_cells(
         embeddings_np = F.normalize(embeddings, p=2, dim=-1).cpu().numpy()
 
     return partition_from_embeddings(embeddings_np, threshold=threshold, method=method)
+
+
+def _score_partition(normed: np.ndarray, uf: "_UF") -> float:
+    """Score a partition by mean within-cell cosine similarity.
+
+    Each cell contributes its mean pairwise dot product (cosine sim for
+    normalised embeddings).  Singletons contribute 0.0 so that merging two
+    high-similarity nodes always improves the score over leaving them
+    separate.  The final score is a size-weighted mean over all cells.
+    """
+    labels = uf.labels()
+    # Group indices by cell
+    cells: dict[int, list[int]] = {}
+    for i, lbl in enumerate(labels):
+        cells.setdefault(lbl, []).append(i)
+
+    total_weight = 0.0
+    total_score = 0.0
+    for members in cells.values():
+        size = len(members)
+        if size == 1:
+            # Singletons score 0.0: they are neither good nor bad merges.
+            # This ensures that merging two high-similarity nodes raises the
+            # score above the all-singletons baseline.
+            total_score += 0.0
+        else:
+            emb = normed[members]              # [K, D]
+            sim_sum = float((emb @ emb.T).sum()) - size  # subtract diagonal
+            n_pairs = size * (size - 1)
+            mean_sim = sim_sum / n_pairs
+            total_score += mean_sim * size
+        total_weight += size
+
+    return total_score / total_weight if total_weight > 0 else 0.0
+
+
+def boundary_partition_search(
+    model,
+    graph: SynapseGraph,
+    *,
+    low_sim: float = 0.93,
+    high_sim: float = 0.99,
+    max_boundary_edges: int = 12,
+    beam_width: int = 8,
+) -> np.ndarray:
+    """Beam search over uncertain boundary edges to find the best partition.
+
+    Parameters
+    ----------
+    model : CellGNN (eval mode recommended)
+    graph : SynapseGraph
+    low_sim : lower bound of the ambiguous similarity band (inclusive)
+    high_sim : upper bound of the ambiguous similarity band (exclusive)
+    max_boundary_edges : cap on number of boundary edges to explore
+    beam_width : number of best states to keep at each beam step
+
+    Returns
+    -------
+    labels : int64 ndarray [N_synapses]
+    """
+    torch, _ = _require_torch()
+    import torch.nn.functional as F
+
+    N = graph.n_synapses
+    if N == 0:
+        return np.array([], dtype=np.int64)
+    if N == 1:
+        return np.array([0], dtype=np.int64)
+
+    # --- Step 1: run GNN inference once ---
+    model.eval()
+    with torch.no_grad():
+        node_feat, edge_src, edge_dst, edge_feat = _graph_to_tensors(graph)
+        raw = model(node_feat, edge_src, edge_dst, edge_feat)
+        normed = F.normalize(raw, p=2, dim=-1).cpu().numpy()  # [N, D]
+
+    # --- Step 2: find boundary edges (only over graph edges) ---
+    midpoint = (low_sim + high_sim) / 2.0
+    boundary: list[tuple[float, int, int]] = []  # (distance_to_mid, i, j)
+
+    seen_pairs: set[tuple[int, int]] = set()
+    for e in graph.edges:
+        i, j = e.src, e.dst
+        key = (min(i, j), max(i, j))
+        if key in seen_pairs:
+            continue
+        seen_pairs.add(key)
+        sim = float(normed[i] @ normed[j])
+        if low_sim <= sim < high_sim:
+            boundary.append((abs(sim - midpoint), i, j))
+
+    # --- Step 3: cap at max_boundary_edges most uncertain ---
+    boundary.sort(key=lambda x: x[0])          # ascending: closest to midpoint first
+    boundary = boundary[:max_boundary_edges]
+    boundary_edges = [(i, j) for (_, i, j) in boundary]
+
+    # --- Step 4: base partition from high-confidence edges only ---
+    base_labels = partition_from_embeddings(normed, threshold=high_sim)
+    base_uf = _UF(N)
+    for n_idx in range(N):
+        if base_labels[n_idx] != n_idx:
+            # Find the representative for this label
+            pass
+    # Re-build union-find from the base partition labels
+    label_to_rep: dict[int, int] = {}
+    for n_idx in range(N):
+        lbl = int(base_labels[n_idx])
+        if lbl not in label_to_rep:
+            label_to_rep[lbl] = n_idx
+        else:
+            base_uf.union(n_idx, label_to_rep[lbl])
+
+    # --- Step 5: beam search ---
+    if not boundary_edges:
+        # No uncertain edges — return the high-confidence partition
+        return base_labels
+
+    # Beam: list of (score, uf_state)
+    # Compute initial score
+    init_score = _score_partition(normed, base_uf)
+    beam: list[tuple[float, "_UF"]] = [(-init_score, base_uf)]
+
+    for (ei, ej) in boundary_edges:
+        next_beam: list[tuple[float, "_UF"]] = []
+        for (neg_score, uf_state) in beam:
+            # Branch A: reject merge (keep as-is)
+            next_beam.append((neg_score, uf_state))
+
+            # Branch B: accept merge
+            new_uf = uf_state.copy()
+            new_uf.union(ei, ej)
+            new_score = _score_partition(normed, new_uf)
+            next_beam.append((-new_score, new_uf))
+
+        # Keep best beam_width states (lowest neg_score = highest score)
+        next_beam.sort(key=lambda x: x[0])
+        beam = next_beam[:beam_width]
+
+    # Pick the highest-scoring final state
+    best_neg_score, best_uf = beam[0]
+    return np.array(best_uf.labels(), dtype=np.int64)
+
+
+def infer_cells_with_search(
+    model,
+    graph: SynapseGraph,
+    *,
+    high_threshold: float = 0.99,
+    low_sim: float = 0.93,
+    max_boundary_edges: int = 12,
+    beam_width: int = 8,
+) -> np.ndarray:
+    """Run CellGNN with boundary-edge partition search for better accuracy.
+
+    Calls :func:`boundary_partition_search` to resolve ambiguous merge
+    decisions in the similarity band ``[low_sim, high_threshold)``.
+
+    Parameters
+    ----------
+    model : CellGNN
+    graph : SynapseGraph
+    high_threshold : cosine similarity above which merges are accepted without search
+    low_sim : lower bound for the ambiguous band
+    max_boundary_edges : cap on uncertain edges explored in the search
+    beam_width : beam width for the search
+
+    Returns
+    -------
+    labels : int64 ndarray [N_synapses]
+    """
+    return boundary_partition_search(
+        model,
+        graph,
+        low_sim=low_sim,
+        high_sim=high_threshold,
+        max_boundary_edges=max_boundary_edges,
+        beam_width=beam_width,
+    )
 
 
 def score_cell_quality(

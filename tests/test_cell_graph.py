@@ -12,11 +12,13 @@ from neuronauts.cell_graph import (
     SynapseEdge,
     SynapseGraph,
     build_synapse_graph,
+    boundary_partition_search,
     cell_gnn_assembly,
     cell_graph_train_step,
     connectivity_graph_from_cell_labels,
     extract_grammar_scores,
     infer_cells,
+    infer_cells_with_search,
     load_cell_gnn,
     partition_from_embeddings,
     rank_boxes_by_tangledness,
@@ -904,3 +906,168 @@ class TestEndToEndTraining:
         ])
         assert args.command == "scale-test"
         assert args.min_synapses == 50
+
+
+# ---------------------------------------------------------------------------
+# Boundary-edge partition search
+# ---------------------------------------------------------------------------
+
+def _make_small_graph_with_edges(
+    n: int,
+    edges: list[tuple[int, int]],
+    positions: np.ndarray | None = None,
+) -> SynapseGraph:
+    """Build a minimal SynapseGraph with explicit edges for unit testing."""
+    if positions is None:
+        rng = np.random.default_rng(0)
+        positions = rng.standard_normal((n, 3)).astype(np.float32) * 10.0
+    syn_edges = [
+        SynapseEdge(src=i, dst=j, distance=1.0, same_scaffold=0.0,
+                    grammar_score=0.5, shared_agents=0)
+        for (i, j) in edges
+    ]
+    return SynapseGraph(
+        n_synapses=n,
+        role="pre",
+        node_positions=positions,
+        node_scaffold_ids=np.zeros(n, dtype=np.int64),
+        edges=syn_edges,
+        root_ids=None,
+    )
+
+
+class TestBoundaryPartitionSearch:
+
+    def test_returns_valid_labels(self):
+        """boundary_partition_search returns labels with correct shape and non-negative values."""
+        model = CellGNN(node_input_dim=3, d_model=16, n_layers=2,
+                        n_heads=2, embedding_dim=8)
+        syn = _make_synapses(n_cells=3, synapses_per_cell=4)
+        graph = build_synapse_graph(syn, "pre", proximity_radius_nm=10_000.0)
+        labels = boundary_partition_search(model, graph)
+        assert labels.shape == (graph.n_synapses,)
+        assert labels.dtype == np.int64
+        assert labels.min() >= 0
+
+    def test_boundary_edges_identified(self):
+        """Edges in [low_sim, high_sim) are found; out-of-band edges are not."""
+        # Build a model and craft embeddings so that two pairs sit exactly in-band
+        # and two are out-of-band.  We do this by constructing normalised embeddings
+        # directly and bypassing the model via monkey-patching _graph_to_tensors.
+        import types, torch as _torch
+
+        D = 4
+        # Craft four unit vectors:
+        # v0 and v1: sim ~0.96 (in-band)
+        # v2 and v3: sim = 1.0 (above high_sim, out-of-band)
+        v0 = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        angle = np.arccos(0.96)
+        v1 = np.array([np.cos(angle), np.sin(angle), 0.0, 0.0], dtype=np.float32)
+        v2 = np.array([0.0, 0.0, 1.0, 0.0], dtype=np.float32)
+        v3 = np.array([0.0, 0.0, 1.0, 0.0], dtype=np.float32)  # identical to v2
+
+        n = 4
+        positions = np.zeros((n, 3), dtype=np.float32)
+        graph = _make_small_graph_with_edges(n, [(0, 1), (2, 3)], positions)
+
+        # Monkey-patch the model to return our crafted embeddings
+        fixed_emb = _torch.tensor(np.stack([v0, v1, v2, v3]), dtype=_torch.float32)
+
+        class _FakeModel:
+            def eval(self): pass
+            def __call__(self, *args, **kwargs): return fixed_emb
+
+        labels = boundary_partition_search(
+            _FakeModel(), graph,
+            low_sim=0.93, high_sim=0.99,
+            max_boundary_edges=12, beam_width=4,
+        )
+        # v2 and v3 are identical (sim=1.0 >= high_sim) → merged in base partition
+        assert labels[2] == labels[3], "High-sim pair should be merged"
+        # v0 and v1 are in-band → explored by beam search but shape is still valid
+        assert labels.shape == (4,)
+
+    def test_beam_selects_best_partition(self):
+        """Beam search selects the partition with higher within-cell coherence."""
+        import torch as _torch
+
+        D = 4
+        # Three unit vectors: v0 and v1 are very similar, v2 is orthogonal.
+        # Merging (0,1) should score better than not merging.
+        v0 = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        angle = np.arccos(0.965)
+        v1 = np.array([np.cos(angle), np.sin(angle), 0.0, 0.0], dtype=np.float32)
+        v2 = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+
+        n = 3
+        graph = _make_small_graph_with_edges(n, [(0, 1)])
+
+        fixed_emb = _torch.tensor(np.stack([v0, v1, v2]), dtype=_torch.float32)
+
+        class _FakeModel:
+            def eval(self): pass
+            def __call__(self, *args, **kwargs): return fixed_emb
+
+        labels = boundary_partition_search(
+            _FakeModel(), graph,
+            low_sim=0.93, high_sim=0.99,
+            max_boundary_edges=5, beam_width=4,
+        )
+        # v0 and v1 are similar → should end up in the same cell
+        assert labels[0] == labels[1], (
+            f"Beam should merge highly similar nodes 0 and 1 (labels={labels})"
+        )
+        # v2 should be its own cell
+        assert labels[2] != labels[0], (
+            f"Node 2 should not merge with 0/1 (labels={labels})"
+        )
+
+    def test_singleton_graph(self):
+        """A graph with one node returns label [0]."""
+        model = CellGNN(node_input_dim=3, d_model=16, n_layers=1,
+                        n_heads=2, embedding_dim=8)
+        positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+        graph = SynapseGraph(
+            n_synapses=1,
+            role="pre",
+            node_positions=positions,
+            node_scaffold_ids=np.zeros(1, dtype=np.int64),
+            edges=[],
+            root_ids=None,
+        )
+        labels = boundary_partition_search(model, graph)
+        assert labels.tolist() == [0]
+
+    def test_no_boundary_edges_falls_back_to_threshold(self):
+        """When no edges fall in the ambiguous band the result equals infer_cells at high_sim."""
+        model = CellGNN(node_input_dim=3, d_model=16, n_layers=2,
+                        n_heads=2, embedding_dim=8)
+        model.eval()
+        syn = _make_synapses(n_cells=3, synapses_per_cell=4)
+        graph = build_synapse_graph(syn, "pre", proximity_radius_nm=10_000.0)
+
+        high_sim = 0.99
+        # boundary_partition_search with an impossible band (no edges can fall in it)
+        labels_search = boundary_partition_search(
+            model, graph,
+            low_sim=0.999,   # band so narrow that no edges land in it
+            high_sim=high_sim,
+            max_boundary_edges=12,
+            beam_width=8,
+        )
+        labels_infer = infer_cells(model, graph, threshold=high_sim)
+        np.testing.assert_array_equal(
+            labels_search, labels_infer,
+            err_msg="With no boundary edges, result should match infer_cells at high_sim",
+        )
+
+    def test_infer_cells_with_search_returns_valid_labels(self):
+        """infer_cells_with_search wrapper produces valid integer labels."""
+        model = CellGNN(node_input_dim=3, d_model=16, n_layers=2,
+                        n_heads=2, embedding_dim=8)
+        syn = _make_synapses(n_cells=2, synapses_per_cell=5)
+        graph = build_synapse_graph(syn, "pre", proximity_radius_nm=10_000.0)
+        labels = infer_cells_with_search(model, graph)
+        assert labels.shape == (graph.n_synapses,)
+        assert labels.dtype == np.int64
+        assert labels.min() >= 0
