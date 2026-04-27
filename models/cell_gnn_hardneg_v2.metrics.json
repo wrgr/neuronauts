@@ -1,0 +1,22 @@
+{
+  "model": "cell_gnn_hardneg_v2.pt",
+  "training": {
+    "boxes": 37, "epochs": 50, "d_model": 64, "n_layers": 3,
+    "n_heads": 4, "embedding_dim": 32,
+    "hard_neg_threshold": 0.90, "hard_neg_weight": 2.0,
+    "pos_sim_final": 0.848, "neg_sim_final": 0.059, "hn_sim_final": 0.916
+  },
+  "results": {
+    "plain_t099_agglomerative": {"mean_f1": 0.269, "median_f1": 0.274, "note": "5-feat model, legacy single-linkage"},
+    "plain_t099_complete": {"mean_f1": 0.255, "median_f1": 0.225, "wrong_base_mean": 16.0},
+    "search_t0999_5feat_k40": {"mean_f1": 0.205, "median_f1": 0.192, "wrong_base_mean": 2.1, "low_sim": 0.93},
+    "search_t0999_hardneg_v2_k40": {"mean_f1": 0.213, "median_f1": 0.192, "wrong_base_mean": 0.0, "low_sim": 0.80},
+    "search_t0999_hardneg_v2_k40_wider": {"mean_f1": 0.213, "median_f1": 0.192, "wrong_base_mean": 0.0, "low_sim": 0.80}
+  },
+  "diagnosis": {
+    "hard_neg_mining_eliminated_wrong_base": true,
+    "pos_sim_degraded": "0.959 -> 0.848, many same-cell pairs now below low_sim=0.93",
+    "oracle_reachable": "0% — boundary band covers 50-90% of missed pairs but not all",
+    "bottleneck": "~37 no-EM boxes insufficient; model needs more data to achieve pos_sim>0.99"
+  }
+}
