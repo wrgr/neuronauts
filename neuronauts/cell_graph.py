@@ -704,6 +704,10 @@ def cell_graph_train_step(
     edit_positive_pairs: "list[tuple[int, int]] | None" = None,
     edit_negative_pairs: "list[tuple[int, int]] | None" = None,
     edit_weight: float = 2.0,
+    hard_neg_mining: bool = True,
+    hard_neg_threshold: float = 0.7,
+    hard_neg_weight: float = 3.0,
+    max_hard_negs: int = 64,
 ) -> dict[str, float]:
     """One gradient step: contrastive loss over synapse embeddings.
 
@@ -757,7 +761,29 @@ def cell_graph_train_step(
                 neg_pairs.append(p)
 
     if not pos_pairs and not neg_pairs:
-        return {"loss": 0.0, "pos_sim": 0.0, "neg_sim": 0.0, "n_pos": 0, "n_neg": 0}
+        return {"loss": 0.0, "pos_sim": 0.0, "neg_sim": 0.0, "n_pos": 0, "n_neg": 0,
+                "hard_neg_sim": 0.0, "n_hard_neg": 0}
+
+    # Online hard negative mining: find different-root pairs with surprisingly high sim
+    hard_neg_pairs: list[tuple[int, int]] = []
+    if hard_neg_mining and graph.root_ids is not None and N <= 300:
+        with torch.no_grad():
+            sim_matrix = emb_norm @ emb_norm.T  # [N, N]
+        root_arr = graph.root_ids
+        ui, uj = torch.triu_indices(N, N, offset=1)
+        pair_sims = sim_matrix[ui, uj]
+        ri = torch.tensor(root_arr[ui.numpy()], dtype=torch.long)
+        rj = torch.tensor(root_arr[uj.numpy()], dtype=torch.long)
+        valid = (ri > 0) & (rj > 0)
+        different = ri != rj
+        hard = pair_sims > hard_neg_threshold
+        mask = valid & different & hard
+        hard_indices = mask.nonzero(as_tuple=False).view(-1)
+        # Sort by descending similarity (hardest first) then cap
+        if len(hard_indices) > 0:
+            sorted_by_sim = hard_indices[pair_sims[hard_indices].argsort(descending=True)]
+            for k in sorted_by_sim[:max_hard_negs]:
+                hard_neg_pairs.append((int(ui[k]), int(uj[k])))
 
     loss_terms = []
     pos_sim_val = 0.0
@@ -778,6 +804,15 @@ def cell_graph_train_step(
         loss_terms.append(F.relu(neg_sims - (1.0 - margin)).mean())
         neg_sim_val = float(neg_sims.detach().mean())
 
+    if hard_neg_pairs:
+        hni = torch.tensor([p[0] for p in hard_neg_pairs], dtype=torch.long)
+        hnj = torch.tensor([p[1] for p in hard_neg_pairs], dtype=torch.long)
+        hn_sims = (emb_norm[hni] * emb_norm[hnj]).sum(dim=-1)
+        loss_terms.append(hard_neg_weight * F.relu(hn_sims - (1.0 - margin)).mean())
+        hn_sim_val = float(hn_sims.detach().mean())
+    else:
+        hn_sim_val = 0.0
+
     loss = sum(loss_terms)  # type: ignore[arg-type]
     loss.backward()
     optimizer.step()
@@ -788,6 +823,8 @@ def cell_graph_train_step(
         "neg_sim": neg_sim_val,
         "n_pos": len(pos_pairs),
         "n_neg": len(neg_pairs),
+        "hard_neg_sim": hn_sim_val,
+        "n_hard_neg": len(hard_neg_pairs),
     }
 
 
@@ -803,6 +840,9 @@ def train_cell_gnn(
     val_cache=None,
     edit_pairs: "list | None" = None,
     edit_weight: float = 2.0,
+    hard_neg_mining: bool = True,
+    hard_neg_threshold: float = 0.7,
+    hard_neg_weight: float = 3.0,
     verbose: bool = True,
 ) -> dict[str, list[float]]:
     """Train CellGNN over a BoxCache for ``config.epochs`` epochs.
@@ -862,6 +902,7 @@ def train_cell_gnn(
     for epoch in range(cfg.epochs):
         epoch_metrics: dict[str, list[float]] = {
             "loss": [], "pos_sim": [], "neg_sim": [],
+            "hard_neg_sim": [], "n_hard_neg": [],
         }
 
         for record in cache.iter_records(shuffle=True, rng=rng):
@@ -887,14 +928,21 @@ def train_cell_gnn(
                     edit_positive_pairs=_edit_pos[role] or None,
                     edit_negative_pairs=_edit_neg[role] or None,
                     edit_weight=edit_weight,
+                    hard_neg_mining=hard_neg_mining,
+                    hard_neg_threshold=hard_neg_threshold,
+                    hard_neg_weight=hard_neg_weight,
                 )
                 epoch_metrics["loss"].append(m["loss"])
                 epoch_metrics["pos_sim"].append(m["pos_sim"])
                 epoch_metrics["neg_sim"].append(m["neg_sim"])
+                epoch_metrics["hard_neg_sim"].append(m.get("hard_neg_sim", 0.0))
+                epoch_metrics["n_hard_neg"].append(float(m.get("n_hard_neg", 0)))
 
         mean_loss = float(np.mean(epoch_metrics["loss"])) if epoch_metrics["loss"] else 0.0
         mean_pos = float(np.mean(epoch_metrics["pos_sim"])) if epoch_metrics["pos_sim"] else 0.0
         mean_neg = float(np.mean(epoch_metrics["neg_sim"])) if epoch_metrics["neg_sim"] else 0.0
+        mean_hn_sim = float(np.mean(epoch_metrics["hard_neg_sim"])) if epoch_metrics["hard_neg_sim"] else 0.0
+        total_hn = int(sum(epoch_metrics["n_hard_neg"]))
         history["train_loss"].append(mean_loss)
         history["train_pos_sim"].append(mean_pos)
         history["train_neg_sim"].append(mean_neg)
@@ -937,11 +985,14 @@ def train_cell_gnn(
             val_str = ""
             if val_cache is not None:
                 val_str = f"  val_loss={history['val_loss'][-1]:.4f}"
+            hn_str = ""
+            if total_hn > 0:
+                hn_str = f"  hn_sim={mean_hn_sim:.3f}  n_hn={total_hn}"
             print(
                 f"Epoch {epoch + 1}/{cfg.epochs}  "
                 f"loss={mean_loss:.4f}  "
                 f"pos_sim={mean_pos:.3f}  neg_sim={mean_neg:.3f}"
-                f"{val_str}"
+                f"{hn_str}{val_str}"
             )
 
     return history
@@ -1203,6 +1254,63 @@ def infer_cells_with_search(
         corridor_accept_threshold=corridor_accept_threshold,
         corridor_reject_threshold=corridor_reject_threshold,
     )
+
+
+def _get_boundary_edges(
+    model,
+    graph: SynapseGraph,
+    *,
+    low_sim: float = 0.93,
+    high_sim: float = 0.999,
+    max_boundary_edges: int = 40,
+) -> "list[tuple[int, int]]":
+    """Run GNN inference and return the list of ambiguous boundary edge pairs.
+
+    These are the edges whose cosine similarity falls in ``[low_sim, high_sim)``,
+    capped at ``max_boundary_edges`` (selecting those closest to the midpoint of
+    the band first).
+
+    Parameters
+    ----------
+    model : CellGNN
+    graph : SynapseGraph
+    low_sim : lower bound of the ambiguous similarity band (inclusive)
+    high_sim : upper bound of the ambiguous similarity band (exclusive)
+    max_boundary_edges : maximum number of boundary edges to return
+
+    Returns
+    -------
+    list of ``(i, j)`` index pairs (undirected, i <= j)
+    """
+    torch, _ = _require_torch()
+    import torch.nn.functional as F
+
+    N = graph.n_synapses
+    if N <= 1:
+        return []
+
+    model.eval()
+    with torch.no_grad():
+        node_feat, edge_src, edge_dst, edge_feat = _graph_to_tensors(graph)
+        raw = model(node_feat, edge_src, edge_dst, edge_feat)
+        normed = F.normalize(raw, p=2, dim=-1).cpu().numpy()  # [N, D]
+
+    midpoint = (low_sim + high_sim) / 2.0
+    boundary: list[tuple[float, int, int]] = []
+    seen_pairs: set[tuple[int, int]] = set()
+    for e in graph.edges:
+        i, j = e.src, e.dst
+        key = (min(i, j), max(i, j))
+        if key in seen_pairs:
+            continue
+        seen_pairs.add(key)
+        sim = float(normed[i] @ normed[j])
+        if low_sim <= sim < high_sim:
+            boundary.append((abs(sim - midpoint), key[0], key[1]))
+
+    boundary.sort(key=lambda x: x[0])
+    boundary = boundary[:max_boundary_edges]
+    return [(i, j) for (_, i, j) in boundary]
 
 
 def score_cell_quality(

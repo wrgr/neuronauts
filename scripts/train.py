@@ -1203,6 +1203,9 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
         val_cache=val_cache,
         edit_pairs=edit_pairs,
         edit_weight=getattr(args, "edit_weight", 2.0),
+        hard_neg_mining=not getattr(args, "no_hard_neg_mining", False),
+        hard_neg_threshold=getattr(args, "hard_neg_threshold", 0.7),
+        hard_neg_weight=getattr(args, "hard_neg_weight", 3.0),
         verbose=True,
     )
     elapsed = time.time() - t0
@@ -2258,6 +2261,12 @@ def parse_args(argv=None) -> argparse.Namespace:
                         help="TSV of edit-history pairs (from neuronauts.edit_history build-pairs).")
     p_cell.add_argument("--edit-weight", type=float, default=2.0,
                         help="Loss multiplier for edit-derived contrastive pairs.")
+    p_cell.add_argument("--hard-neg-threshold", type=float, default=0.7,
+                        help="Mine different-root pairs with cosine sim above this as hard negatives.")
+    p_cell.add_argument("--hard-neg-weight", type=float, default=3.0,
+                        help="Loss multiplier for hard-negative mined pairs.")
+    p_cell.add_argument("--no-hard-neg-mining", action="store_true",
+                        help="Disable online hard negative mining.")
     p_cell.set_defaults(func=cmd_train_cell_gnn)
 
     # evaluate
