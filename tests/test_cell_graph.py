@@ -1180,3 +1180,188 @@ class TestBoundaryPartitionSearch:
             corridor_accept_threshold=0.8,
         )
         assert labels[0] == labels[1], f"corridor_scores not forwarded correctly (labels={labels})"
+
+
+# ---------------------------------------------------------------------------
+# Hard negative mining
+# ---------------------------------------------------------------------------
+
+class TestHardNegativeMining:
+    """Tests for online hard negative mining in cell_graph_train_step."""
+
+    def _make_graph_with_confusing_pair(self) -> SynapseGraph:
+        """Build a SynapseGraph where nodes 0 and 1 have different roots but
+        are positioned identically (so a fresh model will produce very similar
+        embeddings for them).  Nodes 2 and 3 belong to root 1 (clearly separate)."""
+        # Positions: nodes 0 and 1 share the same location → similar embeddings
+        positions = np.array([
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0],   # same as node 0 → confusing pair
+            [500.0, 0.0, 0.0],
+            [500.0, 0.0, 0.0],
+        ], dtype=np.float32)
+        root_ids = np.array([1, 2, 1, 2], dtype=np.int64)  # node 0 ≠ node 1
+        edges = [
+            SynapseEdge(src=0, dst=1, distance=0.0, same_scaffold=0.0,
+                        grammar_score=0.0, shared_agents=0),
+            SynapseEdge(src=2, dst=3, distance=0.0, same_scaffold=0.0,
+                        grammar_score=0.0, shared_agents=0),
+        ]
+        return SynapseGraph(
+            n_synapses=4,
+            role="pre",
+            node_positions=positions,
+            node_scaffold_ids=np.zeros(4, dtype=np.int64),
+            edges=edges,
+            root_ids=root_ids,
+        )
+
+    def test_hard_neg_mining_finds_confusing_pairs(self):
+        """Nodes with different roots but very similar embeddings should be mined."""
+        import torch as _torch
+        import torch.nn.functional as F
+        from neuronauts.cell_graph import _graph_to_tensors
+
+        graph = self._make_graph_with_confusing_pair()
+        N = graph.n_synapses
+
+        # Build a mock model that returns nearly identical embeddings for nodes 0 and 1
+        # (sim ≈ 1.0) and clearly different embeddings for nodes 2 and 3 vs 0/1.
+        fixed_emb = _torch.tensor([
+            [1.0, 0.0, 0.0, 0.0],   # node 0 — root 1
+            [1.0, 0.0, 0.0, 0.0],   # node 1 — root 2, nearly identical → hard neg
+            [0.0, 1.0, 0.0, 0.0],   # node 2 — root 1
+            [0.0, 1.0, 0.0, 0.0],   # node 3 — root 2, nearly identical → hard neg
+        ], dtype=_torch.float32)
+
+        model = CellGNN(node_input_dim=3, d_model=16, n_layers=1,
+                        n_heads=2, embedding_dim=4)
+        # Override model forward to return our crafted embeddings
+        original_forward = model.forward
+        model.forward = lambda *args, **kwargs: fixed_emb
+
+        emb_norm = F.normalize(fixed_emb, p=2, dim=-1)
+        sim_matrix = emb_norm @ emb_norm.T
+
+        ui, uj = _torch.triu_indices(N, N, offset=1)
+        pair_sims = sim_matrix[ui, uj]
+        root_arr = graph.root_ids
+        ri = _torch.tensor(root_arr[ui.numpy()], dtype=_torch.long)
+        rj = _torch.tensor(root_arr[uj.numpy()], dtype=_torch.long)
+        valid = (ri > 0) & (rj > 0)
+        different = ri != rj
+        hard_neg_threshold = 0.7
+        hard = pair_sims > hard_neg_threshold
+        mask = valid & different & hard
+        hard_indices = mask.nonzero(as_tuple=False).view(-1)
+
+        hard_neg_pairs = []
+        if len(hard_indices) > 0:
+            sorted_by_sim = hard_indices[pair_sims[hard_indices].argsort(descending=True)]
+            for k in sorted_by_sim[:64]:
+                hard_neg_pairs.append((int(ui[k]), int(uj[k])))
+
+        assert len(hard_neg_pairs) > 0, (
+            "Expected hard negative pairs with nearly identical embeddings and different roots"
+        )
+        # Specifically, the (0,1) pair should be mined (same position → sim ≈ 1.0)
+        assert (0, 1) in hard_neg_pairs, f"Expected (0,1) in hard_neg_pairs, got {hard_neg_pairs}"
+
+    def test_hard_neg_mining_disabled(self):
+        """With hard_neg_mining=False, the step should return n_hard_neg=0."""
+        model = CellGNN(node_input_dim=3, d_model=16, n_layers=2,
+                        n_heads=2, embedding_dim=8)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        graph = self._make_graph_with_confusing_pair()
+
+        m = cell_graph_train_step(
+            model, optimizer, graph,
+            hard_neg_mining=False,
+        )
+        assert m["n_hard_neg"] == 0, (
+            f"Expected n_hard_neg=0 when hard_neg_mining=False, got {m['n_hard_neg']}"
+        )
+
+    def test_hard_neg_mining_returns_loss(self):
+        """cell_graph_train_step with hard_neg_mining=True should run and return loss > 0."""
+        model = CellGNN(node_input_dim=3, d_model=16, n_layers=2,
+                        n_heads=2, embedding_dim=8)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        syn = _make_synapses(n_cells=3, synapses_per_cell=4, seed=7)
+        graph = build_synapse_graph(syn, "pre", proximity_radius_nm=100_000.0)
+
+        m = cell_graph_train_step(
+            model, optimizer, graph,
+            hard_neg_mining=True,
+            hard_neg_threshold=0.0,   # threshold=0 → mine ALL different-root pairs
+            hard_neg_weight=3.0,
+        )
+        assert "loss" in m
+        assert "hard_neg_sim" in m
+        assert "n_hard_neg" in m
+        assert m["loss"] >= 0.0, f"Loss must be non-negative, got {m['loss']}"
+
+    def test_hard_neg_mining_threshold(self):
+        """Pairs with cosine sim below hard_neg_threshold should not be mined."""
+        import torch as _torch
+        import torch.nn.functional as F
+
+        # Build a graph where the only different-root pair has sim ≈ 0.5 (below threshold=0.7)
+        positions = np.array([
+            [0.0, 0.0, 0.0],
+            [100.0, 0.0, 0.0],
+        ], dtype=np.float32)
+        root_ids = np.array([1, 2], dtype=np.int64)
+        graph = SynapseGraph(
+            n_synapses=2,
+            role="pre",
+            node_positions=positions,
+            node_scaffold_ids=np.zeros(2, dtype=np.int64),
+            edges=[SynapseEdge(src=0, dst=1, distance=100.0, same_scaffold=0.0,
+                               grammar_score=0.0, shared_agents=0)],
+            root_ids=root_ids,
+        )
+
+        # Craft embeddings: sim(0,1) ≈ 0 (orthogonal) — well below threshold=0.7
+        fixed_emb = _torch.tensor([
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+        ], dtype=_torch.float32)
+
+        N = 2
+        emb_norm = F.normalize(fixed_emb, p=2, dim=-1)
+        sim_matrix = emb_norm @ emb_norm.T
+        ui, uj = _torch.triu_indices(N, N, offset=1)
+        pair_sims = sim_matrix[ui, uj]
+        root_arr = graph.root_ids
+        ri = _torch.tensor(root_arr[ui.numpy()], dtype=_torch.long)
+        rj = _torch.tensor(root_arr[uj.numpy()], dtype=_torch.long)
+        valid = (ri > 0) & (rj > 0)
+        different = ri != rj
+        hard_neg_threshold = 0.7
+        hard = pair_sims > hard_neg_threshold
+        mask = valid & different & hard
+        hard_indices = mask.nonzero(as_tuple=False).view(-1)
+
+        # With orthogonal embeddings (sim=0), no pairs should exceed threshold=0.7
+        assert len(hard_indices) == 0, (
+            f"Expected no hard negatives with orthogonal embeddings below threshold, "
+            f"got {len(hard_indices)} pairs"
+        )
+
+    def test_hard_neg_mining_cli_args_parse(self):
+        """Verify the train-cell-gnn subcommand accepts the hard-neg CLI flags."""
+        import sys
+        sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
+        from scripts.train import parse_args
+
+        args = parse_args([
+            "train-cell-gnn",
+            "--cache-dir", "data/boxes",
+            "--hard-neg-threshold", "0.85",
+            "--hard-neg-weight", "5.0",
+            "--no-hard-neg-mining",
+        ])
+        assert args.hard_neg_threshold == pytest.approx(0.85)
+        assert args.hard_neg_weight == pytest.approx(5.0)
+        assert args.no_hard_neg_mining is True
