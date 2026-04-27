@@ -1276,6 +1276,7 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
         CellGNN,
         CellGNNConfig,
         build_synapse_graph,
+        cell_gnn_assembly,
         connectivity_graph_from_cell_labels,
         infer_cells,
         load_cell_gnn,
@@ -1350,23 +1351,61 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
             continue
 
         # CellGNN evaluation
-        pre_graph = build_synapse_graph(
-            synapses, "pre",
-            proximity_radius_nm=args.proximity_radius_nm,
-        )
-        post_graph = build_synapse_graph(
-            synapses, "post",
-            proximity_radius_nm=args.proximity_radius_nm,
-        )
-        pre_labels = infer_cells(
-            model, pre_graph,
-            threshold=args.partition_threshold,
-        )
-        post_labels = infer_cells(
-            model, post_graph,
-            threshold=args.partition_threshold,
-        )
-        cg = connectivity_graph_from_cell_labels(pre_labels, post_labels, synapses)
+        use_bs = getattr(args, "use_boundary_search", False)
+        if use_bs:
+            cg = cell_gnn_assembly(
+                synapses, model,
+                proximity_radius_nm=args.proximity_radius_nm,
+                partition_threshold=args.partition_threshold,
+                use_boundary_search=True,
+                high_sim=getattr(args, "high_sim", 0.999),
+                low_sim=getattr(args, "low_sim", 0.93),
+                max_boundary_edges=getattr(args, "max_boundary_edges", 40),
+                use_em_corridors=getattr(args, "use_em_corridors", False),
+                corridor_accept_threshold=getattr(args, "corridor_accept", 0.8),
+                corridor_reject_threshold=getattr(args, "corridor_reject", 0.2),
+                verbose=False,
+            )
+            pre_graph = build_synapse_graph(
+                synapses, "pre",
+                proximity_radius_nm=args.proximity_radius_nm,
+            )
+            post_graph = build_synapse_graph(
+                synapses, "post",
+                proximity_radius_nm=args.proximity_radius_nm,
+            )
+            # Reconstruct labels for quality scoring (re-use assembly's graphs)
+            from neuronauts.cell_graph import infer_cells_with_search
+            pre_labels = infer_cells_with_search(
+                model, pre_graph,
+                high_threshold=getattr(args, "high_sim", 0.999),
+                low_sim=getattr(args, "low_sim", 0.93),
+                max_boundary_edges=getattr(args, "max_boundary_edges", 40),
+            )
+            post_labels = infer_cells_with_search(
+                model, post_graph,
+                high_threshold=getattr(args, "high_sim", 0.999),
+                low_sim=getattr(args, "low_sim", 0.93),
+                max_boundary_edges=getattr(args, "max_boundary_edges", 40),
+            )
+        else:
+            pre_graph = build_synapse_graph(
+                synapses, "pre",
+                proximity_radius_nm=args.proximity_radius_nm,
+            )
+            post_graph = build_synapse_graph(
+                synapses, "post",
+                proximity_radius_nm=args.proximity_radius_nm,
+            )
+            pre_labels = infer_cells(
+                model, pre_graph,
+                threshold=args.partition_threshold,
+            )
+            post_labels = infer_cells(
+                model, post_graph,
+                threshold=args.partition_threshold,
+            )
+            cg = connectivity_graph_from_cell_labels(pre_labels, post_labels, synapses)
         m = lg_evaluate(cg, synapses.pre_root_id, synapses.post_root_id)
         gnn_f1s.append(m.f1)
         gnn_precs.append(m.precision)
@@ -2289,6 +2328,20 @@ def parse_args(argv=None) -> argparse.Namespace:
     p_eval.add_argument("--split", default="test", choices=["val", "test"],
                         help="Which split to evaluate on (default: test).")
     p_eval.add_argument("--log-dir", default="run_logs")
+    p_eval.add_argument("--use-boundary-search", action="store_true",
+                        help="Use boundary-edge beam search instead of plain infer_cells.")
+    p_eval.add_argument("--high-sim", type=float, default=0.999,
+                        help="Upper similarity bound for boundary search (default: 0.999).")
+    p_eval.add_argument("--low-sim", type=float, default=0.93,
+                        help="Lower similarity bound for boundary search (default: 0.93).")
+    p_eval.add_argument("--max-boundary-edges", type=int, default=40,
+                        help="Max boundary edges per graph in beam search (default: 40).")
+    p_eval.add_argument("--use-em-corridors", action="store_true",
+                        help="Fetch EM corridors for boundary edges (requires network).")
+    p_eval.add_argument("--corridor-accept", type=float, default=0.8,
+                        help="EM score above which a merge is force-accepted (default: 0.8).")
+    p_eval.add_argument("--corridor-reject", type=float, default=0.2,
+                        help="EM score below which a merge is force-rejected (default: 0.2).")
     p_eval.set_defaults(func=cmd_evaluate)
 
     # sweep

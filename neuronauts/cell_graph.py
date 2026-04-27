@@ -1842,6 +1842,15 @@ def cell_gnn_assembly(
     partition_method: str = "agglomerative",
     path_feature_mode: str = DEFAULT_PATH_FEATURE_MODE,
     verbose: bool = False,
+    use_boundary_search: bool = False,
+    high_sim: float = 0.999,
+    low_sim: float = 0.93,
+    max_boundary_edges: int = 40,
+    beam_width: int = 8,
+    use_em_corridors: bool = False,
+    corridor_radius_nm: float = 1500.0,
+    corridor_accept_threshold: float = 0.8,
+    corridor_reject_threshold: float = 0.2,
 ) -> "ConnectivityGraph":
     """Run CellGNN to produce a ConnectivityGraph — drop-in alternative to _build_graph.
 
@@ -1870,6 +1879,33 @@ def cell_gnn_assembly(
         Feature mode for grammar score extraction.
     verbose :
         Print progress.
+    use_boundary_search :
+        If True, use :func:`boundary_partition_search` instead of
+        :func:`infer_cells`.  Resolves ambiguous merge decisions in the
+        similarity band ``[low_sim, high_sim)``.  Default False preserves
+        backward-compatible behaviour.
+    high_sim :
+        Upper bound (exclusive) of the ambiguous similarity band used by
+        boundary search.  Edges above this are unconditionally merged.
+    low_sim :
+        Lower bound (inclusive) of the ambiguous band.
+    max_boundary_edges :
+        Maximum number of boundary edges explored by the beam search.
+    beam_width :
+        Beam width for the beam search.
+    use_em_corridors :
+        If True, fetch EM corridor volumes for boundary edges and use the
+        connectivity scores to force-accept or force-reject decisive cases
+        before beam search.  Requires network access (CloudVolume).  Errors
+        are caught and logged as warnings; the pipeline falls back to beam
+        search without corridor scores.  Ignored when
+        ``use_boundary_search=False``.
+    corridor_radius_nm :
+        Cylinder radius (nm) for EM corridor specifications.
+    corridor_accept_threshold :
+        EM score above which a boundary-edge merge is force-accepted.
+    corridor_reject_threshold :
+        EM score below which a boundary-edge merge is force-rejected.
     """
     import time as _time
 
@@ -1922,16 +1958,65 @@ def cell_gnn_assembly(
         )
 
     # Infer cell labels
-    pre_labels = infer_cells(
-        model, pre_graph,
-        threshold=partition_threshold,
-        method=partition_method,
-    )
-    post_labels = infer_cells(
-        model, post_graph,
-        threshold=partition_threshold,
-        method=partition_method,
-    )
+    if not use_boundary_search:
+        # --- Backward-compatible path ---
+        pre_labels = infer_cells(
+            model, pre_graph,
+            threshold=partition_threshold,
+            method=partition_method,
+        )
+        post_labels = infer_cells(
+            model, post_graph,
+            threshold=partition_threshold,
+            method=partition_method,
+        )
+    else:
+        # --- Boundary search path ---
+        def _run_side(graph: SynapseGraph) -> np.ndarray:
+            corridor_scores = None
+            if use_em_corridors:
+                boundary_edges = _get_boundary_edges(
+                    model, graph,
+                    low_sim=low_sim,
+                    high_sim=high_sim,
+                    max_boundary_edges=max_boundary_edges,
+                )
+                if boundary_edges:
+                    try:
+                        from .em_corridor import batch_score_boundary_edges as _bsbe
+                        corridor_scores = _bsbe(
+                            graph.node_positions,
+                            boundary_edges,
+                            radius_nm=corridor_radius_nm,
+                            verbose=verbose,
+                        )
+                        if verbose:
+                            print(
+                                f"  [em_corridor] scored {len(corridor_scores)} "
+                                f"boundary edges for {graph.role} graph"
+                            )
+                    except Exception as exc:
+                        import warnings as _warnings
+                        _warnings.warn(
+                            f"[cell_gnn_assembly] EM corridor scoring failed for "
+                            f"{graph.role} graph: {exc!r}. "
+                            "Falling back to beam search without corridor scores.",
+                            stacklevel=3,
+                        )
+                        corridor_scores = None
+            return infer_cells_with_search(
+                model, graph,
+                high_threshold=high_sim,
+                low_sim=low_sim,
+                max_boundary_edges=max_boundary_edges,
+                beam_width=beam_width,
+                corridor_scores=corridor_scores,
+                corridor_accept_threshold=corridor_accept_threshold,
+                corridor_reject_threshold=corridor_reject_threshold,
+            )
+
+        pre_labels = _run_side(pre_graph)
+        post_labels = _run_side(post_graph)
 
     n_pre_cells = len(set(pre_labels.tolist()))
     n_post_cells = len(set(post_labels.tolist()))

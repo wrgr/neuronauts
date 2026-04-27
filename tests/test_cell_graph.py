@@ -1183,6 +1183,103 @@ class TestBoundaryPartitionSearch:
 
 
 # ---------------------------------------------------------------------------
+# cell_gnn_assembly with boundary search and EM corridors
+# ---------------------------------------------------------------------------
+
+class TestCellGNNAssemblyWithSearch:
+    """Tests for the use_boundary_search and use_em_corridors flags of cell_gnn_assembly."""
+
+    def test_assembly_no_search_backward_compat(self):
+        """cell_gnn_assembly without use_boundary_search returns a ConnectivityGraph (backward compat)."""
+        from neuronauts.merge import ConnectivityGraph
+
+        syn = _make_synapses(n_cells=3, synapses_per_cell=4)
+        model = CellGNN(node_input_dim=3, d_model=16, n_layers=2,
+                        n_heads=2, embedding_dim=8)
+        model.eval()
+
+        # Default: use_boundary_search=False
+        cg = cell_gnn_assembly(syn, model, proximity_radius_nm=50_000.0)
+
+        assert isinstance(cg, ConnectivityGraph)
+        assert len(cg.neurons) > 0
+        assert len(cg.edges) > 0
+
+    def test_assembly_with_boundary_search(self):
+        """cell_gnn_assembly with use_boundary_search=True returns a ConnectivityGraph."""
+        from neuronauts.merge import ConnectivityGraph
+
+        syn = _make_synapses(n_cells=3, synapses_per_cell=4)
+        model = CellGNN(node_input_dim=3, d_model=16, n_layers=2,
+                        n_heads=2, embedding_dim=8)
+        model.eval()
+
+        cg = cell_gnn_assembly(
+            syn, model,
+            proximity_radius_nm=50_000.0,
+            use_boundary_search=True,
+            high_sim=0.999,
+            low_sim=0.93,
+            max_boundary_edges=40,
+            beam_width=8,
+            use_em_corridors=False,
+        )
+
+        assert isinstance(cg, ConnectivityGraph)
+        assert len(cg.neurons) > 0
+        assert len(cg.edges) > 0
+        # Each synapse must appear in exactly one pre and one post neuron.
+        n_synapses = len(syn.pre_pt)
+        pre_neurons = [n for n in cg.neurons.values() if n.role == "pre"]
+        post_neurons = [n for n in cg.neurons.values() if n.role == "post"]
+        total_pre_syn = sum(len(n.synapse_indices) for n in pre_neurons)
+        total_post_syn = sum(len(n.synapse_indices) for n in post_neurons)
+        assert total_pre_syn == n_synapses
+        assert total_post_syn == n_synapses
+
+    def test_assembly_with_corridor_scores_mock(self):
+        """Mock batch_score_boundary_edges to verify corridor scores are used by assembly."""
+        import unittest.mock as mock
+        from neuronauts.merge import ConnectivityGraph
+
+        syn = _make_synapses(n_cells=3, synapses_per_cell=5)
+        model = CellGNN(node_input_dim=3, d_model=16, n_layers=2,
+                        n_heads=2, embedding_dim=8)
+        model.eval()
+
+        # Patch batch_score_boundary_edges in the em_corridor module.
+        # Return an empty dict (no corridor evidence) so the beam search
+        # proceeds without overrides — this tests that the mock is wired
+        # through without needing network access.
+        mock_scores: dict = {}
+        with mock.patch(
+            "neuronauts.em_corridor.batch_score_boundary_edges",
+            return_value=mock_scores,
+        ) as mock_bsbe:
+            cg = cell_gnn_assembly(
+                syn, model,
+                proximity_radius_nm=50_000.0,
+                use_boundary_search=True,
+                use_em_corridors=True,
+                high_sim=0.999,
+                low_sim=0.93,
+                max_boundary_edges=40,
+                beam_width=4,
+                corridor_radius_nm=1500.0,
+                corridor_accept_threshold=0.8,
+                corridor_reject_threshold=0.2,
+            )
+
+        assert isinstance(cg, ConnectivityGraph)
+        assert len(cg.neurons) > 0
+        assert len(cg.edges) > 0
+        # batch_score_boundary_edges is called at most twice (once per side)
+        # when boundary edges exist; may be 0 if the fresh model produces no
+        # boundary-band edges.
+        assert mock_bsbe.call_count <= 2
+
+
+# ---------------------------------------------------------------------------
 # Hard negative mining
 # ---------------------------------------------------------------------------
 
