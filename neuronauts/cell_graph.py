@@ -1007,7 +1007,7 @@ def infer_cells(
     graph: SynapseGraph,
     *,
     threshold: float = 0.5,
-    method: str = "agglomerative",
+    method: str = "complete",
 ) -> np.ndarray:
     """Run CellGNN on one SynapseGraph and return integer cell labels [N].
 
