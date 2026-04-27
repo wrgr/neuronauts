@@ -1071,3 +1071,112 @@ class TestBoundaryPartitionSearch:
         assert labels.shape == (graph.n_synapses,)
         assert labels.dtype == np.int64
         assert labels.min() >= 0
+
+    # ------------------------------------------------------------------
+    # EM corridor override tests
+    # ------------------------------------------------------------------
+
+    def test_corridor_force_accept(self):
+        """A high corridor score forces a merge even without beam search."""
+        import torch as _torch
+
+        D = 4
+        v0 = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        angle = np.arccos(0.965)
+        v1 = np.array([np.cos(angle), np.sin(angle), 0.0, 0.0], dtype=np.float32)
+        v2 = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+
+        graph = _make_small_graph_with_edges(3, [(0, 1)])
+        fixed_emb = _torch.tensor(np.stack([v0, v1, v2]), dtype=_torch.float32)
+
+        class _FakeModel:
+            def eval(self): pass
+            def __call__(self, *args, **kwargs): return fixed_emb
+
+        # Corridor score 0.9 for edge (0,1) → should force-accept
+        labels = boundary_partition_search(
+            _FakeModel(), graph,
+            low_sim=0.93, high_sim=0.99,
+            corridor_scores={(0, 1): 0.9},
+            corridor_accept_threshold=0.8,
+        )
+        assert labels[0] == labels[1], f"Force-accept should merge 0 and 1, got {labels}"
+        assert labels[2] != labels[0], f"Node 2 should remain separate, got {labels}"
+
+    def test_corridor_force_reject(self):
+        """A low corridor score prevents a merge that the beam might otherwise accept."""
+        import torch as _torch
+
+        D = 4
+        v0 = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        angle = np.arccos(0.965)
+        v1 = np.array([np.cos(angle), np.sin(angle), 0.0, 0.0], dtype=np.float32)
+        v2 = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+
+        graph = _make_small_graph_with_edges(3, [(0, 1)])
+        fixed_emb = _torch.tensor(np.stack([v0, v1, v2]), dtype=_torch.float32)
+
+        class _FakeModel:
+            def eval(self): pass
+            def __call__(self, *args, **kwargs): return fixed_emb
+
+        # Corridor score 0.1 for edge (0,1) → should force-reject
+        labels = boundary_partition_search(
+            _FakeModel(), graph,
+            low_sim=0.93, high_sim=0.99,
+            corridor_scores={(0, 1): 0.1},
+            corridor_reject_threshold=0.2,
+        )
+        # Force-reject: nodes 0 and 1 must remain separate
+        assert labels[0] != labels[1], f"Force-reject should keep 0 and 1 separate, got {labels}"
+
+    def test_corridor_neutral_score_still_uses_beam(self):
+        """A corridor score in the middle band (0.2-0.8) still goes through beam search."""
+        import torch as _torch
+
+        D = 4
+        v0 = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        angle = np.arccos(0.965)
+        v1 = np.array([np.cos(angle), np.sin(angle), 0.0, 0.0], dtype=np.float32)
+        v2 = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+
+        graph = _make_small_graph_with_edges(3, [(0, 1)])
+        fixed_emb = _torch.tensor(np.stack([v0, v1, v2]), dtype=_torch.float32)
+
+        class _FakeModel:
+            def eval(self): pass
+            def __call__(self, *args, **kwargs): return fixed_emb
+
+        # Score 0.5 → ambiguous → beam decides (beam should still merge based on sim)
+        labels = boundary_partition_search(
+            _FakeModel(), graph,
+            low_sim=0.93, high_sim=0.99,
+            corridor_scores={(0, 1): 0.5},
+        )
+        assert labels[0] == labels[1], (
+            f"Neutral corridor score should let beam decide; beam merges at sim=0.965 (labels={labels})"
+        )
+
+    def test_infer_cells_with_search_passes_corridor_scores(self):
+        """corridor_scores kwarg is correctly forwarded from infer_cells_with_search."""
+        import torch as _torch
+
+        D = 4
+        v0 = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        angle = np.arccos(0.965)
+        v1 = np.array([np.cos(angle), np.sin(angle), 0.0, 0.0], dtype=np.float32)
+        v2 = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+
+        graph = _make_small_graph_with_edges(3, [(0, 1)])
+        fixed_emb = _torch.tensor(np.stack([v0, v1, v2]), dtype=_torch.float32)
+
+        class _FakeModel:
+            def eval(self): pass
+            def __call__(self, *args, **kwargs): return fixed_emb
+
+        labels = infer_cells_with_search(
+            _FakeModel(), graph,
+            corridor_scores={(0, 1): 0.9},
+            corridor_accept_threshold=0.8,
+        )
+        assert labels[0] == labels[1], f"corridor_scores not forwarded correctly (labels={labels})"

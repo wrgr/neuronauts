@@ -978,6 +978,9 @@ def boundary_partition_search(
     high_sim: float = 0.99,
     max_boundary_edges: int = 12,
     beam_width: int = 8,
+    corridor_scores: "dict[tuple[int,int], float] | None" = None,
+    corridor_accept_threshold: float = 0.8,
+    corridor_reject_threshold: float = 0.2,
 ) -> np.ndarray:
     """Beam search over uncertain boundary edges to find the best partition.
 
@@ -989,6 +992,17 @@ def boundary_partition_search(
     high_sim : upper bound of the ambiguous similarity band (exclusive)
     max_boundary_edges : cap on number of boundary edges to explore
     beam_width : number of best states to keep at each beam step
+    corridor_scores :
+        Optional dict mapping ``(i, j)`` → EM connectivity score in ``[0, 1]``
+        from :func:`neuronauts.em_corridor.batch_score_boundary_edges`.
+        Scores above *corridor_accept_threshold* force-accept the merge before
+        beam search; scores below *corridor_reject_threshold* force-reject.
+        Edges with intermediate scores (or missing from the dict) still go
+        through the beam search as normal.
+    corridor_accept_threshold :
+        EM score above which a merge is force-accepted (default 0.8).
+    corridor_reject_threshold :
+        EM score below which a merge is force-rejected (default 0.2).
 
     Returns
     -------
@@ -1046,10 +1060,27 @@ def boundary_partition_search(
         else:
             base_uf.union(n_idx, label_to_rep[lbl])
 
+    # --- Step 4.5: apply EM corridor overrides ---
+    # Force-accept/reject edges whose EM score is decisive; the rest go to beam.
+    if corridor_scores:
+        beam_edges: list[tuple[int, int]] = []
+        for ei, ej in boundary_edges:
+            key = (min(ei, ej), max(ei, ej))
+            score = corridor_scores.get(key, corridor_scores.get((ei, ej), None))
+            if score is None:
+                beam_edges.append((ei, ej))
+            elif score >= corridor_accept_threshold:
+                base_uf.union(ei, ej)   # definitive merge
+            elif score <= corridor_reject_threshold:
+                pass                    # definitive reject — drop from search
+            else:
+                beam_edges.append((ei, ej))  # still ambiguous
+        boundary_edges = beam_edges
+
     # --- Step 5: beam search ---
     if not boundary_edges:
         # No uncertain edges — return the high-confidence partition
-        return base_labels
+        return np.array(base_uf.labels(), dtype=np.int64)
 
     # Beam: list of (score, uf_state)
     # Compute initial score
@@ -1085,6 +1116,9 @@ def infer_cells_with_search(
     low_sim: float = 0.93,
     max_boundary_edges: int = 12,
     beam_width: int = 8,
+    corridor_scores: "dict[tuple[int,int], float] | None" = None,
+    corridor_accept_threshold: float = 0.8,
+    corridor_reject_threshold: float = 0.2,
 ) -> np.ndarray:
     """Run CellGNN with boundary-edge partition search for better accuracy.
 
@@ -1099,6 +1133,13 @@ def infer_cells_with_search(
     low_sim : lower bound for the ambiguous band
     max_boundary_edges : cap on uncertain edges explored in the search
     beam_width : beam width for the search
+    corridor_scores :
+        Optional per-edge EM connectivity scores from
+        :func:`neuronauts.em_corridor.batch_score_boundary_edges`.
+    corridor_accept_threshold :
+        EM score above which a merge is force-accepted (default 0.8).
+    corridor_reject_threshold :
+        EM score below which a merge is force-rejected (default 0.2).
 
     Returns
     -------
@@ -1111,6 +1152,9 @@ def infer_cells_with_search(
         high_sim=high_threshold,
         max_boundary_edges=max_boundary_edges,
         beam_width=beam_width,
+        corridor_scores=corridor_scores,
+        corridor_accept_threshold=corridor_accept_threshold,
+        corridor_reject_threshold=corridor_reject_threshold,
     )
 
 
