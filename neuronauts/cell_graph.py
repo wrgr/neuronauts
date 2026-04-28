@@ -1067,26 +1067,47 @@ def cell_graph_train_step(
         return {"loss": 0.0, "pos_sim": 0.0, "neg_sim": 0.0, "n_pos": 0, "n_neg": 0,
                 "hard_neg_sim": 0.0, "n_hard_neg": 0}
 
-    # Online hard negative mining: find different-root pairs with surprisingly high sim
+    # Online hard negative mining: find different-root pairs with surprisingly high sim.
+    # For small graphs (N <= 300) score all O(N²) pairs; for large graphs sample
+    # _HARD_NEG_SAMPLE_PAIRS random cross-root pairs and take the hardest among those.
+    _HARD_NEG_SAMPLE_PAIRS = 4096
     hard_neg_pairs: list[tuple[int, int]] = []
-    if hard_neg_mining and graph.root_ids is not None and N <= 300:
-        with torch.no_grad():
-            sim_matrix = emb_norm @ emb_norm.T  # [N, N]
+    if hard_neg_mining and graph.root_ids is not None:
         root_arr = graph.root_ids
-        ui, uj = torch.triu_indices(N, N, offset=1)
-        pair_sims = sim_matrix[ui, uj]
-        ri = torch.tensor(root_arr[ui.numpy()], dtype=torch.long)
-        rj = torch.tensor(root_arr[uj.numpy()], dtype=torch.long)
-        valid = (ri > 0) & (rj > 0)
-        different = ri != rj
-        hard = pair_sims > hard_neg_threshold
-        mask = valid & different & hard
-        hard_indices = mask.nonzero(as_tuple=False).view(-1)
-        # Sort by descending similarity (hardest first) then cap
-        if len(hard_indices) > 0:
-            sorted_by_sim = hard_indices[pair_sims[hard_indices].argsort(descending=True)]
-            for k in sorted_by_sim[:max_hard_negs]:
-                hard_neg_pairs.append((int(ui[k]), int(uj[k])))
+        if N <= 300:
+            with torch.no_grad():
+                sim_matrix = emb_norm @ emb_norm.T  # [N, N]
+            ui, uj = torch.triu_indices(N, N, offset=1)
+            pair_sims = sim_matrix[ui, uj]
+            ri = torch.tensor(root_arr[ui.numpy()], dtype=torch.long)
+            rj = torch.tensor(root_arr[uj.numpy()], dtype=torch.long)
+            valid = (ri > 0) & (rj > 0)
+            different = ri != rj
+            hard = pair_sims > hard_neg_threshold
+            mask = valid & different & hard
+            hard_indices = mask.nonzero(as_tuple=False).view(-1)
+            if len(hard_indices) > 0:
+                sorted_by_sim = hard_indices[pair_sims[hard_indices].argsort(descending=True)]
+                for k in sorted_by_sim[:max_hard_negs]:
+                    hard_neg_pairs.append((int(ui[k]), int(uj[k])))
+        else:
+            # Large graph: sample random pairs and score only those (O(sample) not O(N²))
+            cand_i = rng.integers(0, N, size=_HARD_NEG_SAMPLE_PAIRS)
+            cand_j = rng.integers(0, N, size=_HARD_NEG_SAMPLE_PAIRS)
+            # Keep i < j, distinct, different root, both known
+            keep = (cand_i < cand_j) & (root_arr[cand_i] != 0) & (root_arr[cand_j] != 0) & (root_arr[cand_i] != root_arr[cand_j])
+            cand_i, cand_j = cand_i[keep], cand_j[keep]
+            if len(cand_i) > 0:
+                with torch.no_grad():
+                    ti = torch.tensor(cand_i, dtype=torch.long)
+                    tj = torch.tensor(cand_j, dtype=torch.long)
+                    sims = (emb_norm[ti] * emb_norm[tj]).sum(dim=-1)
+                hard_mask = sims > hard_neg_threshold
+                hard_idx = hard_mask.nonzero(as_tuple=False).view(-1)
+                if len(hard_idx) > 0:
+                    sorted_hard = hard_idx[sims[hard_idx].argsort(descending=True)]
+                    for k in sorted_hard[:max_hard_negs]:
+                        hard_neg_pairs.append((int(cand_i[k]), int(cand_j[k])))
 
     loss_terms = []
     pos_sim_val = 0.0
