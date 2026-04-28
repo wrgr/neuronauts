@@ -34,6 +34,8 @@ __all__ = [
     "score_corridor_connectivity",
     "batch_score_boundary_edges",
     "batch_score_seg_connectivity",
+    "fetch_seg_ids_at_points",
+    "batch_score_seg_connectivity_fast",
 ]
 
 
@@ -453,6 +455,7 @@ def batch_score_boundary_edges(
 # fetch_corridor_seg
 # ---------------------------------------------------------------------------
 
+
 def fetch_corridor_seg(
     spec: CorridorSpec,
     seg_path: str = MICRONS_SEG_PATH,
@@ -628,5 +631,138 @@ def batch_score_seg_connectivity(
                 stacklevel=2,
             )
             scores[edge_key] = 0.5
+
+    return scores
+
+
+# ---------------------------------------------------------------------------
+# fetch_seg_ids_at_points  (fast point-query approach)
+# ---------------------------------------------------------------------------
+
+def fetch_seg_ids_at_points(
+    positions_nm: np.ndarray,
+    *,
+    mip: int = 3,
+    seg_path: str = MICRONS_SEG_PATH,
+    margin_nm: float = 200.0,
+) -> np.ndarray:
+    """Fetch proofread seg IDs at each point using a single bounding-box fetch.
+
+    Fetches the smallest bounding volume that covers all ``positions_nm`` (plus
+    ``margin_nm`` padding) at the requested MIP level, then queries each point
+    from the cached array.  This is orders of magnitude faster than the corridor
+    approach because it issues one CloudVolume request per batch instead of one
+    per edge.
+
+    Parameters
+    ----------
+    positions_nm:
+        Array of shape ``[N, 3]`` giving absolute nm coordinates.
+    mip:
+        CloudVolume MIP level.  MIP 3 (~64×64×80 nm/vox) is the default —
+        the volume is small and each synapse fits comfortably within one voxel.
+    seg_path:
+        CloudVolume-style path to the neurite segmentation.
+    margin_nm:
+        Padding added around the bounding box to avoid boundary clipping.
+
+    Returns
+    -------
+    np.ndarray of shape ``[N]``, dtype ``uint64``.
+        Proofread seg ID at each position.  0 = background (no neurite).
+    """
+    from .fetch import fetch_seg_volume  # noqa: PLC0415
+
+    positions = np.asarray(positions_nm, dtype=np.float64)
+    min_nm = positions.min(axis=0) - margin_nm
+    max_nm = positions.max(axis=0) + margin_nm
+    bbox_nm = (tuple(min_nm.tolist()), tuple(max_nm.tolist()))
+
+    seg_vol = fetch_seg_volume(bbox_nm, mip=mip, seg_path=seg_path)
+
+    vox_size = np.asarray(seg_vol.voxel_size_nm, dtype=np.float64)
+    bbox_origin = np.asarray(seg_vol.bbox_voxels[0], dtype=np.float64)
+    shape = seg_vol.data.shape  # (X, Y, Z)
+    max_idx = np.array([shape[0] - 1, shape[1] - 1, shape[2] - 1], dtype=int)
+
+    seg_ids = np.zeros(len(positions), dtype=np.uint64)
+    for k, pos in enumerate(positions):
+        idx_f = pos / vox_size - bbox_origin - 0.5
+        idx = np.clip(np.round(idx_f).astype(int), 0, max_idx)
+        seg_ids[k] = seg_vol.data[idx[0], idx[1], idx[2]]
+
+    return seg_ids
+
+
+# ---------------------------------------------------------------------------
+# batch_score_seg_connectivity_fast
+# ---------------------------------------------------------------------------
+
+def batch_score_seg_connectivity_fast(
+    syn_positions_nm: np.ndarray,
+    edges: list[tuple[int, int]],
+    *,
+    mip: int = 3,
+    seg_path: str = MICRONS_SEG_PATH,
+    margin_nm: float = 200.0,
+    verbose: bool = False,
+) -> dict[tuple[int, int], float]:
+    """Score edges by seg ID comparison using a single bounding-box fetch.
+
+    Unlike :func:`batch_score_seg_connectivity`, this function issues **one**
+    CloudVolume request for the entire batch: it fetches the seg volume covering
+    all synapse positions, reads seg IDs from the cached array, then scores each
+    edge by comparing IDs.
+
+    Scores are identical in semantics to the corridor approach:
+
+    * **1.0** — both endpoints share the same non-zero proofread root ID.
+    * **0.0** — endpoints have different non-zero root IDs.
+    * **0.5** — at least one endpoint is background (ID = 0).
+
+    Parameters
+    ----------
+    syn_positions_nm:
+        Array of shape ``[N, 3]`` giving every synapse's absolute nm position.
+    edges:
+        List of ``(i, j)`` index pairs into ``syn_positions_nm``.
+    mip:
+        CloudVolume MIP level for the seg fetch.
+    seg_path:
+        CloudVolume-style path to the neurite segmentation.
+    margin_nm:
+        Padding added around the position bounding box.
+    verbose:
+        If True, print a progress line.
+
+    Returns
+    -------
+    dict[tuple[int, int], float]
+        Mapping ``(i, j)`` → score in ``{0.0, 0.5, 1.0}``.
+    """
+    positions = np.asarray(syn_positions_nm, dtype=np.float64)
+
+    if verbose:
+        print(
+            f"[em_corridor.fast] fetching MIP{mip} seg for {len(positions)} positions … ",
+            end="",
+            flush=True,
+        )
+
+    seg_ids = fetch_seg_ids_at_points(positions, mip=mip, seg_path=seg_path, margin_nm=margin_nm)
+
+    if verbose:
+        n_nonzero = int((seg_ids > 0).sum())
+        print(f"done  ({n_nonzero}/{len(positions)} non-background)")
+
+    scores: dict[tuple[int, int], float] = {}
+    for i, j in edges:
+        a, b = int(seg_ids[i]), int(seg_ids[j])
+        if a == 0 or b == 0:
+            scores[(i, j)] = 0.5
+        elif a == b:
+            scores[(i, j)] = 1.0
+        else:
+            scores[(i, j)] = 0.0
 
     return scores

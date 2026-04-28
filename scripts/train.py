@@ -1280,10 +1280,10 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 def cmd_precompute_seg_scores(args: argparse.Namespace) -> int:
-    """Pre-compute EM segmentation corridor scores for all edges in a BoxCache."""
+    """Pre-compute EM segmentation scores for all edges in a BoxCache (fast point-query)."""
     from neuronauts.dataset_builder import BoxCache
     from neuronauts.cell_graph import (
-        precompute_seg_scores_for_cache,
+        precompute_seg_scores_fast,
         save_seg_score_cache,
     )
 
@@ -1293,16 +1293,15 @@ def cmd_precompute_seg_scores(args: argparse.Namespace) -> int:
         print(f"No cached boxes in {args.cache_dir}")
         return 1
 
-    print(f"Pre-computing seg scores for {len(records)} boxes …")
-    print(f"  proximity_radius_nm={args.proximity_radius_nm}  radius_nm={args.radius_nm}  mip={args.mip}")
+    print(f"Pre-computing seg scores for {len(records)} boxes (fast point-query) …")
+    print(f"  proximity_radius_nm={args.proximity_radius_nm}  mip={args.mip}  margin_nm={args.margin_nm}")
 
-    seg_cache = precompute_seg_scores_for_cache(
+    seg_cache = precompute_seg_scores_fast(
         cache,
         records=records,
         proximity_radius_nm=args.proximity_radius_nm,
-        radius_nm=args.radius_nm,
         mip=args.mip,
-        max_length_nm=args.max_length_nm,
+        margin_nm=args.margin_nm,
         verbose=True,
     )
 
@@ -2371,18 +2370,16 @@ def parse_args(argv=None) -> argparse.Namespace:
     # ---------------------------------------------------------------------------
     p_seg = sub.add_parser(
         "precompute-seg-scores",
-        help="Pre-compute EM segmentation corridor scores for all boxes in a cache.",
+        help="Pre-compute EM seg scores for all boxes (fast single-fetch per box).",
     )
     p_seg.add_argument("--cache-dir", default="data/boxes")
     p_seg.add_argument("--output", default="data/seg_scores.json",
                        help="Output JSON file path.")
     p_seg.add_argument("--proximity-radius-nm", type=float, default=5000.0)
-    p_seg.add_argument("--radius-nm", type=float, default=1500.0,
-                       help="Corridor cylinder radius in nm.")
-    p_seg.add_argument("--mip", type=int, default=2,
-                       help="CloudVolume MIP level for seg fetch.")
-    p_seg.add_argument("--max-length-nm", type=float, default=15_000.0,
-                       help="Skip edges longer than this (score=0.5).")
+    p_seg.add_argument("--mip", type=int, default=3,
+                       help="CloudVolume MIP level for seg fetch (default 3 = ~64×64×80 nm/vox).")
+    p_seg.add_argument("--margin-nm", type=float, default=200.0,
+                       help="Padding around synapse bounding box when fetching seg volume.")
     p_seg.set_defaults(func=cmd_precompute_seg_scores)
 
     # evaluate

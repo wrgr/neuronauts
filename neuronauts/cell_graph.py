@@ -1621,6 +1621,129 @@ def precompute_seg_scores_for_cache(
     return seg_cache
 
 
+def precompute_seg_scores_fast(
+    cache: "BoxCache",
+    records=None,
+    *,
+    proximity_radius_nm: float = 5000.0,
+    mip: int = 3,
+    margin_nm: float = 200.0,
+    verbose: bool = True,
+) -> dict[str, dict[tuple[int, int], float]]:
+    """Pre-compute EM seg scores using one bbox fetch per box (fast).
+
+    Instead of fetching a corridor volume per edge (the slow approach in
+    :func:`precompute_seg_scores_for_cache`), this function fetches one
+    bounding-box seg volume per box, covering all synapse positions, and reads
+    the proofread seg ID at each synapse from the cached array.
+
+    At MIP 3 (~64×64×80 nm/vox) a 6 µm box is ~94×94×75 voxels ≈ 5 MB.
+    For 37 boxes that is ~185 MB total vs ~74 GB for the corridor approach.
+
+    Parameters
+    ----------
+    cache:
+        BoxCache containing cached synapse data.
+    records:
+        Iterable of BoxRecord to process.  If None, uses ``cache.iter_records()``.
+    proximity_radius_nm:
+        Spatial radius used to enumerate candidate edges.
+    mip:
+        CloudVolume MIP level for seg fetches (default 3 for speed).
+    margin_nm:
+        Padding around the synapse bounding box when fetching the seg volume.
+    verbose:
+        Print per-box progress.
+
+    Returns
+    -------
+    dict mapping ``box_hash`` → ``{"pre": {(i,j): score}, "post": {(i,j): score}}``.
+    """
+    from .em_corridor import batch_score_seg_connectivity_fast
+    from .fetch import make_cube_bbox_nm
+
+    _MIP2_VOX = np.array([32.0, 32.0, 40.0])
+
+    if records is None:
+        records = list(cache.iter_records())
+
+    seg_cache: dict[str, dict] = {}
+
+    for rec_idx, rec in enumerate(records):
+        box_hash = rec.box_hash
+        try:
+            _, synapses = cache.load(rec)
+        except Exception:
+            continue
+        if len(synapses.pre_pt) < 2:
+            continue
+
+        # Convert pre_pt and post_pt (MIP2 box-relative voxels) → absolute nm
+        bbox = make_cube_bbox_nm(tuple(rec.center_nm), rec.side_um)
+        box_origin_nm = np.array(bbox[0], dtype=np.float64)
+        pre_nm = synapses.pre_pt.astype(np.float64) * _MIP2_VOX + box_origin_nm
+        post_nm = synapses.post_pt.astype(np.float64) * _MIP2_VOX + box_origin_nm
+
+        # Enumerate proximity edges
+        from ._scipy_compat import cKDTree as _cKDTree
+
+        pre_edges: list[tuple[int, int]] = []
+        post_edges: list[tuple[int, int]] = []
+        seen_pre: set[tuple[int, int]] = set()
+        seen_post: set[tuple[int, int]] = set()
+
+        pre_tree = _cKDTree(pre_nm)
+        for a, b in pre_tree.query_pairs(r=proximity_radius_nm, output_type="ndarray"):
+            key = (int(min(a, b)), int(max(a, b)))
+            if key not in seen_pre:
+                seen_pre.add(key)
+                pre_edges.append(key)
+
+        post_tree = _cKDTree(post_nm)
+        for a, b in post_tree.query_pairs(r=proximity_radius_nm, output_type="ndarray"):
+            key = (int(min(a, b)), int(max(a, b)))
+            if key not in seen_post:
+                seen_post.add(key)
+                post_edges.append(key)
+
+        if not pre_edges and not post_edges:
+            continue
+
+        n_pre = len(pre_edges)
+        n_post = len(post_edges)
+        if verbose:
+            print(
+                f"  [{rec_idx+1}/{len(records)}] {box_hash[:8]}  "
+                f"{n_pre} pre-edges  {n_post} post-edges … ",
+                end="",
+                flush=True,
+            )
+
+        try:
+            pre_scores = batch_score_seg_connectivity_fast(
+                pre_nm, pre_edges, mip=mip, margin_nm=margin_nm, verbose=False,
+            ) if pre_edges else {}
+            post_scores = batch_score_seg_connectivity_fast(
+                post_nm, post_edges, mip=mip, margin_nm=margin_nm, verbose=False,
+            ) if post_edges else {}
+        except Exception as exc:
+            if verbose:
+                print(f"FAILED ({exc!r})")
+            continue
+
+        seg_cache[box_hash] = {
+            "pre": {str(k): v for k, v in pre_scores.items()},
+            "post": {str(k): v for k, v in post_scores.items()},
+        }
+
+        n_signal = sum(1 for v in pre_scores.values() if v != 0.5) + \
+                   sum(1 for v in post_scores.values() if v != 0.5)
+        if verbose:
+            print(f"done  {n_signal}/{n_pre + n_post} have signal (≠0.5)")
+
+    return seg_cache
+
+
 def load_seg_score_cache(path: str) -> dict:
     """Load a seg-score cache from a JSON file saved by :func:`save_seg_score_cache`."""
     import json as _json
