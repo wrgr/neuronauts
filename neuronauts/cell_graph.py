@@ -855,6 +855,7 @@ def train_cell_gnn(
     hard_neg_mining: bool = True,
     hard_neg_threshold: float = 0.7,
     hard_neg_weight: float = 3.0,
+    seg_score_cache: "dict | None" = None,
     verbose: bool = True,
 ) -> dict[str, list[float]]:
     """Train CellGNN over a BoxCache for ``config.epochs`` epochs.
@@ -925,10 +926,21 @@ def train_cell_gnn(
             except Exception:
                 continue
 
+            # Look up pre-computed seg connectivity scores for this box
+            _box_seg = seg_score_cache.get(record.box_hash, {}) if seg_score_cache else {}
+
             for role in ("pre", "post"):
+                # Convert string keys from JSON back to tuple[int,int] if needed
+                _side_seg_raw = _box_seg.get(role, {})
+                _side_seg: dict[tuple[int, int], float] = {
+                    (k if isinstance(k, tuple) else tuple(int(x) for x in str(k).strip("() ").split(","))): float(v)
+                    for k, v in _side_seg_raw.items()
+                } if _side_seg_raw else {}
+
                 graph = build_synapse_graph(
                     synapses, role,
                     proximity_radius_nm=cfg.proximity_radius_nm,
+                    seg_connectivity_scores=_side_seg or None,
                 )
                 if graph.n_synapses < 2:
                     continue
@@ -1494,6 +1506,148 @@ def load_cell_gnn(path):
     model.load_state_dict(ckpt["state_dict"])
     model.eval()
     return model
+
+
+def precompute_seg_scores_for_cache(
+    cache: "BoxCache",
+    records=None,
+    *,
+    proximity_radius_nm: float = 5000.0,
+    radius_nm: float = 1500.0,
+    mip: int = 2,
+    max_length_nm: float = 15_000.0,
+    verbose: bool = True,
+) -> dict[str, dict[tuple[int, int], float]]:
+    """Pre-compute EM segmentation corridor scores for all edges in a BoxCache.
+
+    For each box, builds the proximity graph to enumerate candidate edges, converts
+    synapse positions from MIP-2 box-relative voxels to absolute nanometres, and
+    calls :func:`~neuronauts.em_corridor.batch_score_seg_connectivity` to score
+    every edge against the live MICrONS segmentation.
+
+    Results are keyed by ``record.box_hash`` so they can be looked up quickly
+    during training via :func:`train_cell_gnn`.
+
+    Parameters
+    ----------
+    cache:
+        BoxCache containing cached synapse data.
+    records:
+        Iterable of BoxRecord to process.  If None, uses ``cache.iter_records()``.
+    proximity_radius_nm:
+        Spatial radius used to enumerate candidate edges.
+    radius_nm, mip, max_length_nm:
+        Passed through to ``batch_score_seg_connectivity``.
+    verbose:
+        Print per-box progress.
+
+    Returns
+    -------
+    dict mapping ``box_hash`` → ``{(i, j): score}`` for pre-side synapses.
+    (Post side is handled implicitly — same scores are indexed by the same
+    synapse indices, which are shared across sides within one box.)
+    """
+    import json as _json
+    from .em_corridor import batch_score_seg_connectivity
+    from .fetch import make_cube_bbox_nm
+
+    _MIP2_VOX = np.array([32.0, 32.0, 40.0])
+
+    if records is None:
+        records = list(cache.iter_records())
+
+    seg_cache: dict[str, dict[tuple[int, int], float]] = {}
+
+    for rec in records:
+        box_hash = rec.box_hash
+        try:
+            _, synapses = cache.load(rec)
+        except Exception:
+            continue
+        if len(synapses.pre_pt) < 2:
+            continue
+
+        # Convert pre_pt (MIP2 box-relative voxels) → absolute nm
+        bbox = make_cube_bbox_nm(tuple(rec.center_nm), rec.side_um)
+        box_origin_nm = np.array(bbox[0], dtype=np.float64)
+        pre_nm = synapses.pre_pt.astype(np.float64) * _MIP2_VOX + box_origin_nm
+        post_nm = synapses.post_pt.astype(np.float64) * _MIP2_VOX + box_origin_nm
+
+        # Enumerate proximity edges for both sides combined
+        from ._scipy_compat import cKDTree as _cKDTree
+
+        all_edges: set[tuple[int, int]] = set()
+        for positions in (pre_nm, post_nm):
+            tree = _cKDTree(positions)
+            pairs = tree.query_pairs(r=proximity_radius_nm, output_type="ndarray")
+            for a, b in pairs:
+                key = (int(min(a, b)), int(max(a, b)))
+                all_edges.add(key)
+
+        if not all_edges:
+            continue
+
+        edge_list = sorted(all_edges)
+
+        # Score pre-side (post side shares same synapse indices in this box)
+        if verbose:
+            print(f"  [{box_hash[:8]}] {len(edge_list)} edges to score …", end=" ", flush=True)
+
+        pre_scores = batch_score_seg_connectivity(
+            pre_nm, edge_list,
+            radius_nm=radius_nm,
+            mip=mip,
+            max_length_nm=max_length_nm,
+            verbose=False,
+        )
+        post_scores = batch_score_seg_connectivity(
+            post_nm, edge_list,
+            radius_nm=radius_nm,
+            mip=mip,
+            max_length_nm=max_length_nm,
+            verbose=False,
+        )
+
+        # Store both side scores; build_synapse_graph uses whichever matches
+        seg_cache[box_hash] = {
+            "pre": {str(k): v for k, v in pre_scores.items()},
+            "post": {str(k): v for k, v in post_scores.items()},
+        }
+
+        n_signal = sum(1 for v in pre_scores.values() if v != 0.5)
+        if verbose:
+            print(f"done  {n_signal}/{len(edge_list)} have signal (≠0.5)")
+
+    return seg_cache
+
+
+def load_seg_score_cache(path: str) -> dict:
+    """Load a seg-score cache from a JSON file saved by :func:`save_seg_score_cache`."""
+    import json as _json
+    with open(path) as f:
+        raw = _json.load(f)
+    # Convert "(i, j)" string keys back to tuple[int, int]
+    result = {}
+    for box_hash, sides in raw.items():
+        result[box_hash] = {}
+        for side, scores in sides.items():
+            result[box_hash][side] = {}
+            for k_str, v in scores.items():
+                # k_str is "(i, j)" or "i,j"
+                k_str = k_str.strip("() ")
+                parts = [int(x) for x in k_str.split(",")]
+                result[box_hash][side][(parts[0], parts[1])] = float(v)
+    return result
+
+
+def save_seg_score_cache(cache: dict, path: str) -> None:
+    """Save a seg-score cache dict to JSON."""
+    import json as _json
+    from pathlib import Path as _P
+    _P(path).parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        _json.dump(cache, f)
+    print(f"Seg score cache saved → {path}")
 
 
 # ---------------------------------------------------------------------------

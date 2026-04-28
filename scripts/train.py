@@ -1194,6 +1194,17 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
                 ))
         print(f"Loaded {len(edit_pairs)} edit-history pairs from {edit_pairs_tsv}")
 
+    # --- Optional seg score cache ---
+    seg_score_cache = None
+    seg_scores_path = getattr(args, "seg_scores_cache", None)
+    if seg_scores_path:
+        if Path(seg_scores_path).exists():
+            from neuronauts.cell_graph import load_seg_score_cache
+            seg_score_cache = load_seg_score_cache(seg_scores_path)
+            print(f"Loaded seg scores for {len(seg_score_cache)} boxes from {seg_scores_path}")
+        else:
+            print(f"[WARNING] --seg-scores-cache path not found: {seg_scores_path}")
+
     # --- Train ---
     t0 = time.time()
     history = train_cell_gnn(
@@ -1206,6 +1217,7 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
         hard_neg_mining=not getattr(args, "no_hard_neg_mining", False),
         hard_neg_threshold=getattr(args, "hard_neg_threshold", 0.7),
         hard_neg_weight=getattr(args, "hard_neg_weight", 3.0),
+        seg_score_cache=seg_score_cache,
         verbose=True,
     )
     elapsed = time.time() - t0
@@ -1260,6 +1272,48 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
         json.dump(history, f, indent=2)
     print(f"Training history saved to {history_path}")
 
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: precompute-seg-scores
+# ---------------------------------------------------------------------------
+
+def cmd_precompute_seg_scores(args: argparse.Namespace) -> int:
+    """Pre-compute EM segmentation corridor scores for all edges in a BoxCache."""
+    from neuronauts.dataset_builder import BoxCache
+    from neuronauts.cell_graph import (
+        precompute_seg_scores_for_cache,
+        save_seg_score_cache,
+    )
+
+    cache = BoxCache(args.cache_dir)
+    records = list(cache.iter_records())
+    if not records:
+        print(f"No cached boxes in {args.cache_dir}")
+        return 1
+
+    print(f"Pre-computing seg scores for {len(records)} boxes …")
+    print(f"  proximity_radius_nm={args.proximity_radius_nm}  radius_nm={args.radius_nm}  mip={args.mip}")
+
+    seg_cache = precompute_seg_scores_for_cache(
+        cache,
+        records=records,
+        proximity_radius_nm=args.proximity_radius_nm,
+        radius_nm=args.radius_nm,
+        mip=args.mip,
+        max_length_nm=args.max_length_nm,
+        verbose=True,
+    )
+
+    save_seg_score_cache(seg_cache, args.output)
+
+    n_signal = sum(
+        sum(1 for v in side.values() if float(v) != 0.5)
+        for box in seg_cache.values()
+        for side in box.values()
+    )
+    print(f"\nDone: {len(seg_cache)} boxes  {n_signal} edges with signal (≠0.5)")
     return 0
 
 
@@ -2306,7 +2360,30 @@ def parse_args(argv=None) -> argparse.Namespace:
                         help="Loss multiplier for hard-negative mined pairs.")
     p_cell.add_argument("--no-hard-neg-mining", action="store_true",
                         help="Disable online hard negative mining.")
+    p_cell.add_argument("--seg-scores-cache", default=None,
+                        help="Path to pre-computed seg connectivity scores JSON "
+                             "(from precompute-seg-scores subcommand).  When set, "
+                             "injects seg_connectivity edge features into training graphs.")
     p_cell.set_defaults(func=cmd_train_cell_gnn)
+
+    # ---------------------------------------------------------------------------
+    # precompute-seg-scores
+    # ---------------------------------------------------------------------------
+    p_seg = sub.add_parser(
+        "precompute-seg-scores",
+        help="Pre-compute EM segmentation corridor scores for all boxes in a cache.",
+    )
+    p_seg.add_argument("--cache-dir", default="data/boxes")
+    p_seg.add_argument("--output", default="data/seg_scores.json",
+                       help="Output JSON file path.")
+    p_seg.add_argument("--proximity-radius-nm", type=float, default=5000.0)
+    p_seg.add_argument("--radius-nm", type=float, default=1500.0,
+                       help="Corridor cylinder radius in nm.")
+    p_seg.add_argument("--mip", type=int, default=2,
+                       help="CloudVolume MIP level for seg fetch.")
+    p_seg.add_argument("--max-length-nm", type=float, default=15_000.0,
+                       help="Skip edges longer than this (score=0.5).")
+    p_seg.set_defaults(func=cmd_precompute_seg_scores)
 
     # evaluate
     p_eval = sub.add_parser(

@@ -10,7 +10,7 @@ from typing import Optional, Tuple
 import numpy as np
 
 MICRONS_EM_PATH = "precomputed://https://bossdb-open-data.s3.amazonaws.com/iarpa_microns/minnie/minnie65/em"
-MICRONS_SEG_PATH = "precomputed://gs://microns-seunglab/minnie65/seg"
+MICRONS_SEG_PATH = "precomputed://https://bossdb-open-data.s3.amazonaws.com/iarpa_microns/minnie/minnie65/seg"
 MICRONS_DATASTACK = "minnie65_public"
 CAVE_SERVER = "https://global.daf-apis.com"
 DEFAULT_BOX_SIDE_UM = 6.0
@@ -174,15 +174,18 @@ def fetch_volume(
 
 def fetch_seg_volume(
     bbox_nm: Tuple[Tuple, Tuple],
-    mip: int = 3,
+    mip: int = 2,
     seg_path: str = MICRONS_SEG_PATH,
 ) -> VolumeChunk:
     """Fetch a segmentation volume chunk (uint64 neurite seg IDs).
 
     Returns the same VolumeChunk structure as fetch_volume but with uint64
-    data encoding the MICrONS neurite segmentation IDs.  MIP 3 (64×64×40
-    nm/vox) is the default — sufficient for endpoint connectivity checks while
-    keeping fetched volumes small.
+    data encoding the MICrONS neurite segmentation IDs.  MIP 2 (32×32×40
+    nm/vox) is the default — the seg volume at MIP 3 uses 80 nm z-resolution
+    which differs from the EM; MIP 2 is consistent across both volumes.
+
+    Voxel sizes are read from the CloudVolume metadata (not from the hardcoded
+    MIP_VOXEL_SIZES dict) since the seg volume z-resolution differs at high MIPs.
     """
     _install_system_trust_store()
     try:
@@ -191,7 +194,9 @@ def fetch_seg_volume(
         raise ImportError("pip install cloud-volume") from exc
 
     cv = CloudVolume(seg_path, mip=mip, use_https=True, progress=False, fill_missing=True)
-    vox = MIP_VOXEL_SIZES[mip]
+    # Read actual voxel size from the volume's metadata — seg resolution differs from EM at MIP 3+
+    res = cv.resolution  # [x, y, z] in nm
+    vox = (int(res[0]), int(res[1]), int(res[2]))
     x0 = int(bbox_nm[0][0] / vox[0])
     y0 = int(bbox_nm[0][1] / vox[1])
     z0 = int(bbox_nm[0][2] / vox[2])
