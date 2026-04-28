@@ -1574,14 +1574,25 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
                 synapses, "post",
                 proximity_radius_nm=args.proximity_radius_nm,
             )
-            pre_labels = infer_cells(
-                model, pre_graph,
-                threshold=args.partition_threshold,
-            )
-            post_labels = infer_cells(
-                model, post_graph,
-                threshold=args.partition_threshold,
-            )
+            if getattr(args, "two_pass", False):
+                from neuronauts.cell_graph import infer_cells_two_pass
+                pre_labels = infer_cells_two_pass(
+                    model, pre_graph,
+                    threshold=args.partition_threshold,
+                )
+                post_labels = infer_cells_two_pass(
+                    model, post_graph,
+                    threshold=args.partition_threshold,
+                )
+            else:
+                pre_labels = infer_cells(
+                    model, pre_graph,
+                    threshold=args.partition_threshold,
+                )
+                post_labels = infer_cells(
+                    model, post_graph,
+                    threshold=args.partition_threshold,
+                )
             cg = connectivity_graph_from_cell_labels(pre_labels, post_labels, synapses)
         m = lg_evaluate(cg, synapses.pre_root_id, synapses.post_root_id)
         gnn_f1s.append(m.f1)
@@ -2592,6 +2603,8 @@ def parse_args(argv=None) -> argparse.Namespace:
                         help="EM score above which a merge is force-accepted (default: 0.8).")
     p_eval.add_argument("--corridor-reject", type=float, default=0.2,
                         help="EM score below which a merge is force-rejected (default: 0.2).")
+    p_eval.add_argument("--two-pass", action="store_true",
+                        help="Use two-pass inference: scalar first pass, then rebuild chain paths from first-pass labels.")
     p_eval.set_defaults(func=cmd_evaluate)
 
     # sweep

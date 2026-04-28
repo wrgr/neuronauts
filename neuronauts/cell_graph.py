@@ -317,6 +317,101 @@ def build_synapse_graph(
     )
 
 
+def build_synapse_chain_paths(
+    graph: SynapseGraph,
+    labels: "np.ndarray | None" = None,
+    *,
+    mode: str = DEFAULT_PATH_FEATURE_MODE,
+) -> "dict[tuple[int, int], np.ndarray]":
+    """Build skeleton-like path features from synapse position chains.
+
+    Groups synapses by cell label (uses ``graph.root_ids`` when ``labels``
+    is None), sorts each group's positions along its principal axis, and
+    traces nearest-neighbour chains through the sorted positions.  For every
+    within-cell proximity-graph edge (i, j) the path is the chain segment
+    from node i to node j through their shared group.
+
+    This is the **synapse-link skeleton** strategy: no segmentation is needed,
+    only synapse positions.  During training supply ``labels=None`` to use
+    ground-truth root IDs.  At inference, pass the output of a first-pass
+    ``infer_cells`` call.
+
+    Parameters
+    ----------
+    graph : SynapseGraph
+        Must have ``node_positions`` populated.
+    labels : int64 ndarray [N] or None
+        Cell assignment per synapse.  ``None`` falls back to ``graph.root_ids``
+        (training mode).  Root IDs of 0 are treated as unknown and excluded.
+    mode : str
+        Feature mode forwarded to ``featurize_path_points``.
+
+    Returns
+    -------
+    dict mapping ``(i, j)`` (i < j) → float32 ``[T, D]`` feature array.
+    """
+    if labels is None:
+        if graph.root_ids is None:
+            return {}
+        labels = graph.root_ids.astype(np.int64)
+
+    pos = graph.node_positions  # [N, 3] isotropic nm
+
+    # Group synapse indices by cell label (skip unknown/0)
+    from collections import defaultdict
+    groups: dict[int, list[int]] = defaultdict(list)
+    for idx, lbl in enumerate(labels):
+        if int(lbl) != 0:
+            groups[int(lbl)].append(idx)
+
+    # Build nearest-neighbour chain per group, projected onto principal axis
+    # key → float32 [T, D] path features
+    result: dict[tuple[int, int], np.ndarray] = {}
+
+    for lbl, members in groups.items():
+        if len(members) < 2:
+            continue
+        pts = pos[members]  # [M, 3]
+        M = len(pts)
+
+        # Sort along the principal component to get a consistent chain order
+        centred = pts - pts.mean(axis=0)
+        if M >= 2:
+            _, _, Vt = np.linalg.svd(centred, full_matrices=False)
+            axis = Vt[0]  # principal axis
+            proj = centred @ axis
+            order = np.argsort(proj)
+        else:
+            order = np.arange(M)
+        ordered_members = [members[o] for o in order]
+        ordered_pts = pts[order]  # [M, 3]
+
+        # Build index mapping: synapse index → position in chain
+        chain_pos: dict[int, int] = {m: k for k, m in enumerate(ordered_members)}
+
+        # For each proximity-graph edge within this cell, extract the chain segment
+        for e in graph.edges:
+            i, j = e.src, e.dst
+            if int(labels[i]) != lbl or int(labels[j]) != lbl:
+                continue
+            key = (min(i, j), max(i, j))
+            if key in result:
+                continue
+            ki = chain_pos.get(i)
+            kj = chain_pos.get(j)
+            if ki is None or kj is None:
+                continue
+            a, b = (ki, kj) if ki <= kj else (kj, ki)
+            segment = ordered_pts[a : b + 1]  # [b-a+1, 3]
+            if len(segment) < 2:
+                continue
+            arr = featurize_path_points(segment, mode=mode)
+            if arr.shape[0] > 0:
+                result[key] = arr
+
+    return result
+
+
 # ---------------------------------------------------------------------------
 # 2. CellGNN -- sparse message-passing for cell membership
 # ---------------------------------------------------------------------------
@@ -1161,6 +1256,18 @@ def train_cell_gnn(
                         _side_raw_paths, mode=path_feature_mode
                     )
 
+                # Always augment with synapse-chain paths built from ground-truth
+                # root IDs.  Chain paths cover *every* within-cell proximity edge
+                # with no seg dependency; kimimaro paths (if present) take priority
+                # since they have richer geometry.
+                if getattr(model, "path_emb_dim", 0) > 0:
+                    chain = build_synapse_chain_paths(graph, mode=path_feature_mode)
+                    if chain:
+                        merged = dict(chain)
+                        if graph.edge_path_features:
+                            merged.update(graph.edge_path_features)
+                        graph.edge_path_features = merged
+
                 m = cell_graph_train_step(
                     model, optimizer, graph,
                     margin=cfg.margin,
@@ -1298,6 +1405,47 @@ def infer_cells(
         embeddings_np = F.normalize(embeddings, p=2, dim=-1).cpu().numpy()
 
     return partition_from_embeddings(embeddings_np, threshold=threshold, method=method)
+
+
+def infer_cells_two_pass(
+    model,
+    graph: SynapseGraph,
+    *,
+    threshold: float = 0.5,
+    method: str = "complete",
+    path_feature_mode: str = DEFAULT_PATH_FEATURE_MODE,
+) -> np.ndarray:
+    """Two-pass inference using synapse-chain paths derived from the first pass.
+
+    Pass 1: run ``infer_cells`` with whatever features are in ``graph``
+    (no path features required).
+
+    Pass 2: build synapse-chain skeleton paths from the pass-1 cell
+    assignments (``build_synapse_chain_paths``), attach them to the graph,
+    and re-run inference.  The path encoder now sees geometry-derived paths
+    for every within-cell edge — no seg needed.
+
+    Requires ``model.path_emb_dim > 0``; falls back to single-pass
+    ``infer_cells`` otherwise.
+    """
+    if getattr(model, "path_emb_dim", 0) == 0:
+        return infer_cells(model, graph, threshold=threshold, method=method)
+
+    # Pass 1: scalar-only inference to get initial hypotheses
+    # Temporarily clear path features so pass 1 uses no_path_embedding for all edges
+    saved = graph.edge_path_features
+    graph.edge_path_features = None
+    labels_pass1 = infer_cells(model, graph, threshold=threshold, method=method)
+    graph.edge_path_features = saved
+
+    # Pass 2: build chain paths from pass-1 hypotheses and re-run
+    chain_paths = build_synapse_chain_paths(
+        graph, labels=labels_pass1, mode=path_feature_mode
+    )
+    graph.edge_path_features = chain_paths
+    labels_pass2 = infer_cells(model, graph, threshold=threshold, method=method)
+    graph.edge_path_features = saved  # restore original state
+    return labels_pass2
 
 
 def _score_partition(normed: np.ndarray, uf: "_UF") -> float:
