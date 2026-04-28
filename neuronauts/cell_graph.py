@@ -1384,8 +1384,12 @@ def boundary_partition_search(
     # --- Step 1: run GNN inference once ---
     model.eval()
     with torch.no_grad():
-        node_feat, edge_src, edge_dst, edge_feat = _graph_to_tensors(graph)
-        raw = model(node_feat, edge_src, edge_dst, edge_feat)
+        if getattr(model, "path_emb_dim", 0) > 0:
+            nf, es, ed, ef, ps, pm, hp = _graph_to_tensors(graph, return_paths=True)
+            raw = model(nf, es, ed, ef, path_seq=ps, path_mask=pm, has_path=hp)
+        else:
+            node_feat, edge_src, edge_dst, edge_feat = _graph_to_tensors(graph)
+            raw = model(node_feat, edge_src, edge_dst, edge_feat)
         normed = F.normalize(raw, p=2, dim=-1).cpu().numpy()  # [N, D]
 
     # --- Step 2: find boundary edges (only over graph edges) ---
@@ -1557,8 +1561,12 @@ def _get_boundary_edges(
 
     model.eval()
     with torch.no_grad():
-        node_feat, edge_src, edge_dst, edge_feat = _graph_to_tensors(graph)
-        raw = model(node_feat, edge_src, edge_dst, edge_feat)
+        if getattr(model, "path_emb_dim", 0) > 0:
+            nf, es, ed, ef, ps, pm, hp = _graph_to_tensors(graph, return_paths=True)
+            raw = model(nf, es, ed, ef, path_seq=ps, path_mask=pm, has_path=hp)
+        else:
+            node_feat, edge_src, edge_dst, edge_feat = _graph_to_tensors(graph)
+            raw = model(node_feat, edge_src, edge_dst, edge_feat)
         normed = F.normalize(raw, p=2, dim=-1).cpu().numpy()  # [N, D]
 
     midpoint = (low_sim + high_sim) / 2.0
@@ -1609,8 +1617,12 @@ def score_cell_quality(
 
     model.eval()
     with torch.no_grad():
-        node_feat, edge_src, edge_dst, edge_feat = _graph_to_tensors(graph)
-        embeddings = model(node_feat, edge_src, edge_dst, edge_feat)
+        if getattr(model, "path_emb_dim", 0) > 0:
+            nf, es, ed, ef, ps, pm, hp = _graph_to_tensors(graph, return_paths=True)
+            embeddings = model(nf, es, ed, ef, path_seq=ps, path_mask=pm, has_path=hp)
+        else:
+            node_feat, edge_src, edge_dst, edge_feat = _graph_to_tensors(graph)
+            embeddings = model(node_feat, edge_src, edge_dst, edge_feat)
         embeddings = F.normalize(embeddings, p=2, dim=-1)
 
     # Load validator if path given
