@@ -66,6 +66,7 @@ class SynapseEdge:
     grammar_score: float  # pairwise grammar merge score (if available), else 0.0
     shared_agents: int    # number of agents that visited both synapses
     shared_partners: int = 0  # shared connectivity targets on the opposite side
+    seg_connectivity: float = 0.5  # EM seg corridor score: 1.0=same neurite, 0.0=different, 0.5=unknown
 
 
 @dataclass
@@ -108,6 +109,7 @@ def build_synapse_graph(
     proximity_radius_nm: float = 5000.0,
     max_edges_per_node: int = 32,
     partner_seg_ids: np.ndarray | None = None,
+    seg_connectivity_scores: dict[tuple[int, int], float] | None = None,
 ) -> SynapseGraph:
     """Build a synapse-level evidence graph for one side (pre or post).
 
@@ -135,6 +137,11 @@ def build_synapse_graph(
         pre_seg_id when role="post").  Used to compute shared-partner counts:
         how many connectivity targets two synapse groups share, which is a
         strong signal that they belong to the same cell.
+    seg_connectivity_scores :
+        EM segmentation corridor scores keyed by ``(min(i,j), max(i,j))``.
+        Produced by :func:`~neuronauts.em_corridor.batch_score_seg_connectivity`.
+        Values: 1.0 = confirmed same neurite, 0.0 = confirmed different neurites,
+        0.5 = unknown.  If None, all edges default to 0.5 (neutral).
     """
     if role == "pre":
         positions = synapses.pre_pt.copy().astype(np.float32)
@@ -241,11 +248,13 @@ def build_synapse_graph(
                 gs = grammar_scores.get(key, 0.0)
             sa = agent_covisit.get(key, 0)
             sp = _shared_partner_count(key[0], key[1])
+            sc = seg_connectivity_scores.get(key, 0.5) if seg_connectivity_scores else 0.5
             edge_dict[key] = SynapseEdge(
                 src=key[0], dst=key[1],
                 distance=dist, same_scaffold=same_scaf,
                 grammar_score=gs, shared_agents=sa,
                 shared_partners=sp,
+                seg_connectivity=sc,
             )
 
     # Scaffold edges (ensure all same-scaffold synapses are connected)
@@ -262,11 +271,13 @@ def build_synapse_graph(
                     gs = grammar_scores.get(key, 0.0) if grammar_scores else 0.0
                     sa = agent_covisit.get(key, 0)
                     sp = _shared_partner_count(key[0], key[1])
+                    sc = seg_connectivity_scores.get(key, 0.5) if seg_connectivity_scores else 0.5
                     edge_dict[key] = SynapseEdge(
                         src=key[0], dst=key[1],
                         distance=dist, same_scaffold=1.0,
                         grammar_score=gs, shared_agents=sa,
                         shared_partners=sp,
+                        seg_connectivity=sc,
                     )
 
     return SynapseGraph(
@@ -283,7 +294,7 @@ def build_synapse_graph(
 # 2. CellGNN -- sparse message-passing for cell membership
 # ---------------------------------------------------------------------------
 
-_EDGE_FEAT_DIM = 5  # distance, same_scaffold, grammar_score, shared_agents, shared_partners
+_EDGE_FEAT_DIM = 6  # distance, same_scaffold, grammar_score, shared_agents, shared_partners, seg_connectivity
 # Below this synapse count use exact O(N²) similarity; above use ANN sparse path.
 _ANN_PARTITION_THRESHOLD = 500
 
@@ -295,7 +306,7 @@ def _graph_to_tensors(graph: SynapseGraph):
     -------
     node_feat : Tensor [N, 3]  (isotropic position, centered)
     edge_src, edge_dst : Tensor [2E]  (bidirectional)
-    edge_feat : Tensor [2E, 5]  (distance, same_scaffold, grammar_score, shared_agents, shared_partners)
+    edge_feat : Tensor [2E, 6]  (distance, same_scaffold, grammar_score, shared_agents, shared_partners, seg_connectivity)
     """
     torch, _ = _require_torch()
     N = graph.n_synapses
@@ -328,13 +339,14 @@ def _graph_to_tensors(graph: SynapseGraph):
                 e.grammar_score,
                 min(e.shared_agents, 10) / 10.0,   # clamp & normalize
                 min(e.shared_partners, 5) / 5.0,   # clamp & normalize
+                e.seg_connectivity,                 # EM seg endpoint ID match
             ])
 
-    # Self-loops
+    # Self-loops: seg_connectivity=0.5 (neutral; self-edges don't resolve connectivity)
     for i in range(N):
         src_list.append(i)
         dst_list.append(i)
-        feat_list.append([0.0, 1.0, 1.0, 0.0, 0.0])
+        feat_list.append([0.0, 1.0, 1.0, 0.0, 0.0, 0.5])
 
     edge_src = torch.tensor(src_list, dtype=torch.long)
     edge_dst = torch.tensor(dst_list, dtype=torch.long)
@@ -1851,6 +1863,7 @@ def cell_gnn_assembly(
     corridor_radius_nm: float = 1500.0,
     corridor_accept_threshold: float = 0.8,
     corridor_reject_threshold: float = 0.2,
+    seg_connectivity_scores: "dict[tuple[int, int], float] | None" = None,
 ) -> "ConnectivityGraph":
     """Run CellGNN to produce a ConnectivityGraph — drop-in alternative to _build_graph.
 
@@ -1906,6 +1919,13 @@ def cell_gnn_assembly(
         EM score above which a boundary-edge merge is force-accepted.
     corridor_reject_threshold :
         EM score below which a boundary-edge merge is force-rejected.
+    seg_connectivity_scores :
+        Pre-computed EM segmentation corridor scores keyed by
+        ``(min(i,j), max(i,j))``.  Produced by
+        :func:`~neuronauts.em_corridor.batch_score_seg_connectivity`.
+        When provided, injected as the ``seg_connectivity`` edge feature
+        directly into the CellGNN input graph.  If None, all edges default
+        to 0.5 (neutral).
     """
     import time as _time
 
@@ -1942,6 +1962,7 @@ def cell_gnn_assembly(
         grammar_scores=pre_grammar_scores,
         proximity_radius_nm=proximity_radius_nm,
         partner_seg_ids=post_seg_ids,
+        seg_connectivity_scores=seg_connectivity_scores,
     )
     post_graph = build_synapse_graph(
         synapses, "post",
@@ -1949,6 +1970,7 @@ def cell_gnn_assembly(
         grammar_scores=post_grammar_scores,
         proximity_radius_nm=proximity_radius_nm,
         partner_seg_ids=pre_seg_ids,
+        seg_connectivity_scores=seg_connectivity_scores,
     )
 
     if verbose:

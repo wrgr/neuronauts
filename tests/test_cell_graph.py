@@ -119,6 +119,36 @@ class TestBuildSynapseGraph:
         assert graph.n_synapses == 0
         assert graph.edges == []
 
+    def test_seg_connectivity_default_is_neutral(self):
+        """Edges without seg_connectivity_scores should default to 0.5."""
+        syn = _make_synapses(n_cells=2, synapses_per_cell=3)
+        graph = build_synapse_graph(syn, "pre", proximity_radius_nm=1e9)
+        assert len(graph.edges) > 0
+        for e in graph.edges:
+            assert e.seg_connectivity == 0.5
+
+    def test_seg_connectivity_scores_wired(self):
+        """seg_connectivity_scores override the default 0.5 on matching edges."""
+        syn = _make_synapses(n_cells=2, synapses_per_cell=3)
+        graph = build_synapse_graph(syn, "pre", proximity_radius_nm=1e9)
+        # Pick the first edge and provide an explicit score
+        first_edge = graph.edges[0]
+        key = (min(first_edge.src, first_edge.dst), max(first_edge.src, first_edge.dst))
+        seg_scores = {key: 1.0}
+        graph2 = build_synapse_graph(
+            syn, "pre",
+            proximity_radius_nm=1e9,
+            seg_connectivity_scores=seg_scores,
+        )
+        matched = [e for e in graph2.edges
+                   if min(e.src, e.dst) == key[0] and max(e.src, e.dst) == key[1]]
+        assert len(matched) == 1
+        assert matched[0].seg_connectivity == 1.0
+        # Other edges stay at 0.5
+        others = [e for e in graph2.edges
+                  if not (min(e.src, e.dst) == key[0] and max(e.src, e.dst) == key[1])]
+        assert all(e.seg_connectivity == 0.5 for e in others)
+
 
 # ---------------------------------------------------------------------------
 # CellGNN architecture
@@ -132,7 +162,7 @@ class TestCellGNN:
         node_feat = torch.randn(N, 3)
         edge_src = torch.randint(0, N, (E,))
         edge_dst = torch.randint(0, N, (E,))
-        edge_feat = torch.randn(E, 5)
+        edge_feat = torch.randn(E, 6)
         out = model(node_feat, edge_src, edge_dst, edge_feat)
         assert out.shape == (N, 8)
 
@@ -141,7 +171,7 @@ class TestCellGNN:
                         n_heads=2, embedding_dim=8)
         node_feat = torch.randn(5, 3)
         empty = torch.zeros(0, dtype=torch.long)
-        edge_feat = torch.zeros(0, 5)
+        edge_feat = torch.zeros(0, 6)
         out = model(node_feat, empty, empty, edge_feat)
         assert out.shape == (5, 8)
 
@@ -152,7 +182,7 @@ class TestCellGNN:
         # Self-loop only
         edge_src = torch.tensor([0])
         edge_dst = torch.tensor([0])
-        edge_feat = torch.randn(1, 5)
+        edge_feat = torch.randn(1, 6)
         out = model(node_feat, edge_src, edge_dst, edge_feat)
         assert out.shape == (1, 8)
 
@@ -185,7 +215,7 @@ class TestGraphToTensors:
         _, es, ed, ef = _graph_to_tensors(graph)
         # 1 undirected → 2 directed + 3 self-loops = 5 total
         assert len(es) == 5
-        assert ef.shape == (5, 5)
+        assert ef.shape == (5, 6)
 
 
 # ---------------------------------------------------------------------------
@@ -459,7 +489,7 @@ class TestPersistence:
         node_feat = torch.randn(5, 3)
         edge_src = torch.tensor([0, 1, 2])
         edge_dst = torch.tensor([1, 2, 0])
-        edge_feat = torch.randn(3, 5)
+        edge_feat = torch.randn(3, 6)
 
         with torch.no_grad():
             out1 = model(node_feat, edge_src, edge_dst, edge_feat)

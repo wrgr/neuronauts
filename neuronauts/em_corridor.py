@@ -21,16 +21,19 @@ from typing import Tuple
 import numpy as np
 
 # Re-export constants and VolumeChunk from fetch so callers only need one import.
-from .fetch import MICRONS_EM_PATH, MIP_VOXEL_SIZES, VolumeChunk
+from .fetch import MICRONS_EM_PATH, MICRONS_SEG_PATH, MIP_VOXEL_SIZES, VolumeChunk
 
 __all__ = [
     "CorridorSpec",
     "fetch_corridor",
+    "fetch_corridor_seg",
     "corridor_mask",
     "corridor_intensity_stats",
+    "corridor_seg_connectivity_score",
     "corridors_from_boundary_edges",
     "score_corridor_connectivity",
     "batch_score_boundary_edges",
+    "batch_score_seg_connectivity",
 ]
 
 
@@ -438,6 +441,189 @@ def batch_score_boundary_edges(
         except Exception as exc:  # pragma: no cover — requires live network
             warnings.warn(
                 f"[em_corridor] Failed to fetch corridor for edge {edge_key}: {exc!r}. "
+                "Assigning neutral score 0.5.",
+                stacklevel=2,
+            )
+            scores[edge_key] = 0.5
+
+    return scores
+
+
+# ---------------------------------------------------------------------------
+# fetch_corridor_seg
+# ---------------------------------------------------------------------------
+
+def fetch_corridor_seg(
+    spec: CorridorSpec,
+    seg_path: str = MICRONS_SEG_PATH,
+) -> VolumeChunk:
+    """Fetch the segmentation volume (uint64 neurite IDs) for a corridor.
+
+    Uses the same bounding box as :func:`fetch_corridor` but fetches from the
+    neurite segmentation volume instead of the raw EM.  The returned
+    ``VolumeChunk.data`` array is dtype ``uint64``.
+
+    Parameters
+    ----------
+    spec:
+        Corridor specification (positions in nm, radius in nm, mip level).
+    seg_path:
+        CloudVolume-style path to the segmentation dataset.
+
+    Raises
+    ------
+    ValueError
+        If ``spec.length_nm > 20_000`` (same guard as :func:`fetch_corridor`).
+    """
+    if spec.length_nm > 20_000.0:
+        raise ValueError(
+            f"Corridor length {spec.length_nm:.1f} nm exceeds the 20 000 nm safety "
+            "limit.  Use a shorter edge or increase the limit explicitly."
+        )
+
+    from .fetch import fetch_seg_volume  # noqa: PLC0415
+
+    return fetch_seg_volume(spec.bbox_nm, mip=spec.mip, seg_path=seg_path)
+
+
+# ---------------------------------------------------------------------------
+# corridor_seg_connectivity_score
+# ---------------------------------------------------------------------------
+
+def corridor_seg_connectivity_score(spec: CorridorSpec, seg_volume: VolumeChunk) -> float:
+    """Return a connectivity score in [0, 1] based on neurite seg IDs at corridor endpoints.
+
+    The score indicates whether the two synapse positions lie on the same
+    neurite in the MICrONS segmentation:
+
+    * **1.0** — both endpoints map to the same non-zero seg ID (same neurite).
+    * **0.0** — both endpoints map to different non-zero seg IDs (different neurites).
+    * **0.5** — at least one endpoint falls on background (seg ID = 0); no evidence.
+
+    Parameters
+    ----------
+    spec:
+        Corridor specification; ``pos_a_nm`` and ``pos_b_nm`` are the positions
+        whose seg IDs we compare.
+    seg_volume:
+        Segmentation ``VolumeChunk`` (uint64) covering at least the corridor
+        bounding box.
+
+    Returns
+    -------
+    float
+        Connectivity score in ``[0.0, 0.5, 1.0]``.
+    """
+    vox_size = np.asarray(seg_volume.voxel_size_nm, dtype=np.float64)
+    bbox_origin = np.asarray(seg_volume.bbox_voxels[0], dtype=np.float64)
+    shape = seg_volume.data.shape  # (X, Y, Z)
+
+    def _nm_to_idx(pos_nm: np.ndarray) -> tuple[int, int, int]:
+        # Voxel centre i has nm coordinate: (bbox_origin[ax] + i + 0.5) * vox_size[ax]
+        # Solving for i: i = pos_nm / vox_size - bbox_origin - 0.5
+        idx_f = np.asarray(pos_nm, dtype=np.float64) / vox_size - bbox_origin - 0.5
+        idx = np.clip(np.round(idx_f).astype(int), 0,
+                      [shape[0] - 1, shape[1] - 1, shape[2] - 1])
+        return int(idx[0]), int(idx[1]), int(idx[2])
+
+    ia, ja, ka = _nm_to_idx(spec.pos_a_nm)
+    ib, jb, kb = _nm_to_idx(spec.pos_b_nm)
+
+    seg_a = int(seg_volume.data[ia, ja, ka])
+    seg_b = int(seg_volume.data[ib, jb, kb])
+
+    if seg_a == 0 or seg_b == 0:
+        return 0.5  # background — no evidence either way
+    if seg_a == seg_b:
+        return 1.0  # same neurite
+    return 0.0      # different neurites
+
+
+# ---------------------------------------------------------------------------
+# batch_score_seg_connectivity
+# ---------------------------------------------------------------------------
+
+def batch_score_seg_connectivity(
+    syn_positions_nm: np.ndarray,
+    edges: list[tuple[int, int]],
+    *,
+    radius_nm: float = 1500.0,
+    mip: int = 3,
+    max_length_nm: float = 15_000.0,
+    seg_path: str = MICRONS_SEG_PATH,
+    verbose: bool = False,
+) -> dict[tuple[int, int], float]:
+    """Score edges by neurite segmentation connectivity along the corridor.
+
+    For each edge the pipeline is:
+    ``CorridorSpec`` → ``fetch_corridor_seg`` → ``corridor_seg_connectivity_score``.
+
+    This gives a hard morphological signal: 1.0 = same neurite, 0.0 = different
+    neurites, 0.5 = background / unknown.  The result is suitable as an edge
+    feature in :func:`~neuronauts.cell_graph.build_synapse_graph` via the
+    ``seg_connectivity_scores`` parameter.
+
+    Parameters
+    ----------
+    syn_positions_nm:
+        Array of shape ``[N, 3]`` giving every synapse's nm position.
+    edges:
+        List of ``(i, j)`` index pairs into ``syn_positions_nm``.
+    radius_nm:
+        Cylinder radius for corridor specs (nm).
+    mip:
+        CloudVolume MIP level for seg fetches.  MIP 3 (64×64×40 nm/vox) is
+        the default — small volumes, sufficient for endpoint lookups.
+    max_length_nm:
+        Edges longer than this skip the seg fetch and receive score 0.5.
+    seg_path:
+        CloudVolume-style path to the neurite segmentation.
+    verbose:
+        If True, print per-edge progress.
+
+    Returns
+    -------
+    dict[tuple[int, int], float]
+        Mapping ``(i, j)`` → score in ``{0.0, 0.5, 1.0}``.
+    """
+    positions = np.asarray(syn_positions_nm, dtype=np.float64)
+    scores: dict[tuple[int, int], float] = {}
+
+    for i, j in edges:
+        edge_key = (i, j)
+        pos_a = positions[i]
+        pos_b = positions[j]
+        length = float(np.linalg.norm(pos_b - pos_a))
+
+        if length > max_length_nm:
+            if verbose:
+                print(
+                    f"[em_corridor.seg] edge {edge_key}: length {length:.0f} nm > "
+                    f"max {max_length_nm:.0f} nm — skipping (score=0.5)"
+                )
+            scores[edge_key] = 0.5
+            continue
+
+        spec = CorridorSpec(
+            pos_a_nm=pos_a.copy(),
+            pos_b_nm=pos_b.copy(),
+            radius_nm=radius_nm,
+            mip=mip,
+            edge_key=edge_key,
+        )
+
+        try:
+            seg_vol = fetch_corridor_seg(spec, seg_path=seg_path)
+            score = corridor_seg_connectivity_score(spec, seg_vol)
+            if verbose:
+                print(
+                    f"[em_corridor.seg] edge {edge_key}: length {length:.0f} nm, "
+                    f"score={score:.1f}"
+                )
+            scores[edge_key] = score
+        except Exception as exc:  # pragma: no cover — requires live network
+            warnings.warn(
+                f"[em_corridor] Failed to fetch seg corridor for edge {edge_key}: {exc!r}. "
                 "Assigning neutral score 0.5.",
                 stacklevel=2,
             )

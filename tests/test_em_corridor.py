@@ -10,6 +10,7 @@ from neuronauts.em_corridor import (
     CorridorSpec,
     corridor_intensity_stats,
     corridor_mask,
+    corridor_seg_connectivity_score,
     corridors_from_boundary_edges,
     score_corridor_connectivity,
 )
@@ -263,3 +264,99 @@ def test_score_corridor_connectivity_monotone():
         })
 
     assert _score(0.0) <= _score(0.25) <= _score(0.5)
+
+
+# ---------------------------------------------------------------------------
+# corridor_seg_connectivity_score tests
+# ---------------------------------------------------------------------------
+
+def _make_seg_volume(
+    shape=(20, 20, 10),
+    voxel_size_nm=(64, 64, 40),
+    bbox_origin_vox=(0, 0, 0),
+    fill: int = 0,
+) -> VolumeChunk:
+    """Return a VolumeChunk filled with a constant uint64 seg ID."""
+    data = np.full(shape, fill, dtype=np.uint64)
+    return VolumeChunk(
+        data=data,
+        voxel_size_nm=voxel_size_nm,
+        bbox_voxels=(bbox_origin_vox, tuple(bbox_origin_vox[i] + shape[i] for i in range(3))),
+        mip=3,
+    )
+
+
+def _make_two_seg_volume(
+    shape=(20, 20, 10),
+    voxel_size_nm=(64, 64, 40),
+    seg_a: int = 111,
+    seg_b: int = 222,
+) -> VolumeChunk:
+    """First half (x < shape[0]//2) filled with seg_a; second half with seg_b."""
+    data = np.full(shape, seg_a, dtype=np.uint64)
+    data[shape[0] // 2:] = seg_b
+    return VolumeChunk(
+        data=data,
+        voxel_size_nm=voxel_size_nm,
+        bbox_voxels=((0, 0, 0), shape),
+        mip=3,
+    )
+
+
+def test_seg_score_same_id_returns_one():
+    """Both endpoints on the same seg ID → score=1.0."""
+    vox = (64, 64, 40)
+    spec = CorridorSpec(
+        pos_a_nm=np.array([100.0, 100.0, 100.0]),
+        pos_b_nm=np.array([500.0, 500.0, 200.0]),
+        radius_nm=200.0,
+        mip=3,
+    )
+    vol = _make_seg_volume(shape=(20, 20, 10), voxel_size_nm=vox, fill=42)
+    score = corridor_seg_connectivity_score(spec, vol)
+    assert score == 1.0
+
+
+def test_seg_score_different_ids_returns_zero():
+    """Endpoints on different non-zero seg IDs → score=0.0."""
+    vox = (64, 64, 40)
+    # pos_a is in x < 10 (seg=111); pos_b is in x >= 10 (seg=222)
+    spec = CorridorSpec(
+        pos_a_nm=np.array([100.0, 100.0, 100.0]),   # x=100/64 ≈ vox 1 → seg 111
+        pos_b_nm=np.array([900.0, 100.0, 100.0]),   # x=900/64 ≈ vox 14 → seg 222
+        radius_nm=200.0,
+        mip=3,
+    )
+    vol = _make_two_seg_volume(shape=(20, 20, 10), voxel_size_nm=vox, seg_a=111, seg_b=222)
+    score = corridor_seg_connectivity_score(spec, vol)
+    assert score == 0.0
+
+
+def test_seg_score_background_returns_half():
+    """If either endpoint is background (seg_id=0) → score=0.5."""
+    vox = (64, 64, 40)
+    spec = CorridorSpec(
+        pos_a_nm=np.array([100.0, 100.0, 100.0]),
+        pos_b_nm=np.array([500.0, 500.0, 200.0]),
+        radius_nm=200.0,
+        mip=3,
+    )
+    vol = _make_seg_volume(shape=(20, 20, 10), voxel_size_nm=vox, fill=0)
+    score = corridor_seg_connectivity_score(spec, vol)
+    assert score == 0.5
+
+
+def test_seg_score_clamps_to_volume_boundary():
+    """A position outside the volume bbox is clamped to the nearest voxel without error."""
+    vox = (64, 64, 40)
+    # pos_b is well outside the volume bounds
+    spec = CorridorSpec(
+        pos_a_nm=np.array([100.0, 100.0, 100.0]),
+        pos_b_nm=np.array([99_000.0, 99_000.0, 99_000.0]),
+        radius_nm=200.0,
+        mip=3,
+    )
+    vol = _make_seg_volume(shape=(20, 20, 10), voxel_size_nm=vox, fill=7)
+    # Should not raise; clamped pos_b ends up at last voxel, same seg_id=7
+    score = corridor_seg_connectivity_score(spec, vol)
+    assert score in (0.0, 0.5, 1.0)

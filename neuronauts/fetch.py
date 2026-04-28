@@ -10,6 +10,7 @@ from typing import Optional, Tuple
 import numpy as np
 
 MICRONS_EM_PATH = "precomputed://https://bossdb-open-data.s3.amazonaws.com/iarpa_microns/minnie/minnie65/em"
+MICRONS_SEG_PATH = "precomputed://gs://microns-seunglab/minnie65/seg"
 MICRONS_DATASTACK = "minnie65_public"
 CAVE_SERVER = "https://global.daf-apis.com"
 DEFAULT_BOX_SIDE_UM = 6.0
@@ -165,6 +166,42 @@ def fetch_volume(
     data = np.squeeze(cv[x0:x1, y0:y1, z0:z1])
     return VolumeChunk(
         data=data.astype(np.uint8),
+        voxel_size_nm=vox,
+        bbox_voxels=((x0, y0, z0), (x1, y1, z1)),
+        mip=mip,
+    )
+
+
+def fetch_seg_volume(
+    bbox_nm: Tuple[Tuple, Tuple],
+    mip: int = 3,
+    seg_path: str = MICRONS_SEG_PATH,
+) -> VolumeChunk:
+    """Fetch a segmentation volume chunk (uint64 neurite seg IDs).
+
+    Returns the same VolumeChunk structure as fetch_volume but with uint64
+    data encoding the MICrONS neurite segmentation IDs.  MIP 3 (64×64×40
+    nm/vox) is the default — sufficient for endpoint connectivity checks while
+    keeping fetched volumes small.
+    """
+    _install_system_trust_store()
+    try:
+        from cloudvolume import CloudVolume
+    except ImportError as exc:
+        raise ImportError("pip install cloud-volume") from exc
+
+    cv = CloudVolume(seg_path, mip=mip, use_https=True, progress=False, fill_missing=True)
+    vox = MIP_VOXEL_SIZES[mip]
+    x0 = int(bbox_nm[0][0] / vox[0])
+    y0 = int(bbox_nm[0][1] / vox[1])
+    z0 = int(bbox_nm[0][2] / vox[2])
+    x1 = int(bbox_nm[1][0] / vox[0])
+    y1 = int(bbox_nm[1][1] / vox[1])
+    z1 = int(bbox_nm[1][2] / vox[2])
+
+    data = np.squeeze(cv[x0:x1, y0:y1, z0:z1])
+    return VolumeChunk(
+        data=data.astype(np.uint64),
         voxel_size_nm=vox,
         bbox_voxels=((x0, y0, z0), (x1, y1, z1)),
         mip=mip,
