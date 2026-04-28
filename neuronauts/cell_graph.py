@@ -914,6 +914,7 @@ class CellGNNConfig:
     learning_rate: float = 1e-3
     margin: float = 0.5          # cosine similarity target separation for negatives
     max_pairs_per_box: int = 2048
+    max_synapses_per_box: int = 2000  # randomly subsample graphs above this size
     proximity_radius_nm: float = 5000.0
     partition_threshold: float = 0.5
     partition_method: str = "agglomerative"
@@ -1248,6 +1249,17 @@ def train_cell_gnn(
                 _, synapses = cache.load(record, load_volume=False)
             except Exception:
                 continue
+
+            # Cap graph size: randomly subsample synapses to keep memory bounded.
+            # Preserves the root-ID distribution so contrastive pairs remain valid.
+            if synapses.n_synapses > cfg.max_synapses_per_box:
+                keep = rng.choice(
+                    synapses.n_synapses,
+                    size=cfg.max_synapses_per_box,
+                    replace=False,
+                )
+                keep.sort()
+                synapses = synapses.subset(keep)
 
             # Look up pre-computed seg connectivity scores for this box
             _box_seg = seg_score_cache.get(record.box_hash, {}) if seg_score_cache else {}

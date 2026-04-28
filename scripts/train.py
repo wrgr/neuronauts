@@ -1163,6 +1163,7 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
         learning_rate=args.lr,
         margin=args.margin,
         max_pairs_per_box=args.max_pairs_per_box,
+        max_synapses_per_box=getattr(args, "max_synapses_per_box", 2000),
         proximity_radius_nm=args.proximity_radius_nm,
         partition_threshold=args.partition_threshold,
         seed=args.seed,
@@ -2472,6 +2473,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     p_cell.add_argument("--margin", type=float, default=0.5,
                         help="Contrastive loss margin (cosine sim gap).")
     p_cell.add_argument("--max-pairs-per-box", type=int, default=2048)
+    p_cell.add_argument("--max-synapses-per-box", type=int, default=2000,
+                        help="Randomly subsample boxes above this synapse count to cap memory (default: 2000).")
     p_cell.add_argument("--proximity-radius-nm", type=float, default=5000.0)
     p_cell.add_argument("--partition-threshold", type=float, default=0.5)
     p_cell.add_argument("--min-tangledness", type=float, default=0.0,

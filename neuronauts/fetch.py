@@ -83,6 +83,22 @@ class SynapseTable:
     pre_seg_id: np.ndarray | None = None
     post_seg_id: np.ndarray | None = None
 
+    @property
+    def n_synapses(self) -> int:
+        return len(self.pre_pt)
+
+    def subset(self, indices: np.ndarray) -> "SynapseTable":
+        """Return a new SynapseTable containing only the given row indices."""
+        return SynapseTable(
+            pre_pt=self.pre_pt[indices],
+            post_pt=self.post_pt[indices],
+            pre_root_id=self.pre_root_id[indices],
+            post_root_id=self.post_root_id[indices],
+            synapse_id=self.synapse_id[indices],
+            pre_seg_id=self.pre_seg_id[indices] if self.pre_seg_id is not None else None,
+            post_seg_id=self.post_seg_id[indices] if self.post_seg_id is not None else None,
+        )
+
 
 @dataclass(frozen=True)
 class SkeletonData:
