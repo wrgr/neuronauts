@@ -265,6 +265,18 @@ def fetch_synapses(
             )
             break
         except Exception as exc:
+            # Server-side bug: caveclient sends return_pyarrow=True but older CAVE
+            # servers don't handle the ipc_compress parameter. Fall back to JSON.
+            if "ipc_compress" in str(exc):
+                try:
+                    df = client.materialize.query_table(
+                        "synapses_pni_2",
+                        filter_spatial_dict={"ctr_pt_position": bbox_synapse_units},
+                        return_pyarrow=False,
+                    )
+                    break
+                except Exception as fallback_exc:
+                    exc = fallback_exc
             last_exc = exc
             if attempt + 1 >= max(1, int(max_retries)):
                 raise
