@@ -1,193 +1,112 @@
-# CellGNN Training Pipeline — Open Items
+# CellGNN Pipeline — Open Items
 
-Status as of 2026-03-29.  Items are ordered by dependency — complete
-earlier items before later ones.
-
----
-
-## 1. Real Data Acquisition
-
-The CellGNN has been validated on synthetic boxes.  Training on real
-MICrONS data is the critical next step.
-
-**Infrastructure improvements (2026-03-29):**
-
-- ✅ `fetch_synapses` now retries with exponential backoff (4 attempts,
-  2s/4s/8s/16s) on transient network failures — matching the pattern
-  already used by `fetch_root_skeleton`
-- ✅ Full build-dataset pipeline validated end-to-end with mocked CAVE
-  client (`TestBuildDatasetMockedCave`, 2 tests)
-- ✅ Retry behavior verified under simulated transient failures
-
-**Next:** Run the CAVE-only fetch on a machine with outbound network access.
-
-### 1a. CAVE-only boxes (no auth token required)
-
-The fastest path to real data.  Public `minnie65_public` datastack
-does **not** require a CAVE token — only `caveclient` must be installed.
-
-```bash
-pip install caveclient
-
-# Fetch 80 synapse-seeded boxes, skip EM volume (~30 min)
-python scripts/train.py build-dataset \
-    --cache-dir data/boxes_cave \
-    --n-boxes 80 \
-    --strategy synapse-seeded \
-    --no-em \
-    --min-positive-pairs 5 \
-    --cave-version 1412
-
-# Train CellGNN on cached data
-python scripts/train.py train-cell-gnn \
-    --cache-dir data/boxes_cave \
-    --epochs 50 \
-    --cell-gnn-output models/cell_gnn_cave.pt
-```
-
-For environments without outbound network, use the helper:
-
-```bash
-python scripts/fetch_cave_boxes.py \
-    --cache-dir data/boxes_cave \
-    --n-boxes 80 \
-    --no-em \
-    --min-positive-pairs 5
-```
-
-This writes a self-contained `BoxCache` that can be copied to an
-offline machine for training.
-
-### 1b. Static archived data (fully offline)
-
-Download v1078 materialization CSVs once, then select boxes offline:
-
-```bash
-python -m neuronauts.synapse_root_counts_static \
-    --version 1078 \
-    --static-dir data/microns_static \
-    --output run_logs/synapse_root_counts_v1078.tsv
-
-python scripts/train.py build-dataset \
-    --cache-dir data/boxes_static \
-    --n-boxes 50 \
-    --counts-tsv run_logs/synapse_root_counts_v1078.tsv \
-    --nucleus-csv data/microns_static/v1078/nucleus_detection_v0.csv
-```
-
-### 1c. Proofread-core (highest quality, requires CAVE token)
-
-Proofread regions have the richest structure and most reliable labels.
-Requires `CAVE_TOKEN` environment variable or `--cave-token` flag.
-
-```bash
-# Sample proofread roots
-python scripts/train.py build-dataset \
-    --cache-dir data/boxes_proofread \
-    --strategy proofread-core \
-    --proofread-n-roots 30 \
-    --proofread-radius-um 40 \
-    --no-em \
-    --cave-version 1412 \
-    --cave-token "$CAVE_TOKEN"
-
-# Optionally remap to a newer materialization for label refresh
-python scripts/train.py remap-roots \
-    --cache-dir data/boxes_proofread \
-    --base-version 1412 --target-version 1718 \
-    --output data/boxes_proofread/root_remap.tsv
-```
+Status as of 2026-04-28.  Ordered by current dependency.
 
 ---
 
-## 2. Edit-History Integration
+## Done (this iteration)
 
-`edit_history.py` produces contrastive pairs from proofreader merges
-and splits.  The wiring into `train_cell_gnn` is complete
-(`--edit-pairs-tsv`), but no real edit-pair TSV has been generated yet.
+- ✅ **Real-data dataset**: 37 CAVE boxes cached at `data/boxes/`,
+  v1412 root IDs.
+- ✅ **Seg-connectivity edge feature** (`seg_connectivity`,
+  6th edge feature).  Single-bbox BossDB fetch per box at MIP 3
+  via `precompute_seg_scores_fast`.  Cache at `data/seg_scores.json`
+  (37 boxes, 410K edges, 73% with non-neutral signal).
+- ✅ **Threshold sweep** on `cell_gnn_seg.pt` (t in 0.90..0.999).
+  Best mean F1 = 0.272 at t=0.99; t=0.999 catastrophic.
+- ✅ **K-hop ablation** (n_layers in {1,2,3,4,5}, all seed=42):
 
-### Next steps
+      K=1: 0.176   K=2: 0.197   K=3: 0.194   K=4: 0.195   K=5: 0.185
 
-- [ ] Run `python -m neuronauts.edit_history build-pairs` on a real
-      cache to produce `edit_pairs.tsv`
-- [ ] Train CellGNN with `--edit-pairs-tsv edit_pairs.tsv` and compare
-      val F1 with/without edit supervision
-- [ ] Tune `--edit-weight` (currently default 2.0)
+  K=1 underfits.  K=2..4 are flat within ±0.003.  Default
+  ``CellGNNConfig.n_layers=3`` no longer matches the empirical
+  optimum (K=2) but is preserved for back-compat.  See module
+  docstring in `neuronauts/cell_graph.py`.
 
----
+- ✅ **Per-feature ablation** (zero out one of the 6 edge features
+  via ``--ablate-feature``).  All 6 deltas vs the baseline 6-feat
+  model are within ±0.01 mean F1 — see commit history for the
+  full table.  Implication: the scalar evidence features are
+  largely redundant; the model is leaving signal on the table.
 
-## 3. Evaluation Against Beam-Search Baseline
+- ✅ **PathEdgeEncoder** (Option 2 model plane,
+  `neuronauts/path_edge_encoder.py`).  Transformer over per-step
+  skeleton-path features → fixed-size edge embedding.  Wired into
+  ``CellGNN`` via the new ``path_emb_dim`` config field.  Empty
+  paths use a learned ``no_path_embedding``.  6 unit tests in
+  `tests/test_path_edge_encoder.py`.
 
-The `evaluate` subcommand is implemented but hasn't been run on real
-data with a grammar baseline.
+- ✅ **Skeleton-path data plane** (Option 2 data plane).  Two
+  precompute pipelines:
 
-### Next steps
+  1. ``precompute_self_skeletons_for_cache`` — kimimaro
+     skeletonization of the BossDB seg volume per box.  37/37
+     boxes, ~10 sec/box, 19–63 real skeletons each.  Output at
+     `data/skeletons_self/`.
+  2. ``precompute_skeleton_paths_for_cache`` — Dijkstra paths
+     between proximity-graph synapse pairs through the cached
+     skeletons.  Output at `data/skeleton_paths.pkl` (37 boxes,
+     410K edges, 0.3% with traced same-root path).
 
-- [ ] Run `evaluate --cell-gnn-checkpoint ... --grammar-checkpoint ...`
-      on test split with real CAVE boxes
-- [ ] Compare F1/precision/recall head-to-head
-- [ ] If GNN wins on precision but loses on recall (or vice versa),
-      consider an ensemble: GNN embeddings as additional edge features
-      in the grammar pipeline
+  ``precompute_skeleton_paths_for_cache`` accepts either CAVE-style
+  per-(root, version) caches **or** the kimimaro per-box archives.
 
----
-
-## 4. Hyperparameter Sweep on Real Data
-
-The `sweep` subcommand is ready.  On synthetic data all configs converge
-to similar val F1 due to small box count.  Real data (50+ boxes) should
-differentiate.
-
-### Priority sweep axes
-
-| Parameter              | Range to try          | Why                                      |
-|------------------------|-----------------------|------------------------------------------|
-| `proximity_radius_nm`  | 2000, 5000, 10000     | Controls graph density and K-hop reach   |
-| `partition_threshold`   | 0.3, 0.5, 0.7        | Precision/recall tradeoff at clustering  |
-| `d_model`              | 32, 64, 128           | Model capacity                           |
-| `n_layers`             | 2, 3, 4              | Message-passing depth (K-hop reach)      |
-
-```bash
-python scripts/train.py sweep \
-    --cache-dir data/boxes_cave \
-    --d-models "32,64,128" \
-    --n-layers-list "2,3,4" \
-    --proximity-radii "2000,5000,10000" \
-    --partition-thresholds "0.3,0.5,0.7" \
-    --epochs 30 \
-    --best-output models/cell_gnn_sweep_best.pt
-```
+- ❌ **CAVE skeleton service** (Option 2b alternative source) —
+  attempted, abandoned.  CAVE returns 1-vertex placeholder
+  skeletons for unproofread roots, which is >99% of roots in 6 µm
+  training boxes.  Per-fetch latency ~80 sec for empty results.
+  See `scripts/fetch_skeletons.py` (kept; works only when the
+  target roots are proofread).
 
 ---
 
-## 5. Scale Testing on Larger Boxes
+## Active
 
-`scale-test` is implemented.  Remaining work:
+### 1. Train Option-2 model end-to-end on self-skel paths
 
-- [ ] Test on boxes with 200+ synapses (`--box-side-um 15` or higher
-      `--min-synapses`)
-- [ ] Profile with `--proximity-radius-nm 2000` vs `10000` to measure
-      graph density impact
-- [ ] Identify the synapse count where O(N^2) cosine-similarity
-      clustering in `partition_from_embeddings` becomes a bottleneck
-      (likely >500 synapses); consider switching to ANN or sparse
-      methods at that point
+The wiring is in place; ``CellGNN(path_emb_dim=H)`` consumes
+``(path_seq, path_mask, has_path)`` in addition to the existing
+6 scalar edge features.  Remaining work:
+
+- [ ] Thread ``--skeleton-paths-cache`` flag through
+      ``cmd_train_cell_gnn`` so the path cache is loaded into
+      ``SynapseGraph.edge_path_features`` per box during training
+- [ ] Convert raw vertex sequences in `data/skeleton_paths.pkl`
+      to per-step features via `featurize_path_points` at load
+      time (or precompute and re-cache)
+- [ ] Train one model with ``path_emb_dim=16`` (Option 2 +
+      original 6 scalars), one with ``path_emb_dim=16`` and the
+      grammar feature ablated (the 6→5+pathemb test) — to confirm
+      that path embeddings recover the signal grammar lost to scalar
+      collapse
+- [ ] Compare against `models/cell_gnn_seg.pt` baseline on the test
+      split at t=0.99
+
+### 2. Calibrated-threshold evaluation across all ablations
+
+`scripts/eval_at_t099.sh` is ready.  Run it once feature ablation
+finishes to produce the apples-to-apples F1 table at the
+calibrated threshold.
 
 ---
 
-## 6. Test Coverage Gaps
+## Pending (lower priority)
 
-### Critical — ✅ DONE (tests/test_pipeline_commands.py, 21 tests passing)
+### 3. Edit-history supervision
 
-- [x] `cmd_train_cell_gnn` integration test (full training + edit-pairs TSV + resume)
-- [x] `cmd_evaluate` integration test (checkpoint load → eval → JSON output, val/test splits, missing checkpoint)
-- [x] `cmd_sweep` integration test (2-config grid → best model saved)
-- [x] `cmd_scale_test` integration test (with/without checkpoint)
+`edit_history.py` and ``--edit-pairs-tsv`` are wired but no real
+edit-pair TSV has been generated.  Probably less impactful than
+Option 2; revisit after path embeddings show signal.
 
-### Medium priority — ✅ DONE
+### 4. Hyperparameter sweep on seg + path-encoder model
 
-- [x] Edit-pairs TSV loading (`test_training_with_edit_pairs_tsv`)
-- [x] `partition_from_embeddings` with threshold=0.0 and threshold=1.0
-- [x] `spatial_train_val_test_split` with 1–2 boxes (degenerate case)
-- [x] `cell_graph_train_step` with out-of-range edit pair indices
-- [x] `train_cell_gnn` with `edit_weight=0.0` (behaves like no edit pairs)
+Current best: ``cell_gnn_seg.pt`` (6-feat scalar) at t=0.99,
+mean F1 0.272.  Sweep ``d_model x embedding_dim x path_emb_dim``
+once Option 2 is producing baseline numbers worth tuning.
+
+### 5. Scale testing
+
+`scale-test` subcommand exists.  Real-data scale runs on boxes
+with ≥200 synapses still pending.  At >500 synapses,
+`partition_from_embeddings` becomes O(N²) — switch to ANN/sparse
+clustering when needed.

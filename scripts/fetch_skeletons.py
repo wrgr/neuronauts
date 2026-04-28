@@ -1,8 +1,21 @@
 """Fetch and cache CAVE skeletons for all root IDs in cached training boxes.
 
 Reads each box from BoxCache, collects unique pre/post root IDs, and fetches
-the skeleton at the box's root_id_version. Skeletons are cached to disk so
-subsequent training runs can load them without hitting CAVE.
+the skeleton at the box's root_id_version.
+
+WARNING — empirical caveat (2026-04-28)
+---------------------------------------
+The MICrONS ``minnie65_public`` skeleton service only returns real
+skeletons for **proofread** roots.  In our 6 µm training boxes the
+vast majority of root IDs are unproofread fragments, for which CAVE
+returns a 1-vertex / 0-edge placeholder after ~80 s of latency.  In
+a 102-skeleton fetch run, exactly 1 result had >5 vertices.
+
+Use ``scripts/train.py precompute-self-skeletons`` (kimimaro
+skeletonization of the BossDB seg volume) instead — it works for both
+proofread and unproofread roots.  Keep this script for the case where
+you specifically need proofread CAVE skeletons (e.g. for ground-truth
+comparison or when re-using existing CAVE-format caches).
 
 Usage:
     python scripts/fetch_skeletons.py --cache-dir data/boxes --output-dir data/skeletons

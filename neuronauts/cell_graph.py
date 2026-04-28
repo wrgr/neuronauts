@@ -20,20 +20,42 @@ This module inverts the framing:
    become *edge features* (not decisions); the GNN learns which evidence paths
    are trustworthy in context.
 
-The hierarchy the user asked for is implicit in K:
-  K=1  →  scaffold-group substructures  (cheap, nearly free)
-  K=2  →  locally adjacent fragments on the same branch
-  K=3+ →  full arbor / whole-cell reach
+Empirical K-hop behaviour
+-------------------------
+Earlier docstrings claimed a K=1/2/3+ hierarchy
+(scaffold-group → branch → arbor).  The K-hop ablation
+(``models/cell_gnn_seg_K{1..5}.pt``, all seed=42) does not
+support that story:
+
+  K=1: 0.176   K=2: 0.197   K=3: 0.194   K=4: 0.195   K=5: 0.185
+
+K=1 underfits; K=2..4 are flat within ±0.003.  K=2 is the
+recommended default for the current dataset; the on-disk default
+of ``CellGNNConfig.n_layers=3`` is preserved for backwards
+compatibility but produces no measurable F1 gain over K=2.
 
 Architecture
 ------------
 1. ``build_synapse_graph``           -- weighted evidence graph from all available signals
 2. ``CellGNN``                       -- edge-conditioned message-passing GNN
+                                        (optionally consumes per-edge skeleton
+                                        path embeddings via ``PathEdgeEncoder``)
 3. ``partition_from_embeddings``     -- cluster embeddings → cell labels
 4. ``cell_graph_train_step``         -- contrastive pull/push against CAVE root IDs
 5. ``train_cell_gnn``                -- epoch loop over a BoxCache
 6. ``infer_cells``                   -- inference → per-synapse cell labels
 7. ``connectivity_graph_from_cell_labels`` -- labels → ConnectivityGraph for F1 eval
+
+Pre-computed edge-feature caches
+--------------------------------
+* ``precompute_seg_scores_fast``      -- BossDB seg ID match per edge
+                                        (one bbox fetch per box)
+* ``precompute_self_skeletons_for_cache``
+                                      -- kimimaro self-skeletonization of the
+                                        BossDB seg volume per box
+* ``precompute_skeleton_paths_for_cache``
+                                      -- Dijkstra paths through self- or CAVE-
+                                        skeletons; feeds ``PathEdgeEncoder``
 """
 
 from __future__ import annotations
@@ -97,6 +119,11 @@ class SynapseGraph:
     node_scaffold_ids: np.ndarray
     edges: list[SynapseEdge]
     root_ids: np.ndarray | None = None
+    # Optional: ``edge_path_features[(i, j)]`` is a ``[T, path_input_dim]``
+    # float32 array of per-step skeleton-path features; absent or empty
+    # means "no path".  Populated by callers that have run the
+    # skeleton-path precompute (see ``precompute_skeleton_paths_for_cache``).
+    edge_path_features: dict[tuple[int, int], np.ndarray] | None = None
 
 
 def build_synapse_graph(
@@ -307,14 +334,34 @@ _ABLATE_FEATURE_IDX: int | None = None
 _ANN_PARTITION_THRESHOLD = 500
 
 
-def _graph_to_tensors(graph: SynapseGraph):
+def _graph_to_tensors(
+    graph: SynapseGraph,
+    *,
+    return_paths: bool = False,
+    path_max_len: int = 64,
+    path_feat_dim: int = 6,
+):
     """Convert a SynapseGraph to tensors for the GNN.
 
     Returns
     -------
     node_feat : Tensor [N, 3]  (isotropic position, centered)
     edge_src, edge_dst : Tensor [2E]  (bidirectional)
-    edge_feat : Tensor [2E, 6]  (distance, same_scaffold, grammar_score, shared_agents, shared_partners, seg_connectivity)
+    edge_feat : Tensor [2E, 6]  (distance, same_scaffold, grammar_score,
+                                  shared_agents, shared_partners,
+                                  seg_connectivity)
+
+    When ``return_paths`` is True, also returns
+    ``(path_seq, path_mask, has_path)``:
+
+    path_seq : Tensor [2E, T_max, path_feat_dim] float32
+    path_mask : Tensor [2E, T_max] bool   (True = padded position)
+    has_path : Tensor [2E] bool           (True if real path)
+
+    Path features come from ``graph.edge_path_features`` (a
+    ``dict[(i, j)] -> [T, path_feat_dim]`` array).  Edges without an
+    entry get an all-padding row and ``has_path=False``.  Self-loops
+    always get ``has_path=False``.
     """
     torch, _ = _require_torch()
     N = graph.n_synapses
@@ -328,16 +375,30 @@ def _graph_to_tensors(graph: SynapseGraph):
     node_feat = torch.from_numpy(pos).float()
 
     if not graph.edges:
+        empty_edges_feat = torch.zeros(0, _EDGE_FEAT_DIM, dtype=torch.float32)
+        if return_paths:
+            return (
+                node_feat,
+                torch.zeros(0, dtype=torch.long),
+                torch.zeros(0, dtype=torch.long),
+                empty_edges_feat,
+                torch.zeros(0, path_max_len, path_feat_dim, dtype=torch.float32),
+                torch.ones(0, path_max_len, dtype=torch.bool),
+                torch.zeros(0, dtype=torch.bool),
+            )
         return (
             node_feat,
             torch.zeros(0, dtype=torch.long),
             torch.zeros(0, dtype=torch.long),
-            torch.zeros(0, _EDGE_FEAT_DIM, dtype=torch.float32),
+            empty_edges_feat,
         )
 
     # Build bidirectional edges
     src_list, dst_list, feat_list = [], [], []
+    # Per-bidirectional-edge path lookup keys (canonical (min, max))
+    path_keys: list[tuple[int, int] | None] = []
     for e in graph.edges:
+        canonical_key = (min(e.src, e.dst), max(e.src, e.dst))
         for s, d in [(e.src, e.dst), (e.dst, e.src)]:
             src_list.append(s)
             dst_list.append(d)
@@ -349,12 +410,14 @@ def _graph_to_tensors(graph: SynapseGraph):
                 min(e.shared_partners, 5) / 5.0,   # clamp & normalize
                 e.seg_connectivity,                 # EM seg endpoint ID match
             ])
+            path_keys.append(canonical_key)
 
     # Self-loops: seg_connectivity=0.5 (neutral; self-edges don't resolve connectivity)
     for i in range(N):
         src_list.append(i)
         dst_list.append(i)
         feat_list.append([0.0, 1.0, 1.0, 0.0, 0.0, 0.5])
+        path_keys.append(None)  # self-loops never have a path
 
     edge_src = torch.tensor(src_list, dtype=torch.long)
     edge_dst = torch.tensor(dst_list, dtype=torch.long)
@@ -363,7 +426,40 @@ def _graph_to_tensors(graph: SynapseGraph):
     if _ABLATE_FEATURE_IDX is not None and 0 <= _ABLATE_FEATURE_IDX < _EDGE_FEAT_DIM:
         edge_feat[:, _ABLATE_FEATURE_IDX] = 0.0
 
-    return node_feat, edge_src, edge_dst, edge_feat
+    if not return_paths:
+        return node_feat, edge_src, edge_dst, edge_feat
+
+    # Build padded path tensors aligned with the bidirectional edge order.
+    E_total = len(src_list)
+    path_seq = np.zeros((E_total, path_max_len, path_feat_dim), dtype=np.float32)
+    path_mask = np.ones((E_total, path_max_len), dtype=bool)
+    has_path = np.zeros((E_total,), dtype=bool)
+
+    feat_lookup = graph.edge_path_features or {}
+    if feat_lookup:
+        for k, key in enumerate(path_keys):
+            if key is None:
+                continue
+            arr = feat_lookup.get(key)
+            if arr is None or len(arr) == 0:
+                continue
+            arr = np.asarray(arr, dtype=np.float32)
+            if arr.ndim != 2 or arr.shape[1] != path_feat_dim:
+                continue
+            T = min(arr.shape[0], path_max_len)
+            path_seq[k, :T, :] = arr[:T]
+            path_mask[k, :T] = False
+            has_path[k] = True
+
+    return (
+        node_feat,
+        edge_src,
+        edge_dst,
+        edge_feat,
+        torch.from_numpy(path_seq),
+        torch.from_numpy(path_mask),
+        torch.from_numpy(has_path),
+    )
 
 
 class CellGNN:
@@ -396,11 +492,21 @@ class CellGNN:
         n_heads: int = 4,
         dropout: float = 0.1,
         embedding_dim: int = 32,
+        path_emb_dim: int = 0,
+        path_input_dim: int = 6,
+        path_d_model: int = 32,
+        path_n_heads: int = 2,
+        path_n_layers: int = 2,
+        path_max_len: int = 64,
     ):
         torch, nn = _require_torch()
         import torch.nn.functional as F
         assert d_model % n_heads == 0
         head_dim = d_model // n_heads
+
+        # When path encoding is enabled, the edge projection sees
+        # [scalar edge feats || path embedding].
+        effective_edge_input = edge_input_dim + (path_emb_dim if path_emb_dim > 0 else 0)
 
         class _CellGNN(nn.Module):
             def __init__(self):
@@ -413,15 +519,37 @@ class CellGNN:
                     "n_heads": n_heads,
                     "dropout": dropout,
                     "embedding_dim": embedding_dim,
+                    "path_emb_dim": path_emb_dim,
+                    "path_input_dim": path_input_dim,
+                    "path_d_model": path_d_model,
+                    "path_n_heads": path_n_heads,
+                    "path_n_layers": path_n_layers,
+                    "path_max_len": path_max_len,
                 }
                 self.d_model = d_model
                 self.n_heads = n_heads
                 self.head_dim = head_dim
                 self.embedding_dim = embedding_dim
+                self.path_emb_dim = path_emb_dim
+
+                # Optional path encoder for skeleton-path edge features.
+                if path_emb_dim > 0:
+                    from .path_edge_encoder import PathEdgeEncoder
+                    self.path_encoder = PathEdgeEncoder(
+                        input_dim=path_input_dim,
+                        d_model=path_d_model,
+                        n_heads=path_n_heads,
+                        n_layers=path_n_layers,
+                        output_dim=path_emb_dim,
+                        max_len=path_max_len,
+                        dropout=dropout,
+                    )
+                else:
+                    self.path_encoder = None
 
                 # Input projections
                 self.node_proj = nn.Linear(node_input_dim, d_model)
-                self.edge_proj = nn.Linear(edge_input_dim, d_model)
+                self.edge_proj = nn.Linear(effective_edge_input, d_model)
 
                 # Message-passing layers
                 self.msg_linears = nn.ModuleList([
@@ -440,7 +568,10 @@ class CellGNN:
                 # Output projection
                 self.output_proj = nn.Linear(d_model, embedding_dim)
 
-            def forward(self, node_feat, edge_src, edge_dst, edge_feat):
+            def forward(
+                self, node_feat, edge_src, edge_dst, edge_feat,
+                path_seq=None, path_mask=None, has_path=None,
+            ):
                 """Run message passing and return per-synapse embeddings.
 
                 Parameters
@@ -448,6 +579,9 @@ class CellGNN:
                 node_feat : Tensor [N, node_input_dim]
                 edge_src, edge_dst : Tensor [E]
                 edge_feat : Tensor [E, edge_input_dim]
+                path_seq : Tensor [E, T, path_input_dim] or None
+                path_mask : Tensor [E, T] bool or None  (True = padding)
+                has_path : Tensor [E] bool or None      (True = real path)
 
                 Returns
                 -------
@@ -455,6 +589,18 @@ class CellGNN:
                 """
                 N = node_feat.size(0)
                 h = self.node_proj(node_feat)         # [N, d_model]
+
+                # If path encoder enabled, compute path embeddings and
+                # concatenate with the scalar edge features before projection.
+                if self.path_encoder is not None:
+                    if path_seq is None or path_mask is None or has_path is None:
+                        raise ValueError(
+                            "CellGNN was constructed with path_emb_dim > 0 but "
+                            "forward was called without path inputs."
+                        )
+                    path_emb = self.path_encoder(path_seq, path_mask, has_path)
+                    edge_feat = torch.cat([edge_feat, path_emb], dim=-1)
+
                 e = self.edge_proj(edge_feat)          # [E, d_model]
 
                 for msg_lin, upd_lin, norm in zip(
@@ -661,6 +807,13 @@ class CellGNNConfig:
     n_heads: int = 4
     dropout: float = 0.1
     embedding_dim: int = 32
+    # Path-edge encoder (Option 2 — set path_emb_dim > 0 to enable)
+    path_emb_dim: int = 0
+    path_input_dim: int = 6
+    path_d_model: int = 32
+    path_n_heads: int = 2
+    path_n_layers: int = 2
+    path_max_len: int = 64
     # Training
     epochs: int = 50
     learning_rate: float = 1e-3
