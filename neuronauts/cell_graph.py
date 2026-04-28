@@ -1400,7 +1400,8 @@ def train_cell_gnn(
                 f"Epoch {epoch + 1}/{cfg.epochs}  "
                 f"loss={mean_loss:.4f}  "
                 f"pos_sim={mean_pos:.3f}  neg_sim={mean_neg:.3f}"
-                f"{hn_str}{val_str}"
+                f"{hn_str}{val_str}",
+                flush=True,
             )
 
         # Periodic checkpoint (epoch is 0-indexed; save at epoch+1)
