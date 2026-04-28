@@ -373,9 +373,10 @@ def build_synapse_chain_paths(
         if int(lbl) != 0:
             groups[int(lbl)].append(idx)
 
-    # Build nearest-neighbour chain per group, projected onto principal axis
-    # key → float32 [T, D] path features
-    result: dict[tuple[int, int], np.ndarray] = {}
+    # Build per-group chains and a global node→(chain_pos, ordered_pts) lookup.
+    # Then iterate edges ONCE (O(E)) instead of O(groups × E).
+    node_chain_pos: dict[int, int] = {}       # node index → position in its group chain
+    node_chain_pts: dict[int, np.ndarray] = {}  # node index → ordered_pts array for group
 
     for lbl, members in groups.items():
         if len(members) < 2:
@@ -387,36 +388,38 @@ def build_synapse_chain_paths(
         centred = pts - pts.mean(axis=0)
         if M >= 2:
             _, _, Vt = np.linalg.svd(centred, full_matrices=False)
-            axis = Vt[0]  # principal axis
-            proj = centred @ axis
+            proj = centred @ Vt[0]
             order = np.argsort(proj)
         else:
             order = np.arange(M)
         ordered_members = [members[o] for o in order]
         ordered_pts = pts[order]  # [M, 3]
 
-        # Build index mapping: synapse index → position in chain
-        chain_pos: dict[int, int] = {m: k for k, m in enumerate(ordered_members)}
+        for k, m in enumerate(ordered_members):
+            node_chain_pos[m] = k
+            node_chain_pts[m] = ordered_pts
 
-        # For each proximity-graph edge within this cell, extract the chain segment
-        for e in graph.edges:
-            i, j = e.src, e.dst
-            if int(labels[i]) != lbl or int(labels[j]) != lbl:
-                continue
-            key = (min(i, j), max(i, j))
-            if key in result:
-                continue
-            ki = chain_pos.get(i)
-            kj = chain_pos.get(j)
-            if ki is None or kj is None:
-                continue
-            a, b = (ki, kj) if ki <= kj else (kj, ki)
-            segment = ordered_pts[a : b + 1]  # [b-a+1, 3]
-            if len(segment) < 2:
-                continue
-            arr = featurize_path_points(segment, mode=mode)
-            if arr.shape[0] > 0:
-                result[key] = arr
+    # Single O(E) pass over edges
+    result: dict[tuple[int, int], np.ndarray] = {}
+    for e in graph.edges:
+        i, j = e.src, e.dst
+        if int(labels[i]) == 0 or int(labels[i]) != int(labels[j]):
+            continue
+        key = (min(i, j), max(i, j))
+        if key in result:
+            continue
+        ki = node_chain_pos.get(i)
+        kj = node_chain_pos.get(j)
+        if ki is None or kj is None:
+            continue
+        ordered_pts = node_chain_pts[i]  # same array for both (same group)
+        a, b = (ki, kj) if ki <= kj else (kj, ki)
+        segment = ordered_pts[a : b + 1]
+        if len(segment) < 2:
+            continue
+        arr = featurize_path_points(segment, mode=mode)
+        if arr.shape[0] > 0:
+            result[key] = arr
 
     return result
 
