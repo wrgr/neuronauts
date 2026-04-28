@@ -1054,6 +1054,8 @@ def train_cell_gnn(
     seg_score_cache: "dict | None" = None,
     skeleton_path_cache: "dict | None" = None,
     path_feature_mode: str = DEFAULT_PATH_FEATURE_MODE,
+    checkpoint_every: int = 0,
+    checkpoint_path_template: "str | None" = None,
     verbose: bool = True,
 ) -> dict[str, list[float]]:
     """Train CellGNN over a BoxCache for ``config.epochs`` epochs.
@@ -1240,6 +1242,15 @@ def train_cell_gnn(
                 f"pos_sim={mean_pos:.3f}  neg_sim={mean_neg:.3f}"
                 f"{hn_str}{val_str}"
             )
+
+        # Periodic checkpoint (epoch is 0-indexed; save at epoch+1)
+        if (checkpoint_every > 0
+                and checkpoint_path_template
+                and (epoch + 1) % checkpoint_every == 0):
+            ckpt_path = checkpoint_path_template.format(epoch=epoch + 1)
+            save_cell_gnn(ckpt_path, model)
+            if verbose:
+                print(f"  [checkpoint] Saved epoch {epoch + 1} → {ckpt_path}")
 
     return history
 

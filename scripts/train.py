@@ -1251,6 +1251,11 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
         hard_neg_weight=getattr(args, "hard_neg_weight", 3.0),
         seg_score_cache=seg_score_cache,
         skeleton_path_cache=skeleton_path_cache,
+        checkpoint_every=getattr(args, "checkpoint_every", 0) or 0,
+        checkpoint_path_template=(
+            str(Path(args.cell_gnn_output).with_suffix("")) + "_ep{epoch}.pt"
+            if getattr(args, "checkpoint_every", 0) else None
+        ),
         verbose=True,
     )
     elapsed = time.time() - t0
@@ -2487,6 +2492,9 @@ def parse_args(argv=None) -> argparse.Namespace:
                              "graphs (0..5). Used for per-feature ablation studies. "
                              "Indices: 0=distance, 1=same_scaffold, 2=grammar_score, "
                              "3=shared_agents, 4=shared_partners, 5=seg_connectivity.")
+    p_cell.add_argument("--checkpoint-every", type=int, default=0,
+                        help="Save a model snapshot every N epochs to "
+                             "<output>_ep{epoch}.pt (0 = disabled).")
     p_cell.add_argument("--skeleton-paths-cache", default=None,
                         help="Path to pre-computed skeleton-path cache (.pkl, from "
                              "precompute-skeleton-paths subcommand).  When set, loads "
