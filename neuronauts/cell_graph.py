@@ -1755,6 +1755,260 @@ def precompute_seg_scores_fast(
     return seg_cache
 
 
+# ---------------------------------------------------------------------------
+# Option-2 data plane: skeleton-path precompute
+# ---------------------------------------------------------------------------
+
+def _skeleton_to_csr(skel) -> "tuple":
+    """Build a symmetric CSR adjacency matrix from a SkeletonData.
+
+    Edge weight = Euclidean distance between connected vertices.
+
+    Returns
+    -------
+    (csr, vertices_nm) where csr is the sparse adjacency and vertices_nm is
+    a [V, 3] float32 array.
+    """
+    from scipy.sparse import csr_matrix
+
+    verts = np.asarray(skel.vertices, dtype=np.float32)
+    edges = np.asarray(skel.edges, dtype=np.int64)
+    if len(verts) == 0 or len(edges) == 0:
+        return None, verts
+
+    # Filter out self-loops and out-of-range edges
+    valid = (edges[:, 0] != edges[:, 1]) & \
+            (edges[:, 0] >= 0) & (edges[:, 0] < len(verts)) & \
+            (edges[:, 1] >= 0) & (edges[:, 1] < len(verts))
+    edges = edges[valid]
+    if len(edges) == 0:
+        return None, verts
+
+    rows = np.concatenate([edges[:, 0], edges[:, 1]])
+    cols = np.concatenate([edges[:, 1], edges[:, 0]])
+    weights = np.linalg.norm(verts[edges[:, 0]] - verts[edges[:, 1]], axis=1)
+    data = np.concatenate([weights, weights]).astype(np.float64)
+
+    csr = csr_matrix((data, (rows, cols)), shape=(len(verts), len(verts)))
+    return csr, verts
+
+
+def _nearest_vertex_idx(verts: np.ndarray, point_nm: np.ndarray) -> int:
+    """Return index of the skeleton vertex nearest a 3D point (Euclidean)."""
+    if len(verts) == 0:
+        return -1
+    diffs = verts.astype(np.float64) - np.asarray(point_nm, dtype=np.float64)
+    d2 = (diffs * diffs).sum(axis=1)
+    return int(np.argmin(d2))
+
+
+def _skeleton_path_points(
+    csr,
+    verts: np.ndarray,
+    src_idx: int,
+    dst_idx: int,
+    *,
+    max_path_nm: float = 50_000.0,
+) -> np.ndarray:
+    """Return the ordered path vertices (in nm) from src_idx to dst_idx via Dijkstra.
+
+    If no path exists or the path exceeds ``max_path_nm``, returns empty
+    ``[0, 3]`` array.
+    """
+    from scipy.sparse.csgraph import dijkstra
+
+    if csr is None or src_idx < 0 or dst_idx < 0:
+        return np.zeros((0, 3), dtype=np.float32)
+    if src_idx == dst_idx:
+        return verts[[src_idx]].astype(np.float32, copy=False)
+
+    distances, predecessors = dijkstra(
+        csr, indices=src_idx, return_predecessors=True, unweighted=False,
+    )
+    if not np.isfinite(distances[dst_idx]) or distances[dst_idx] > max_path_nm:
+        return np.zeros((0, 3), dtype=np.float32)
+
+    # Reconstruct path
+    path = [dst_idx]
+    cur = dst_idx
+    while cur != src_idx:
+        cur = int(predecessors[cur])
+        if cur < 0:
+            return np.zeros((0, 3), dtype=np.float32)
+        path.append(cur)
+    path.reverse()
+    return verts[path].astype(np.float32, copy=False)
+
+
+def precompute_skeleton_paths_for_cache(
+    cache: "BoxCache",
+    skeleton_dir: str,
+    *,
+    records=None,
+    proximity_radius_nm: float = 5000.0,
+    max_path_nm: float = 50_000.0,
+    skeleton_service_version: int = 4,
+    verbose: bool = True,
+) -> dict[str, dict]:
+    """Pre-compute skeleton paths between proximity-graph synapse pairs.
+
+    For each cached box and each side ("pre", "post"), enumerate proximity
+    edges between synapses.  When both endpoints share a CAVE root ID and the
+    skeleton for that root is cached at ``skeleton_dir/v<version>/``, trace the
+    Dijkstra-shortest path through the skeleton and store its vertex sequence
+    (ordered, nm coordinates).  Cross-root edges are stored with an empty path.
+
+    Parameters
+    ----------
+    cache : BoxCache
+    skeleton_dir : str
+        Root directory of cached skeletons (per ``scripts/fetch_skeletons.py``).
+        Subdirs of the form ``v<materialization_version>/`` contain
+        ``v<v>_rid<root_id>_skv<sk_v>.npz`` files.
+    records : iterable of BoxRecord, optional
+    proximity_radius_nm : float
+    max_path_nm : float
+        Skeleton paths longer than this are dropped (treated as no-path).
+    skeleton_service_version : int
+    verbose : bool
+
+    Returns
+    -------
+    dict mapping ``box_hash`` -> {
+        "pre":  {(i, j): {"path": [[x,y,z], ...], "len_nm": float, "same_root": bool}},
+        "post": ...
+    }
+    """
+    import json as _json
+    from pathlib import Path as _P
+    from .fetch import make_cube_bbox_nm, SkeletonData
+    from ._scipy_compat import cKDTree as _cKDTree
+
+    _MIP2_VOX = np.array([32.0, 32.0, 40.0])
+
+    if records is None:
+        records = list(cache.iter_records())
+
+    out: dict[str, dict] = {}
+
+    for rec_idx, rec in enumerate(records):
+        box_hash = rec.box_hash
+        meta_path = _P(cache.cache_dir) / f"{box_hash}.json"
+        try:
+            with open(meta_path) as f:
+                meta = _json.load(f)
+            version = int(meta.get("root_id_version", 1412))
+        except Exception:
+            continue
+
+        try:
+            _, syn = cache.load(rec)
+        except Exception:
+            continue
+        if len(syn.pre_pt) < 2:
+            continue
+
+        bbox = make_cube_bbox_nm(tuple(rec.center_nm), rec.side_um)
+        box_origin_nm = np.array(bbox[0], dtype=np.float64)
+        pre_nm = syn.pre_pt.astype(np.float64) * _MIP2_VOX + box_origin_nm
+        post_nm = syn.post_pt.astype(np.float64) * _MIP2_VOX + box_origin_nm
+
+        # Load skeletons for unique roots present on either side
+        pre_roots = syn.pre_root_id.astype(np.int64)
+        post_roots = syn.post_root_id.astype(np.int64)
+        unique_roots = sorted({int(r) for r in pre_roots.tolist() + post_roots.tolist() if int(r) > 0})
+
+        skel_cache: dict[int, tuple] = {}  # root_id -> (csr, verts)
+        skel_dir_v = _P(skeleton_dir) / f"v{version}"
+        for root_id in unique_roots:
+            skel_path = skel_dir_v / f"v{version}_rid{root_id}_skv{skeleton_service_version}.npz"
+            if not skel_path.exists():
+                continue
+            try:
+                d = np.load(skel_path, allow_pickle=False)
+                sk = SkeletonData(
+                    root_id=root_id,
+                    materialization_version=version,
+                    vertices=d["vertices"].astype(np.float32),
+                    edges=d["edges"].astype(np.int64),
+                    radius=None,
+                )
+                skel_cache[root_id] = _skeleton_to_csr(sk)
+            except Exception:
+                continue
+
+        side_results = {"pre": {}, "post": {}}
+        for side, positions, roots in (
+            ("pre", pre_nm, pre_roots),
+            ("post", post_nm, post_roots),
+        ):
+            tree = _cKDTree(positions)
+            pairs = tree.query_pairs(r=proximity_radius_nm, output_type="ndarray")
+
+            n_same_root = 0
+            n_traced = 0
+            n_total = 0
+            for a, b in pairs:
+                i, j = (int(a), int(b)) if a < b else (int(b), int(a))
+                n_total += 1
+                ra = int(roots[i])
+                rb = int(roots[j])
+                same_root = (ra > 0 and ra == rb)
+                if same_root:
+                    n_same_root += 1
+                    if ra in skel_cache:
+                        csr, verts = skel_cache[ra]
+                        si = _nearest_vertex_idx(verts, positions[i])
+                        di = _nearest_vertex_idx(verts, positions[j])
+                        path = _skeleton_path_points(csr, verts, si, di, max_path_nm=max_path_nm)
+                        if len(path) > 0:
+                            length = float(np.linalg.norm(np.diff(path, axis=0), axis=1).sum())
+                            side_results[side][(i, j)] = {
+                                "path": path.tolist(),
+                                "len_nm": length,
+                                "same_root": True,
+                            }
+                            n_traced += 1
+                            continue
+                # Either cross-root, or same-root but no skeleton cached / no path
+                side_results[side][(i, j)] = {
+                    "path": [],
+                    "len_nm": 0.0,
+                    "same_root": same_root,
+                }
+
+            if verbose:
+                print(
+                    f"  [{rec_idx+1}/{len(records)}] {box_hash[:8]} {side}: "
+                    f"{n_total} edges  {n_same_root} same-root  {n_traced} traced"
+                )
+
+        out[box_hash] = side_results
+
+    return out
+
+
+def save_skeleton_path_cache(cache: dict, path: str) -> None:
+    """Save skeleton-path cache as a compressed numpy file (.npz with pickled blob).
+
+    JSON would blow up — paths can be hundreds of vertices each.  We pickle
+    the dict into a single numpy object so the file stays compact.
+    """
+    import pickle
+    from pathlib import Path as _P
+    _P(path).parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "wb") as f:
+        pickle.dump(cache, f, protocol=pickle.HIGHEST_PROTOCOL)
+    print(f"Skeleton-path cache saved → {path}")
+
+
+def load_skeleton_path_cache(path: str) -> dict:
+    """Load a skeleton-path cache previously saved by :func:`save_skeleton_path_cache`."""
+    import pickle
+    with open(path, "rb") as f:
+        return pickle.load(f)
+
+
 def load_seg_score_cache(path: str) -> dict:
     """Load a seg-score cache from a JSON file saved by :func:`save_seg_score_cache`."""
     import json as _json

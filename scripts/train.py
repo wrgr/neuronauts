@@ -1327,6 +1327,59 @@ def cmd_precompute_seg_scores(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Subcommand: precompute-skeleton-paths
+# ---------------------------------------------------------------------------
+
+def cmd_precompute_skeleton_paths(args: argparse.Namespace) -> int:
+    """Pre-compute skeleton paths between proximity-graph synapse pairs."""
+    from neuronauts.dataset_builder import BoxCache
+    from neuronauts.cell_graph import (
+        precompute_skeleton_paths_for_cache,
+        save_skeleton_path_cache,
+    )
+
+    cache = BoxCache(args.cache_dir)
+    records = list(cache.iter_records())
+    if not records:
+        print(f"No cached boxes in {args.cache_dir}")
+        return 1
+
+    print(f"Pre-computing skeleton paths for {len(records)} boxes …")
+    print(f"  proximity_radius_nm={args.proximity_radius_nm}  max_path_nm={args.max_path_nm}")
+    print(f"  skeleton_dir={args.skeleton_dir}")
+
+    paths = precompute_skeleton_paths_for_cache(
+        cache,
+        skeleton_dir=args.skeleton_dir,
+        records=records,
+        proximity_radius_nm=args.proximity_radius_nm,
+        max_path_nm=args.max_path_nm,
+        skeleton_service_version=args.skeleton_service_version,
+        verbose=True,
+    )
+
+    save_skeleton_path_cache(paths, args.output)
+
+    n_total = 0
+    n_traced = 0
+    n_same_root = 0
+    for box in paths.values():
+        for side in box.values():
+            for d in side.values():
+                n_total += 1
+                if d["same_root"]:
+                    n_same_root += 1
+                if len(d["path"]) > 0:
+                    n_traced += 1
+    print(
+        f"\nDone: {len(paths)} boxes  "
+        f"{n_total} edges  {n_same_root} same-root  {n_traced} traced "
+        f"({100*n_traced/max(n_total,1):.1f}%)"
+    )
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Subcommand: evaluate (CellGNN vs beam-search baseline)
 # ---------------------------------------------------------------------------
 
@@ -2396,6 +2449,23 @@ def parse_args(argv=None) -> argparse.Namespace:
     p_seg.add_argument("--margin-nm", type=float, default=200.0,
                        help="Padding around synapse bounding box when fetching seg volume.")
     p_seg.set_defaults(func=cmd_precompute_seg_scores)
+
+    # ---------------------------------------------------------------------------
+    # precompute-skeleton-paths
+    # ---------------------------------------------------------------------------
+    p_skel = sub.add_parser(
+        "precompute-skeleton-paths",
+        help="Trace skeleton paths between proximity-graph synapse pairs.",
+    )
+    p_skel.add_argument("--cache-dir", default="data/boxes")
+    p_skel.add_argument("--skeleton-dir", default="data/skeletons",
+                        help="Directory with cached CAVE skeletons (per scripts/fetch_skeletons.py).")
+    p_skel.add_argument("--output", default="data/skeleton_paths.pkl")
+    p_skel.add_argument("--proximity-radius-nm", type=float, default=5000.0)
+    p_skel.add_argument("--max-path-nm", type=float, default=50_000.0,
+                        help="Skeleton paths longer than this are dropped (no-path).")
+    p_skel.add_argument("--skeleton-service-version", type=int, default=4)
+    p_skel.set_defaults(func=cmd_precompute_skeleton_paths)
 
     # evaluate
     p_eval = sub.add_parser(
