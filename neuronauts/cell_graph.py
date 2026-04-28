@@ -869,6 +869,28 @@ def _sample_contrastive_pairs(
     return pos_pairs, neg_pairs
 
 
+def _featurize_path_lookup(
+    raw: "dict[tuple[int, int], dict]",
+    mode: str = DEFAULT_PATH_FEATURE_MODE,
+) -> "dict[tuple[int, int], np.ndarray]":
+    """Convert raw path-vertex dicts (from skeleton_path_cache) to feature arrays.
+
+    ``raw`` maps ``(i, j)`` to ``{"path": [[x,y,z], ...], ...}``.  Returns a
+    new dict mapping the same keys to float32 ``[T, D]`` feature arrays, ready
+    to assign to ``SynapseGraph.edge_path_features``.  Empty paths are dropped
+    (the encoder will use its ``no_path_embedding`` for missing entries).
+    """
+    out: dict[tuple[int, int], np.ndarray] = {}
+    for key, val in raw.items():
+        verts = val.get("path", [])
+        if len(verts) < 2:
+            continue
+        arr = featurize_path_points(np.array(verts, dtype=np.float32), mode=mode)
+        if arr.shape[0] > 0:
+            out[key] = arr
+    return out
+
+
 def cell_graph_train_step(
     model,
     optimizer,
@@ -919,8 +941,18 @@ def cell_graph_train_step(
     model.train()
     optimizer.zero_grad()
 
-    node_feat, edge_src, edge_dst, edge_feat = _graph_to_tensors(graph)
-    embeddings = model(node_feat, edge_src, edge_dst, edge_feat)  # [N, D]
+    _use_paths = bool(graph.edge_path_features)
+    if _use_paths:
+        node_feat, edge_src, edge_dst, edge_feat, path_seq, path_mask, has_path = (
+            _graph_to_tensors(graph, return_paths=True)
+        )
+        embeddings = model(
+            node_feat, edge_src, edge_dst, edge_feat,
+            path_seq=path_seq, path_mask=path_mask, has_path=has_path,
+        )
+    else:
+        node_feat, edge_src, edge_dst, edge_feat = _graph_to_tensors(graph)
+        embeddings = model(node_feat, edge_src, edge_dst, edge_feat)
     emb_norm = F.normalize(embeddings, p=2, dim=-1)
 
     pos_pairs, neg_pairs = _sample_contrastive_pairs(graph.root_ids, max_pairs, rng)
@@ -1020,6 +1052,8 @@ def train_cell_gnn(
     hard_neg_threshold: float = 0.7,
     hard_neg_weight: float = 3.0,
     seg_score_cache: "dict | None" = None,
+    skeleton_path_cache: "dict | None" = None,
+    path_feature_mode: str = DEFAULT_PATH_FEATURE_MODE,
     verbose: bool = True,
 ) -> dict[str, list[float]]:
     """Train CellGNN over a BoxCache for ``config.epochs`` epochs.
@@ -1041,6 +1075,13 @@ def train_cell_gnn(
     val_cache : optional BoxCache for validation
     edit_pairs : optional list of EditPair from edit_history module
     edit_weight : loss multiplier for edit-derived pairs (default 2.0)
+    skeleton_path_cache : optional dict from ``load_skeleton_path_cache``.
+        When provided, per-step skeleton-path features are attached to each
+        training graph before the forward pass so ``PathEdgeEncoder`` receives
+        real path data.  Edges without a cached path use the learned
+        ``no_path_embedding``.  Format:
+        ``{box_hash: {"pre": {(i,j): {"path": [...], ...}}, "post": ...}}``
+    path_feature_mode : featurization mode forwarded to ``featurize_path_points``
     verbose : print per-epoch summary
 
     Returns
@@ -1092,6 +1133,8 @@ def train_cell_gnn(
 
             # Look up pre-computed seg connectivity scores for this box
             _box_seg = seg_score_cache.get(record.box_hash, {}) if seg_score_cache else {}
+            # Look up pre-computed skeleton path features for this box
+            _box_paths = skeleton_path_cache.get(record.box_hash, {}) if skeleton_path_cache else {}
 
             for role in ("pre", "post"):
                 # Convert string keys from JSON back to tuple[int,int] if needed
@@ -1108,6 +1151,14 @@ def train_cell_gnn(
                 )
                 if graph.n_synapses < 2:
                     continue
+
+                # Attach skeleton path features when available
+                _side_raw_paths = _box_paths.get(role, {})
+                if _side_raw_paths:
+                    graph.edge_path_features = _featurize_path_lookup(
+                        _side_raw_paths, mode=path_feature_mode
+                    )
+
                 m = cell_graph_train_step(
                     model, optimizer, graph,
                     margin=cfg.margin,
@@ -1215,8 +1266,17 @@ def infer_cells(
 
     model.eval()
     with torch.no_grad():
-        node_feat, edge_src, edge_dst, edge_feat = _graph_to_tensors(graph)
-        embeddings = model(node_feat, edge_src, edge_dst, edge_feat)
+        if graph.edge_path_features:
+            node_feat, edge_src, edge_dst, edge_feat, path_seq, path_mask, has_path = (
+                _graph_to_tensors(graph, return_paths=True)
+            )
+            embeddings = model(
+                node_feat, edge_src, edge_dst, edge_feat,
+                path_seq=path_seq, path_mask=path_mask, has_path=has_path,
+            )
+        else:
+            node_feat, edge_src, edge_dst, edge_feat = _graph_to_tensors(graph)
+            embeddings = model(node_feat, edge_src, edge_dst, edge_feat)
         embeddings_np = F.normalize(embeddings, p=2, dim=-1).cpu().numpy()
 
     return partition_from_embeddings(embeddings_np, threshold=threshold, method=method)

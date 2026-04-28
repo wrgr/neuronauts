@@ -1168,6 +1168,9 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
         seed=args.seed,
     )
 
+    path_emb_dim = getattr(args, "path_emb_dim", 0) or 0
+    path_input_dim = getattr(args, "path_input_dim", 6) or 6
+
     if args.resume and Path(args.cell_gnn_output).exists():
         print(f"Resuming from {args.cell_gnn_output}")
         model = load_cell_gnn(args.cell_gnn_output)
@@ -1177,9 +1180,12 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
             n_layers=cfg.n_layers,
             n_heads=cfg.n_heads,
             embedding_dim=cfg.embedding_dim,
+            path_emb_dim=path_emb_dim,
+            path_input_dim=path_input_dim,
         )
 
-    print(f"CellGNN: d={cfg.d_model} layers={cfg.n_layers} heads={cfg.n_heads} emb={cfg.embedding_dim}")
+    path_str = f"  path_emb_dim={path_emb_dim}" if path_emb_dim > 0 else ""
+    print(f"CellGNN: d={cfg.d_model} layers={cfg.n_layers} heads={cfg.n_heads} emb={cfg.embedding_dim}{path_str}")
     print(f"Training: epochs={cfg.epochs} lr={cfg.learning_rate} margin={cfg.margin}")
 
     # --- Optional edit-history pairs ---
@@ -1215,6 +1221,22 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
         else:
             print(f"[WARNING] --seg-scores-cache path not found: {seg_scores_path}")
 
+    # --- Optional skeleton path cache (Option 2: PathEdgeEncoder) ---
+    skeleton_path_cache = None
+    skeleton_paths_path = getattr(args, "skeleton_paths_cache", None)
+    if skeleton_paths_path:
+        if Path(skeleton_paths_path).exists():
+            from neuronauts.cell_graph import load_skeleton_path_cache
+            skeleton_path_cache = load_skeleton_path_cache(skeleton_paths_path)
+            n_boxes_with_paths = sum(
+                1 for v in skeleton_path_cache.values()
+                if any(v.get(s) for s in ("pre", "post"))
+            )
+            print(f"Loaded skeleton paths for {len(skeleton_path_cache)} boxes "
+                  f"({n_boxes_with_paths} with non-empty paths) from {skeleton_paths_path}")
+        else:
+            print(f"[WARNING] --skeleton-paths-cache path not found: {skeleton_paths_path}")
+
     # --- Train ---
     t0 = time.time()
     history = train_cell_gnn(
@@ -1228,6 +1250,7 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
         hard_neg_threshold=getattr(args, "hard_neg_threshold", 0.7),
         hard_neg_weight=getattr(args, "hard_neg_weight", 3.0),
         seg_score_cache=seg_score_cache,
+        skeleton_path_cache=skeleton_path_cache,
         verbose=True,
     )
     elapsed = time.time() - t0
@@ -2464,6 +2487,16 @@ def parse_args(argv=None) -> argparse.Namespace:
                              "graphs (0..5). Used for per-feature ablation studies. "
                              "Indices: 0=distance, 1=same_scaffold, 2=grammar_score, "
                              "3=shared_agents, 4=shared_partners, 5=seg_connectivity.")
+    p_cell.add_argument("--skeleton-paths-cache", default=None,
+                        help="Path to pre-computed skeleton-path cache (.pkl, from "
+                             "precompute-skeleton-paths subcommand).  When set, loads "
+                             "per-step path features and feeds them to PathEdgeEncoder.")
+    p_cell.add_argument("--path-emb-dim", type=int, default=0,
+                        help="PathEdgeEncoder output dimension. 0 = disabled (default). "
+                             "Set to 16 to enable the Option-2 path embedding.")
+    p_cell.add_argument("--path-input-dim", type=int, default=6,
+                        help="Dimensionality of per-step path features fed to PathEdgeEncoder "
+                             "(default 6: raw_delta3 + skeleton descriptors).")
     p_cell.set_defaults(func=cmd_train_cell_gnn)
 
     # ---------------------------------------------------------------------------
