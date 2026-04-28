@@ -1756,6 +1756,228 @@ def precompute_seg_scores_fast(
 
 
 # ---------------------------------------------------------------------------
+# Option-3 data plane: self-skeletonization from BossDB seg volumes
+# ---------------------------------------------------------------------------
+
+def precompute_self_skeletons_for_cache(
+    cache: "BoxCache",
+    output_dir: str,
+    *,
+    records=None,
+    mip: int = 3,
+    margin_nm: float = 200.0,
+    teasar_const: float = 5.0,
+    teasar_scale: float = 1.5,
+    min_vertices: int = 5,
+    verbose: bool = True,
+) -> dict[str, str]:
+    """Self-skeletonize all roots in each box from the BossDB seg volume.
+
+    For each cached box: fetches the seg volume covering all synapse positions
+    (single CloudVolume request, ~5 MB at MIP 3), runs kimimaro on the labeled
+    volume to produce a skeleton per non-zero seg ID, and saves the result as
+    one ``.npz`` per (box_hash, root_id) pair.
+
+    Unlike the CAVE skeleton service, this works for **all** roots — proofread
+    or not — because it skeletonizes whatever connected segmentation exists in
+    BossDB.  The catch: in a 6 µm box, most roots are partial fragments whose
+    skeletons end at the box boundary.  That's OK for path tracing as long as
+    the box contains enough of the neurite to connect the synapse pair.
+
+    Parameters
+    ----------
+    cache : BoxCache
+    output_dir : str
+        Directory in which to write per-box skeleton archives.
+    records : iterable, optional
+    mip : int
+        CloudVolume MIP for the seg fetch (default 3 = ~64×64×80 nm/vox).
+    margin_nm : float
+        Padding around synapse bounding box for the seg fetch.
+    teasar_const, teasar_scale : float
+        Kimimaro TEASAR parameters.  Defaults follow the kimimaro README.
+    min_vertices : int
+        Skeletons with fewer vertices than this are discarded (likely noise).
+    verbose : bool
+
+    Returns
+    -------
+    dict[str, str]
+        Mapping ``box_hash`` -> path to its skeleton archive.
+    """
+    from pathlib import Path as _P
+    from .fetch import fetch_seg_volume, make_cube_bbox_nm
+
+    try:
+        import kimimaro
+    except ImportError as exc:  # pragma: no cover - env issue
+        raise ImportError(
+            "kimimaro not installed.  pip install kimimaro crackle-codec"
+        ) from exc
+
+    if records is None:
+        records = list(cache.iter_records())
+
+    out_root = _P(output_dir)
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    _MIP2_VOX = np.array([32.0, 32.0, 40.0])
+    manifest: dict[str, str] = {}
+
+    for rec_idx, rec in enumerate(records):
+        box_hash = rec.box_hash
+        out_path = out_root / f"{box_hash}.npz"
+        if out_path.exists():
+            manifest[box_hash] = str(out_path)
+            if verbose:
+                print(f"  [{rec_idx+1}/{len(records)}] {box_hash[:8]}: cached, skip")
+            continue
+
+        try:
+            _, syn = cache.load(rec)
+        except Exception:
+            continue
+
+        # Synapse bounding box in nm (covers both pre and post)
+        bbox = make_cube_bbox_nm(tuple(rec.center_nm), rec.side_um)
+        box_origin_nm = np.array(bbox[0], dtype=np.float64)
+        pre_nm = syn.pre_pt.astype(np.float64) * _MIP2_VOX + box_origin_nm
+        post_nm = syn.post_pt.astype(np.float64) * _MIP2_VOX + box_origin_nm
+        all_nm = np.vstack([pre_nm, post_nm])
+        min_nm = all_nm.min(axis=0) - margin_nm
+        max_nm = all_nm.max(axis=0) + margin_nm
+        seg_bbox = (tuple(min_nm.tolist()), tuple(max_nm.tolist()))
+
+        if verbose:
+            print(
+                f"  [{rec_idx+1}/{len(records)}] {box_hash[:8]}: "
+                f"fetching seg ({seg_bbox[1][0]-seg_bbox[0][0]:.0f} x "
+                f"{seg_bbox[1][1]-seg_bbox[0][1]:.0f} x "
+                f"{seg_bbox[1][2]-seg_bbox[0][2]:.0f} nm) ...",
+                end=" ", flush=True,
+            )
+        try:
+            vol = fetch_seg_volume(seg_bbox, mip=mip)
+        except Exception as exc:
+            if verbose:
+                print(f"FAILED ({exc!r})")
+            continue
+
+        if verbose:
+            print(f"got {vol.data.shape}, skeletonizing ...", end=" ", flush=True)
+
+        try:
+            skels = kimimaro.skeletonize(
+                vol.data.astype(np.uint64),
+                teasar_params={
+                    "scale": float(teasar_scale),
+                    "const": float(teasar_const),
+                    "pdrf_scale": 100,
+                    "pdrf_exponent": 4,
+                },
+                anisotropy=tuple(int(v) for v in vol.voxel_size_nm),
+                fix_branching=True,
+                fix_borders=True,
+                progress=False,
+            )
+        except Exception as exc:
+            if verbose:
+                print(f"FAILED ({exc!r})")
+            continue
+
+        # Translate skeleton vertices into the absolute-nm frame.
+        # kimimaro returns vertices in voxel*anisotropy coords relative to the
+        # input volume's origin (voxel 0,0,0).  We need to add the seg volume's
+        # origin in nm to get absolute nm coordinates.
+        seg_origin_nm = np.array([
+            vol.bbox_voxels[0][i] * vol.voxel_size_nm[i] for i in range(3)
+        ], dtype=np.float64)
+
+        kept_root_ids: list[int] = []
+        kept_offsets: list[int] = []  # cumulative vertex offset per root
+        kept_n_verts: list[int] = []
+        kept_n_edges: list[int] = []
+        all_verts: list[np.ndarray] = []
+        all_edges: list[np.ndarray] = []
+
+        v_offset = 0
+        for label, sk in skels.items():
+            if int(label) == 0:
+                continue
+            verts = np.asarray(sk.vertices, dtype=np.float32)
+            edges = np.asarray(sk.edges, dtype=np.int64)
+            if len(verts) < min_vertices:
+                continue
+            # Add seg volume origin to translate kimimaro's relative coords
+            # into absolute nm.
+            verts_abs = verts + seg_origin_nm.astype(np.float32)
+            kept_root_ids.append(int(label))
+            kept_offsets.append(v_offset)
+            kept_n_verts.append(len(verts_abs))
+            kept_n_edges.append(len(edges))
+            all_verts.append(verts_abs)
+            # Edges are local to this skeleton; re-index globally
+            all_edges.append(edges + v_offset)
+            v_offset += len(verts_abs)
+
+        if not kept_root_ids:
+            if verbose:
+                print(f"no skeletons (all <{min_vertices} verts)")
+            continue
+
+        merged_verts = np.concatenate(all_verts, axis=0).astype(np.float32)
+        merged_edges = np.concatenate(all_edges, axis=0).astype(np.int64)
+
+        np.savez_compressed(
+            out_path,
+            root_ids=np.asarray(kept_root_ids, dtype=np.int64),
+            v_offsets=np.asarray(kept_offsets + [v_offset], dtype=np.int64),
+            n_verts=np.asarray(kept_n_verts, dtype=np.int64),
+            n_edges=np.asarray(kept_n_edges, dtype=np.int64),
+            vertices=merged_verts,
+            edges=merged_edges,
+            voxel_size_nm=np.asarray(vol.voxel_size_nm, dtype=np.float32),
+        )
+        manifest[box_hash] = str(out_path)
+        if verbose:
+            print(
+                f"saved {len(kept_root_ids)} skeletons "
+                f"(total {len(merged_verts)} verts, {len(merged_edges)} edges)"
+            )
+
+    return manifest
+
+
+def load_self_skeleton_archive(path: str) -> dict[int, "tuple"]:
+    """Load a per-box self-skeleton archive saved by
+    :func:`precompute_self_skeletons_for_cache`.
+
+    Returns
+    -------
+    dict[int, (vertices_nm, edges)]
+        Mapping root_id -> (float32 [V, 3], int64 [E, 2])
+    """
+    d = np.load(path, allow_pickle=False)
+    root_ids = d["root_ids"].astype(np.int64)
+    v_offsets = d["v_offsets"].astype(np.int64)
+    n_edges = d["n_edges"].astype(np.int64)
+    vertices = d["vertices"].astype(np.float32)
+    edges = d["edges"].astype(np.int64)
+
+    out: dict[int, tuple] = {}
+    e_offset = 0
+    for i, rid in enumerate(root_ids):
+        v_lo = int(v_offsets[i])
+        v_hi = int(v_offsets[i + 1])
+        ne = int(n_edges[i])
+        sub_v = vertices[v_lo:v_hi]
+        sub_e = edges[e_offset:e_offset + ne] - v_lo  # rebase to local indices
+        out[int(rid)] = (sub_v, sub_e)
+        e_offset += ne
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Option-2 data plane: skeleton-path precompute
 # ---------------------------------------------------------------------------
 
@@ -1919,23 +2141,48 @@ def precompute_skeleton_paths_for_cache(
         unique_roots = sorted({int(r) for r in pre_roots.tolist() + post_roots.tolist() if int(r) > 0})
 
         skel_cache: dict[int, tuple] = {}  # root_id -> (csr, verts)
-        skel_dir_v = _P(skeleton_dir) / f"v{version}"
-        for root_id in unique_roots:
-            skel_path = skel_dir_v / f"v{version}_rid{root_id}_skv{skeleton_service_version}.npz"
-            if not skel_path.exists():
-                continue
+
+        # Two supported layouts:
+        #   1. Per-(root, version) files at <skeleton_dir>/v<version>/v<v>_rid<rid>_skv<skv>.npz
+        #      (the CAVE skeleton service convention)
+        #   2. Per-box archives at <skeleton_dir>/<box_hash>.npz
+        #      (kimimaro self-skeletonization output, all roots in one file)
+        # We try the per-box archive first; if absent, fall back to per-root files.
+        self_archive = _P(skeleton_dir) / f"{box_hash}.npz"
+        if self_archive.exists():
             try:
-                d = np.load(skel_path, allow_pickle=False)
+                box_skels = load_self_skeleton_archive(str(self_archive))
+            except Exception:
+                box_skels = {}
+            for root_id, (verts, edges) in box_skels.items():
+                if root_id not in unique_roots:
+                    continue
                 sk = SkeletonData(
                     root_id=root_id,
                     materialization_version=version,
-                    vertices=d["vertices"].astype(np.float32),
-                    edges=d["edges"].astype(np.int64),
+                    vertices=verts,
+                    edges=edges,
                     radius=None,
                 )
                 skel_cache[root_id] = _skeleton_to_csr(sk)
-            except Exception:
-                continue
+        else:
+            skel_dir_v = _P(skeleton_dir) / f"v{version}"
+            for root_id in unique_roots:
+                skel_path = skel_dir_v / f"v{version}_rid{root_id}_skv{skeleton_service_version}.npz"
+                if not skel_path.exists():
+                    continue
+                try:
+                    d = np.load(skel_path, allow_pickle=False)
+                    sk = SkeletonData(
+                        root_id=root_id,
+                        materialization_version=version,
+                        vertices=d["vertices"].astype(np.float32),
+                        edges=d["edges"].astype(np.int64),
+                        radius=None,
+                    )
+                    skel_cache[root_id] = _skeleton_to_csr(sk)
+                except Exception:
+                    continue
 
         side_results = {"pre": {}, "post": {}}
         for side, positions, roots in (

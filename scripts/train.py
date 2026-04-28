@@ -1327,6 +1327,39 @@ def cmd_precompute_seg_scores(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Subcommand: precompute-self-skeletons
+# ---------------------------------------------------------------------------
+
+def cmd_precompute_self_skeletons(args: argparse.Namespace) -> int:
+    """Self-skeletonize the BossDB seg volume per box using kimimaro."""
+    from neuronauts.dataset_builder import BoxCache
+    from neuronauts.cell_graph import precompute_self_skeletons_for_cache
+
+    cache = BoxCache(args.cache_dir)
+    records = list(cache.iter_records())
+    if not records:
+        print(f"No cached boxes in {args.cache_dir}")
+        return 1
+
+    print(f"Self-skeletonizing {len(records)} boxes via kimimaro …")
+    print(f"  output_dir={args.output_dir}  mip={args.mip}  margin_nm={args.margin_nm}")
+
+    manifest = precompute_self_skeletons_for_cache(
+        cache,
+        output_dir=args.output_dir,
+        records=records,
+        mip=args.mip,
+        margin_nm=args.margin_nm,
+        teasar_const=args.teasar_const,
+        teasar_scale=args.teasar_scale,
+        min_vertices=args.min_vertices,
+        verbose=True,
+    )
+    print(f"\nDone: skeletonized {len(manifest)} boxes -> {args.output_dir}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Subcommand: precompute-skeleton-paths
 # ---------------------------------------------------------------------------
 
@@ -2466,6 +2499,23 @@ def parse_args(argv=None) -> argparse.Namespace:
                         help="Skeleton paths longer than this are dropped (no-path).")
     p_skel.add_argument("--skeleton-service-version", type=int, default=4)
     p_skel.set_defaults(func=cmd_precompute_skeleton_paths)
+
+    # ---------------------------------------------------------------------------
+    # precompute-self-skeletons
+    # ---------------------------------------------------------------------------
+    p_self = sub.add_parser(
+        "precompute-self-skeletons",
+        help="Self-skeletonize BossDB seg volumes via kimimaro (per box).",
+    )
+    p_self.add_argument("--cache-dir", default="data/boxes")
+    p_self.add_argument("--output-dir", default="data/skeletons_self")
+    p_self.add_argument("--mip", type=int, default=3,
+                        help="CloudVolume MIP for the seg fetch (default 3).")
+    p_self.add_argument("--margin-nm", type=float, default=200.0)
+    p_self.add_argument("--teasar-scale", type=float, default=1.5)
+    p_self.add_argument("--teasar-const", type=float, default=5.0)
+    p_self.add_argument("--min-vertices", type=int, default=5)
+    p_self.set_defaults(func=cmd_precompute_self_skeletons)
 
     # evaluate
     p_eval = sub.add_parser(
