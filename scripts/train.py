@@ -1068,6 +1068,7 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
     """Train CellGNN on a cached dataset with tangledness-aware sampling."""
     torch = _require_torch()
 
+    from neuronauts import cell_graph as _cg
     from neuronauts.dataset_builder import BoxCache, load_dataset
     from neuronauts.cell_graph import (
         CellGNN,
@@ -1080,8 +1081,17 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
         infer_cells,
         build_synapse_graph,
         connectivity_graph_from_cell_labels,
+        EDGE_FEATURE_NAMES,
     )
     from neuronauts.line_graph import evaluate as lg_evaluate
+
+    if getattr(args, "ablate_feature", None) is not None:
+        idx = int(args.ablate_feature)
+        if not (0 <= idx < len(EDGE_FEATURE_NAMES)):
+            print(f"--ablate-feature must be in [0, {len(EDGE_FEATURE_NAMES) - 1}]")
+            return 1
+        _cg._ABLATE_FEATURE_IDX = idx
+        print(f"Ablating edge feature [{idx}] = {EDGE_FEATURE_NAMES[idx]} (zeroed in all graphs)")
 
     cache = BoxCache(args.cache_dir)
     records = cache.all_records()
@@ -2363,6 +2373,11 @@ def parse_args(argv=None) -> argparse.Namespace:
                         help="Path to pre-computed seg connectivity scores JSON "
                              "(from precompute-seg-scores subcommand).  When set, "
                              "injects seg_connectivity edge features into training graphs.")
+    p_cell.add_argument("--ablate-feature", type=int, default=None,
+                        help="Zero out edge feature column with this index in all training "
+                             "graphs (0..5). Used for per-feature ablation studies. "
+                             "Indices: 0=distance, 1=same_scaffold, 2=grammar_score, "
+                             "3=shared_agents, 4=shared_partners, 5=seg_connectivity.")
     p_cell.set_defaults(func=cmd_train_cell_gnn)
 
     # ---------------------------------------------------------------------------

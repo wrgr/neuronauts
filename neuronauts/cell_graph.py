@@ -295,6 +295,14 @@ def build_synapse_graph(
 # ---------------------------------------------------------------------------
 
 _EDGE_FEAT_DIM = 6  # distance, same_scaffold, grammar_score, shared_agents, shared_partners, seg_connectivity
+EDGE_FEATURE_NAMES = (
+    "distance", "same_scaffold", "grammar_score",
+    "shared_agents", "shared_partners", "seg_connectivity",
+)
+# Ablation hook: when set to an int in [0, _EDGE_FEAT_DIM), _graph_to_tensors
+# zeros out that column in the edge feature matrix. Used by the per-feature
+# ablation in scripts/train.py.
+_ABLATE_FEATURE_IDX: int | None = None
 # Below this synapse count use exact O(N²) similarity; above use ANN sparse path.
 _ANN_PARTITION_THRESHOLD = 500
 
@@ -351,6 +359,9 @@ def _graph_to_tensors(graph: SynapseGraph):
     edge_src = torch.tensor(src_list, dtype=torch.long)
     edge_dst = torch.tensor(dst_list, dtype=torch.long)
     edge_feat = torch.tensor(feat_list, dtype=torch.float32)
+
+    if _ABLATE_FEATURE_IDX is not None and 0 <= _ABLATE_FEATURE_IDX < _EDGE_FEAT_DIM:
+        edge_feat[:, _ABLATE_FEATURE_IDX] = 0.0
 
     return node_feat, edge_src, edge_dst, edge_feat
 
