@@ -1245,7 +1245,7 @@ def train_cell_gnn(
             if record.n_positive_pairs == 0 and record.n_synapses < 4:
                 continue
             try:
-                _, synapses = cache.load(record)
+                _, synapses = cache.load(record, load_volume=False)
             except Exception:
                 continue
 
@@ -1320,7 +1320,7 @@ def train_cell_gnn(
             val_losses = []
             for record in val_cache.iter_records():
                 try:
-                    _, synapses = val_cache.load(record)
+                    _, synapses = val_cache.load(record, load_volume=False)
                 except Exception:
                     continue
                 for role in ("pre", "post"):
@@ -2721,7 +2721,7 @@ def score_box_tangledness(
     - ``tangledness``: composite score = multi_root_fraction * root_density * 100
     """
     try:
-        _, synapses = cache.load(record)
+        _, synapses = cache.load(record, load_volume=False)
     except Exception:
         return {"tangledness": 0.0}
 
