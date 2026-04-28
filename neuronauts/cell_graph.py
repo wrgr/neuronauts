@@ -1347,6 +1347,14 @@ def train_cell_gnn(
                     _, synapses = val_cache.load(record, load_volume=False)
                 except Exception:
                     continue
+                if synapses.n_synapses > cfg.max_synapses_per_box:
+                    keep = rng.choice(
+                        synapses.n_synapses,
+                        size=cfg.max_synapses_per_box,
+                        replace=False,
+                    )
+                    keep.sort()
+                    synapses = synapses.subset(keep)
                 for role in ("pre", "post"):
                     graph = build_synapse_graph(
                         synapses, role,
