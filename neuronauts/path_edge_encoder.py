@@ -169,36 +169,36 @@ class PathEdgeEncoder:
                 Tensor [E, output_dim]
                 """
                 E, T, _ = path_seq.shape
-                if T == 0:
-                    # Pure empty batch — broadcast the no_path embedding
-                    return self.no_path_embedding.unsqueeze(0).expand(E, -1).contiguous()
 
-                tokens = self.input_proj(path_seq.float())  # [E, T, d_model]
-                cls = self.cls_token.expand(E, -1, -1)      # [E, 1, d_model]
-                tokens = torch.cat([cls, tokens], dim=1)    # [E, T+1, d_model]
+                # Start with the learned no-path embedding for all edges.
+                # Only edges with real paths go through the transformer,
+                # keeping batch size at ~P (typically <<E) rather than E.
+                result = self.no_path_embedding.unsqueeze(0).expand(E, -1).contiguous()
+
+                path_indices = has_path.nonzero(as_tuple=False).view(-1)
+                if len(path_indices) == 0 or T == 0:
+                    return result
+
+                P = path_indices.shape[0]
+                ps = path_seq[path_indices]    # [P, T, input_dim]
+                pm = path_mask[path_indices]   # [P, T]
+
+                tokens = self.input_proj(ps.float())          # [P, T, d_model]
+                cls = self.cls_token.expand(P, -1, -1)        # [P, 1, d_model]
+                tokens = torch.cat([cls, tokens], dim=1)      # [P, T+1, d_model]
                 tokens = tokens + self.pos_enc[:, : T + 1, :]
 
-                cls_mask = torch.zeros(E, 1, dtype=torch.bool, device=path_seq.device)
-                full_mask = torch.cat([cls_mask, path_mask], dim=1)  # [E, T+1]
+                cls_mask = torch.zeros(P, 1, dtype=torch.bool, device=ps.device)
+                full_mask = torch.cat([cls_mask, pm], dim=1)  # [P, T+1]
 
-                # If an entire row is True (all padding), src_key_padding_mask
-                # would error in some torch versions — flip CLS to False
-                # everywhere (already done) and rely on has_path to overwrite
-                # the result for those rows.
                 out = self.transformer(tokens, src_key_padding_mask=full_mask)
-                cls_out = out[:, 0, :]                       # [E, d_model]
-                emb = self.output_proj(cls_out)              # [E, output_dim]
+                cls_out = out[:, 0, :]                        # [P, d_model]
+                emb = self.output_proj(cls_out)               # [P, output_dim]
 
-                # Replace the rows for edges that have no real path with the
-                # learned no_path embedding.
-                no_path = ~has_path                          # [E]
-                if no_path.any():
-                    emb = torch.where(
-                        no_path.unsqueeze(-1),
-                        self.no_path_embedding.unsqueeze(0).expand_as(emb),
-                        emb,
-                    )
-                return emb
+                # Scatter back: only the P path-having edges are updated
+                result = result.clone()
+                result[path_indices] = emb
+                return result
 
         return _PathEdgeEncoder()
 

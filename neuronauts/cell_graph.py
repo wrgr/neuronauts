@@ -941,7 +941,7 @@ def cell_graph_train_step(
     model.train()
     optimizer.zero_grad()
 
-    _use_paths = bool(graph.edge_path_features)
+    _use_paths = getattr(model, "path_emb_dim", 0) > 0
     if _use_paths:
         node_feat, edge_src, edge_dst, edge_feat, path_seq, path_mask, has_path = (
             _graph_to_tensors(graph, return_paths=True)
@@ -1203,11 +1203,18 @@ def train_cell_gnn(
                     # Eval-only forward (no grad)
                     model.eval()
                     with torch.no_grad():
-                        node_feat, es, ed, ef = _graph_to_tensors(graph)
                         import torch.nn.functional as F
-                        emb = F.normalize(
-                            model(node_feat, es, ed, ef), p=2, dim=-1
-                        )
+                        if getattr(model, "path_emb_dim", 0) > 0:
+                            nf, es, ed, ef, ps, pm, hp = _graph_to_tensors(graph, return_paths=True)
+                            emb = F.normalize(
+                                model(nf, es, ed, ef, path_seq=ps, path_mask=pm, has_path=hp),
+                                p=2, dim=-1,
+                            )
+                        else:
+                            node_feat, es, ed, ef = _graph_to_tensors(graph)
+                            emb = F.normalize(
+                                model(node_feat, es, ed, ef), p=2, dim=-1
+                            )
                     model.train()
                     val_pos, val_neg = _sample_contrastive_pairs(
                         graph.root_ids, cfg.max_pairs_per_box, rng
@@ -1266,7 +1273,7 @@ def infer_cells(
 
     model.eval()
     with torch.no_grad():
-        if graph.edge_path_features:
+        if getattr(model, "path_emb_dim", 0) > 0:
             node_feat, edge_src, edge_dst, edge_feat, path_seq, path_mask, has_path = (
                 _graph_to_tensors(graph, return_paths=True)
             )
