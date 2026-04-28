@@ -261,10 +261,19 @@ def build_synapse_graph(
         pb = group_partners.get(gb, set())
         return len(pa & pb)
 
-    # Proximity edges
-    pairs = tree.query_pairs(r=proximity_radius_nm, output_type="ndarray")
-    if len(pairs) > 0:
-        for a, b in pairs:
+    # Proximity edges — use K-NN (k=max_edges_per_node+1) to keep edge count
+    # O(N·K) regardless of density.  query_pairs with a fixed radius explodes
+    # to O(N²) in dense 30µm boxes (8K+ synapses, 160+ neighbours per node).
+    k = min(max_edges_per_node + 1, len(iso_positions))
+    _, nn_indices = tree.query(iso_positions, k=k, workers=-1)
+    pair_set: set[tuple[int, int]] = set()
+    for i, neighbours in enumerate(nn_indices):
+        for j in neighbours[1:]:  # skip self (index 0)
+            d = float(np.linalg.norm(iso_positions[i] - iso_positions[j]))
+            if d <= proximity_radius_nm:
+                pair_set.add((min(i, j), max(i, j)))
+    if pair_set:
+        for a, b in pair_set:
             a, b = int(a), int(b)
             key = (min(a, b), max(a, b))
             dist = float(np.linalg.norm(iso_positions[a] - iso_positions[b]))
