@@ -35,3 +35,8 @@ Thumbs.db
 
 # Training and fetch logs
 *.log
+
+# Model checkpoints (large binaries — track outside git if needed)
+models/*.pt
+models/*.npz
+models/*.json
