@@ -777,6 +777,7 @@ class CellGNN:
         path_n_heads: int = 2,
         path_n_layers: int = 2,
         path_max_len: int = 64,
+        edge_scoring: bool = False,
     ):
         torch, nn = _require_torch()
         import torch.nn.functional as F
@@ -804,12 +805,14 @@ class CellGNN:
                     "path_n_heads": path_n_heads,
                     "path_n_layers": path_n_layers,
                     "path_max_len": path_max_len,
+                    "edge_scoring": edge_scoring,
                 }
                 self.d_model = d_model
                 self.n_heads = n_heads
                 self.head_dim = head_dim
                 self.embedding_dim = embedding_dim
                 self.path_emb_dim = path_emb_dim
+                self.edge_scoring = edge_scoring
 
                 # Optional path encoder for skeleton-path edge features.
                 if path_emb_dim > 0:
@@ -846,6 +849,39 @@ class CellGNN:
 
                 # Output projection
                 self.output_proj = nn.Linear(d_model, embedding_dim)
+
+                # Edge scoring head: takes (emb_u ‖ emb_v ‖ raw_edge_feats) and
+                # produces a logit for P(same_cell | K-hop context).
+                if edge_scoring:
+                    self.edge_head = nn.Sequential(
+                        nn.Linear(embedding_dim * 2 + edge_input_dim, d_model),
+                        nn.GELU(),
+                        nn.Linear(d_model, d_model // 2),
+                        nn.GELU(),
+                        nn.Linear(d_model // 2, 1),
+                    )
+                else:
+                    self.edge_head = None
+
+            def score_edges(self, node_emb, edge_src, edge_dst, raw_edge_feat):
+                """Compute per-edge logits from node embeddings and raw edge features.
+
+                Parameters
+                ----------
+                node_emb : Tensor [N, embedding_dim]  (output of forward())
+                edge_src, edge_dst : Tensor [E]
+                raw_edge_feat : Tensor [E, edge_input_dim]  (un-projected scalar features)
+
+                Returns
+                -------
+                logits : Tensor [E]  (un-sigmoided; apply sigmoid for probabilities)
+                """
+                if self.edge_head is None:
+                    raise RuntimeError("score_edges() called on model without edge_scoring=True")
+                src_emb = node_emb[edge_src]
+                dst_emb = node_emb[edge_dst]
+                edge_input = torch.cat([src_emb, dst_emb, raw_edge_feat], dim=-1)
+                return self.edge_head(edge_input).squeeze(-1)
 
             def forward(
                 self, node_feat, edge_src, edge_dst, edge_feat,
@@ -1093,6 +1129,9 @@ class CellGNNConfig:
     path_n_heads: int = 2
     path_n_layers: int = 2
     path_max_len: int = 64
+    # Edge scoring mode (replaces contrastive clustering)
+    edge_scoring: bool = False
+    edge_threshold: float = 0.5   # sigmoid threshold for union-find at inference
     # Training
     epochs: int = 50
     learning_rate: float = 1e-3
@@ -1367,6 +1406,178 @@ def cell_graph_train_step(
 
 
 # ---------------------------------------------------------------------------
+# 5b. Edge scoring: train step and inference
+# ---------------------------------------------------------------------------
+
+def cell_graph_edge_train_step(
+    model,
+    optimizer,
+    graph: SynapseGraph,
+    *,
+    rng: "np.random.Generator | None" = None,
+    core_mask: "np.ndarray | None" = None,
+    max_neg_ratio: float = 4.0,
+) -> dict[str, float]:
+    """One gradient step using edge-level binary classification.
+
+    For each proximity edge (u, v) in the synapse graph, predict whether u and
+    v belong to the same cell (positive label) or different cells (negative).
+    Loss is weighted BCE-with-logits; negative edges are downsampled to at most
+    ``max_neg_ratio * n_positive`` to keep the batch balanced.
+
+    Parameters
+    ----------
+    core_mask : bool array [N] or None
+        Only edges where both endpoints are core nodes contribute to the loss.
+    max_neg_ratio : float
+        Maximum ratio of negative to positive edges in the loss batch.
+    """
+    torch, _ = _require_torch()
+    import torch.nn.functional as F
+
+    if graph.root_ids is None:
+        raise ValueError("SynapseGraph.root_ids must be set for edge training")
+    if not getattr(model, "edge_scoring", False):
+        raise ValueError("model was not built with edge_scoring=True")
+    if rng is None:
+        rng = np.random.default_rng()
+
+    model.train()
+    optimizer.zero_grad()
+
+    _use_paths = getattr(model, "path_emb_dim", 0) > 0
+    if _use_paths:
+        node_feat, edge_src, edge_dst, raw_edge_feat, path_seq, path_mask, has_path = (
+            _graph_to_tensors(graph, return_paths=True)
+        )
+        node_emb = model(
+            node_feat, edge_src, edge_dst, raw_edge_feat,
+            path_seq=path_seq, path_mask=path_mask, has_path=has_path,
+        )
+    else:
+        node_feat, edge_src, edge_dst, raw_edge_feat = _graph_to_tensors(graph)
+        node_emb = model(node_feat, edge_src, edge_dst, raw_edge_feat)
+
+    node_emb = F.normalize(node_emb, p=2, dim=-1)
+
+    # Build edge labels: 1 = same root_id, 0 = different
+    root_ids = graph.root_ids
+    es_np = edge_src.cpu().numpy()
+    ed_np = edge_dst.cpu().numpy()
+    r_src = root_ids[es_np]
+    r_dst = root_ids[ed_np]
+    valid = (r_src > 0) & (r_dst > 0)
+
+    # If core_mask set, restrict to edges where both endpoints are core nodes
+    if core_mask is not None:
+        valid &= core_mask[es_np] & core_mask[ed_np]
+
+    valid_idx = np.flatnonzero(valid)
+    if len(valid_idx) == 0:
+        return {"loss": 0.0, "n_pos": 0, "n_neg": 0, "accuracy": 0.0}
+
+    same = (r_src[valid_idx] == r_dst[valid_idx]).astype(np.float32)
+    n_pos = int(same.sum())
+    n_neg_total = int((same == 0).sum())
+
+    # Downsample negatives to keep ratio manageable
+    neg_idx = np.flatnonzero(same == 0)
+    max_neg = max(n_pos * int(max_neg_ratio), 16)
+    if len(neg_idx) > max_neg:
+        neg_idx = rng.choice(neg_idx, size=max_neg, replace=False)
+    pos_idx = np.flatnonzero(same == 1)
+    keep = np.concatenate([pos_idx, neg_idx])
+    keep_global = valid_idx[keep]
+
+    es_k = edge_src[keep_global]
+    ed_k = edge_dst[keep_global]
+    ef_k = raw_edge_feat[keep_global]
+    labels = torch.tensor(same[keep], dtype=torch.float32, device=node_emb.device)
+
+    logits = model.score_edges(node_emb, es_k, ed_k, ef_k)
+
+    # pos_weight balances the class imbalance within the kept batch
+    n_pos_kept = int(labels.sum().item())
+    n_neg_kept = int((labels == 0).sum().item())
+    pos_w = torch.tensor(
+        max(n_neg_kept, 1) / max(n_pos_kept, 1),
+        dtype=torch.float32, device=logits.device,
+    )
+    loss = F.binary_cross_entropy_with_logits(logits, labels, pos_weight=pos_w)
+    loss.backward()
+    optimizer.step()
+
+    with torch.no_grad():
+        acc = ((logits > 0) == (labels > 0.5)).float().mean().item()
+
+    return {
+        "loss": loss.item(),
+        "n_pos": n_pos,
+        "n_neg": n_neg_total,
+        "accuracy": acc,
+    }
+
+
+def infer_cells_edge(
+    model,
+    graph: SynapseGraph,
+    *,
+    threshold: float = 0.5,
+    proximity_radius_nm: float = 5000.0,
+) -> np.ndarray:
+    """Infer cell labels using edge classification + union-find.
+
+    Parameters
+    ----------
+    threshold : float
+        Sigmoid score above which an edge is considered a same-cell link.
+
+    Returns
+    -------
+    labels : ndarray [N]
+        Integer cell label per synapse (compact, starting from 0).
+    """
+    torch, _ = _require_torch()
+    import torch.nn.functional as F
+
+    if not getattr(model, "edge_scoring", False):
+        raise ValueError("model was not built with edge_scoring=True")
+
+    model.eval()
+    with torch.no_grad():
+        _use_paths = getattr(model, "path_emb_dim", 0) > 0
+        if _use_paths:
+            node_feat, edge_src, edge_dst, raw_edge_feat, path_seq, path_mask, has_path = (
+                _graph_to_tensors(graph, return_paths=True)
+            )
+            node_emb = model(
+                node_feat, edge_src, edge_dst, raw_edge_feat,
+                path_seq=path_seq, path_mask=path_mask, has_path=has_path,
+            )
+        else:
+            node_feat, edge_src, edge_dst, raw_edge_feat = _graph_to_tensors(graph)
+            node_emb = model(node_feat, edge_src, edge_dst, raw_edge_feat)
+
+        node_emb = F.normalize(node_emb, p=2, dim=-1)
+        logits = model.score_edges(node_emb, edge_src, edge_dst, raw_edge_feat)
+        scores = torch.sigmoid(logits).cpu().numpy()
+
+    # Union-find: merge nodes connected by high-confidence same-cell edges
+    uf = _UF(graph.n_synapses)
+    es_np = edge_src.cpu().numpy()
+    ed_np = edge_dst.cpu().numpy()
+    for k, (u, v) in enumerate(zip(es_np, ed_np)):
+        if scores[k] >= threshold:
+            uf.union(int(u), int(v))
+
+    raw_labels = np.array([uf.find(i) for i in range(graph.n_synapses)], dtype=np.int64)
+    # Compact label IDs
+    unique = sorted(set(raw_labels.tolist()))
+    remap = {old: new for new, old in enumerate(unique)}
+    return np.array([remap[l] for l in raw_labels], dtype=np.int64)
+
+
+# ---------------------------------------------------------------------------
 # 6. Full training loop over a BoxCache
 # ---------------------------------------------------------------------------
 
@@ -1516,23 +1727,35 @@ def train_cell_gnn(
                                 merged.update(graph.edge_path_features)
                             graph.edge_path_features = merged
 
-                    m = cell_graph_train_step(
-                        model, optimizer, graph,
-                        margin=cfg.margin,
-                        max_pairs=cfg.max_pairs_per_box,
-                        rng=rng,
-                        edit_positive_pairs=_edit_pos[role] or None,
-                        edit_negative_pairs=_edit_neg[role] or None,
-                        edit_weight=edit_weight,
-                        hard_neg_mining=hard_neg_mining,
-                        hard_neg_threshold=hard_neg_threshold,
-                        hard_neg_weight=hard_neg_weight,
-                    )
-                    epoch_metrics["loss"].append(m["loss"])
-                    epoch_metrics["pos_sim"].append(m["pos_sim"])
-                    epoch_metrics["neg_sim"].append(m["neg_sim"])
-                    epoch_metrics["hard_neg_sim"].append(m.get("hard_neg_sim", 0.0))
-                    epoch_metrics["n_hard_neg"].append(float(m.get("n_hard_neg", 0)))
+                    if cfg.edge_scoring:
+                        m = cell_graph_edge_train_step(
+                            model, optimizer, graph,
+                            rng=rng,
+                            core_mask=graph.core_mask,
+                        )
+                        epoch_metrics["loss"].append(m["loss"])
+                        epoch_metrics["pos_sim"].append(m.get("accuracy", 0.0))
+                        epoch_metrics["neg_sim"].append(0.0)
+                        epoch_metrics["hard_neg_sim"].append(0.0)
+                        epoch_metrics["n_hard_neg"].append(float(m.get("n_pos", 0)))
+                    else:
+                        m = cell_graph_train_step(
+                            model, optimizer, graph,
+                            margin=cfg.margin,
+                            max_pairs=cfg.max_pairs_per_box,
+                            rng=rng,
+                            edit_positive_pairs=_edit_pos[role] or None,
+                            edit_negative_pairs=_edit_neg[role] or None,
+                            edit_weight=edit_weight,
+                            hard_neg_mining=hard_neg_mining,
+                            hard_neg_threshold=hard_neg_threshold,
+                            hard_neg_weight=hard_neg_weight,
+                        )
+                        epoch_metrics["loss"].append(m["loss"])
+                        epoch_metrics["pos_sim"].append(m["pos_sim"])
+                        epoch_metrics["neg_sim"].append(m["neg_sim"])
+                        epoch_metrics["hard_neg_sim"].append(m.get("hard_neg_sim", 0.0))
+                        epoch_metrics["n_hard_neg"].append(float(m.get("n_hard_neg", 0)))
 
         mean_loss = float(np.mean(epoch_metrics["loss"])) if epoch_metrics["loss"] else 0.0
         mean_pos = float(np.mean(epoch_metrics["pos_sim"])) if epoch_metrics["pos_sim"] else 0.0
@@ -1602,17 +1825,26 @@ def train_cell_gnn(
             val_str = ""
             if val_cache is not None:
                 val_str = f"  val_loss={history['val_loss'][-1]:.4f}"
-            hn_str = ""
-            if total_hn > 0:
-                hn_str = f"  hn_sim={mean_hn_sim:.3f}  n_hn={total_hn}"
-            print(
-                f"Epoch {epoch + 1}/{cfg.epochs}  "
-                f"loss={mean_loss:.4f}  "
-                f"pos_sim={mean_pos:.3f}  neg_sim={mean_neg:.3f}"
-                f"{hn_str}{val_str}"
-                f"  wall={_epoch_wall:.0f}s",
-                flush=True,
-            )
+            if cfg.edge_scoring:
+                n_pos_edges = int(sum(epoch_metrics["n_hard_neg"]))
+                print(
+                    f"Epoch {epoch + 1}/{cfg.epochs}  "
+                    f"loss={mean_loss:.4f}  acc={mean_pos:.3f}  n_pos_edges={n_pos_edges}"
+                    f"{val_str}  wall={_epoch_wall:.0f}s",
+                    flush=True,
+                )
+            else:
+                hn_str = ""
+                if total_hn > 0:
+                    hn_str = f"  hn_sim={mean_hn_sim:.3f}  n_hn={total_hn}"
+                print(
+                    f"Epoch {epoch + 1}/{cfg.epochs}  "
+                    f"loss={mean_loss:.4f}  "
+                    f"pos_sim={mean_pos:.3f}  neg_sim={mean_neg:.3f}"
+                    f"{hn_str}{val_str}"
+                    f"  wall={_epoch_wall:.0f}s",
+                    flush=True,
+                )
 
         # Periodic checkpoint (epoch is 0-indexed; save at epoch+1)
         if (checkpoint_every > 0

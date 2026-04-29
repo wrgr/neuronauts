@@ -1154,6 +1154,9 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
         ]
 
     # --- Model ---
+    use_edge_scoring = getattr(args, "edge_scoring", False)
+    edge_threshold = getattr(args, "edge_threshold", 0.5)
+
     cfg = CellGNNConfig(
         d_model=args.d_model,
         n_layers=args.n_layers,
@@ -1166,6 +1169,8 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
         max_synapses_per_box=getattr(args, "max_synapses_per_box", 2000),
         proximity_radius_nm=args.proximity_radius_nm,
         partition_threshold=args.partition_threshold,
+        edge_scoring=use_edge_scoring,
+        edge_threshold=edge_threshold,
         seed=args.seed,
     )
 
@@ -1183,10 +1188,12 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
             embedding_dim=cfg.embedding_dim,
             path_emb_dim=path_emb_dim,
             path_input_dim=path_input_dim,
+            edge_scoring=use_edge_scoring,
         )
 
+    edge_str = "  [edge-scoring]" if use_edge_scoring else ""
     path_str = f"  path_emb_dim={path_emb_dim}" if path_emb_dim > 0 else ""
-    print(f"CellGNN: d={cfg.d_model} layers={cfg.n_layers} heads={cfg.n_heads} emb={cfg.embedding_dim}{path_str}")
+    print(f"CellGNN: d={cfg.d_model} layers={cfg.n_layers} heads={cfg.n_heads} emb={cfg.embedding_dim}{path_str}{edge_str}")
     print(f"Training: epochs={cfg.epochs} lr={cfg.learning_rate} margin={cfg.margin}")
 
     # --- Optional edit-history pairs ---
@@ -2519,6 +2526,12 @@ def parse_args(argv=None) -> argparse.Namespace:
     p_cell.add_argument("--path-input-dim", type=int, default=6,
                         help="Dimensionality of per-step path features fed to PathEdgeEncoder "
                              "(default 6: raw_delta3 + skeleton descriptors).")
+    p_cell.add_argument("--edge-scoring", action="store_true",
+                        help="Train with edge classification (BCE) instead of contrastive "
+                             "clustering loss.  The model learns P(same_cell) per proximity "
+                             "edge; inference uses union-find on high-confidence edges.")
+    p_cell.add_argument("--edge-threshold", type=float, default=0.5,
+                        help="Sigmoid threshold for same-cell edge at inference (default 0.5).")
     p_cell.set_defaults(func=cmd_train_cell_gnn)
 
     # ---------------------------------------------------------------------------
