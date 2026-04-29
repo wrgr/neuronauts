@@ -1824,12 +1824,13 @@ def train_cell_gnn(
                                     (r_src[valid] == r_dst[valid]).astype(np.float32),
                                     device=emb.device,
                                 )
-                                logits = model.score_edges(
-                                    emb,
-                                    es[valid],
-                                    ed[valid],
-                                    ef[valid],
-                                )
+                                with torch.no_grad():
+                                    logits = model.score_edges(
+                                        emb,
+                                        es[valid],
+                                        ed[valid],
+                                        ef[valid],
+                                    )
                                 val_losses.append(float(
                                     F.binary_cross_entropy_with_logits(logits, same).item()
                                 ))
