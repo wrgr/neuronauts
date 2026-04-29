@@ -168,18 +168,25 @@ def generate_path_examples(
     chain_ids = list(chains.keys())
     chain_list = [chains[k] for k in chain_ids]
 
-    # --- Build global KD-tree and direction index ---
+    # --- Build global KD-tree, direction index, and O(1) position lookup ---
+    # Precompute chain directions once (not inside negative-generation loops).
+    chain_dirs_list = [_chain_directions(pts) for pts in chain_list]
+
     all_pos: list[np.ndarray] = []
     all_dir: list[np.ndarray] = []
     all_ci: list[int] = []
     all_si: list[int] = []
+    # chain_start[ci] = first global index for chain ci; allows O(1) lookup:
+    #   global_idx(ci, si) = chain_start[ci] + si
+    chain_start = np.zeros(len(chain_list) + 1, dtype=np.int64)
     for ci, pts in enumerate(chain_list):
-        dirs = _chain_directions(pts)
+        dirs = chain_dirs_list[ci]
         for si, (pos, d) in enumerate(zip(pts, dirs)):
             all_pos.append(pos)
             all_dir.append(d)
             all_ci.append(ci)
             all_si.append(si)
+        chain_start[ci + 1] = chain_start[ci] + len(pts)
 
     all_pos_arr = np.array(all_pos, dtype=np.float32)
     all_dir_arr = np.array(all_dir, dtype=np.float32)
@@ -240,13 +247,16 @@ def generate_path_examples(
         min_cos: float = 0.75,
     ):
         _, nn_idx = tree.query(pos_nm, k=k)
-        for ni in nn_idx:
-            ci_b = int(all_ci_arr[ni])
-            if ci_b == exclude_ci:
+        # Vectorized direction check: batch dot product instead of Python loop
+        candidate_dirs = all_dir_arr[nn_idx]       # [k, 3]
+        candidate_ci = all_ci_arr[nn_idx]           # [k]
+        candidate_si = all_si_arr[nn_idx]           # [k]
+        cos_sims = candidate_dirs @ dir_nm           # [k]
+        for j in range(len(nn_idx)):
+            if candidate_ci[j] == exclude_ci:
                 continue
-            cos = float(np.dot(dir_nm, all_dir_arr[ni]))
-            if cos >= min_cos:
-                return ci_b, int(all_si_arr[ni])
+            if cos_sims[j] >= min_cos:
+                return int(candidate_ci[j]), int(candidate_si[j])
         return None, None
 
     # --- Insert negatives ---
@@ -271,12 +281,9 @@ def generate_path_examples(
         ci_b, si_b = _nearest_foreign(junction, ci_a)
         if ci_b is None:
             continue
-        foreign = all_pos_arr[all_ci_arr == ci_b][0:1]  # fallback: first syn of chain B
-        # Use the actual nearest synapse position
-        for gidx in range(len(all_pos_arr)):
-            if int(all_ci_arr[gidx]) == ci_b and int(all_si_arr[gidx]) == si_b:
-                foreign = all_pos_arr[gidx: gidx + 1]
-                break
+        # O(1) lookup via precomputed chain_start index
+        gidx = int(chain_start[ci_b]) + si_b
+        foreign = all_pos_arr[gidx: gidx + 1]
         injected = np.concatenate([seg[:insert_pos], foreign, seg[insert_pos:]], axis=0)
         feat = _featurize_window(injected)
         if feat is not None:
@@ -352,7 +359,7 @@ def generate_path_examples(
             break
         ci_a = source_ci[int(pi)]
         pts_a = chain_list[ci_a]
-        dirs_a = _chain_directions(pts_a)
+        dirs_a = chain_dirs_list[ci_a]  # precomputed — no per-iteration recompute
         N_a = len(pts_a)
         if N_a < half:
             continue
