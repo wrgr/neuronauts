@@ -1450,6 +1450,8 @@ def train_cell_gnn(
         history["val_loss"] = []
 
     for epoch in range(cfg.epochs):
+        import time as _time
+        _epoch_start = _time.monotonic()
         epoch_metrics: dict[str, list[float]] = {
             "loss": [], "pos_sim": [], "neg_sim": [],
             "hard_neg_sim": [], "n_hard_neg": [],
@@ -1596,6 +1598,7 @@ def train_cell_gnn(
             history["val_loss"].append(val_loss)
 
         if verbose:
+            _epoch_wall = _time.monotonic() - _epoch_start
             val_str = ""
             if val_cache is not None:
                 val_str = f"  val_loss={history['val_loss'][-1]:.4f}"
@@ -1606,7 +1609,8 @@ def train_cell_gnn(
                 f"Epoch {epoch + 1}/{cfg.epochs}  "
                 f"loss={mean_loss:.4f}  "
                 f"pos_sim={mean_pos:.3f}  neg_sim={mean_neg:.3f}"
-                f"{hn_str}{val_str}",
+                f"{hn_str}{val_str}"
+                f"  wall={_epoch_wall:.0f}s",
                 flush=True,
             )
 
