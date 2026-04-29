@@ -102,6 +102,18 @@ def _featurize_window(pts_nm: np.ndarray) -> "np.ndarray | None":
     return feat if feat.shape[0] > 0 else None
 
 
+def _chain_directions(pts: np.ndarray) -> np.ndarray:
+    """Unit direction vectors at each synapse using centered differences."""
+    if len(pts) < 2:
+        return np.zeros((len(pts), 3), dtype=np.float32)
+    dirs = np.zeros_like(pts)
+    dirs[1:-1] = pts[2:] - pts[:-2]
+    dirs[0] = pts[1] - pts[0]
+    dirs[-1] = pts[-1] - pts[-2]
+    norms = np.linalg.norm(dirs, axis=1, keepdims=True)
+    return dirs / np.maximum(norms, 1e-6)
+
+
 def generate_path_examples(
     chains: dict[int, np.ndarray],
     *,
@@ -109,7 +121,8 @@ def generate_path_examples(
     stride: int | None = None,
     neg_per_pos: int = 4,
     hard_neg_fraction: float = 0.5,
-    insert_delete_fraction: float = 0.4,
+    insert_delete_fraction: float = 0.3,
+    parallel_cell_fraction: float = 0.15,
     rng: np.random.Generator | None = None,
     max_examples: int | None = None,
 ) -> tuple[list[np.ndarray], np.ndarray]:
@@ -117,20 +130,27 @@ def generate_path_examples(
 
     Negative example types
     ----------------------
-    splice-easy : random two-cell concat (obvious position jump)
-    splice-hard : KD-tree nearest-neighbor splice (spatially proximate)
-    insert      : one foreign synapse injected into the middle of a valid chain.
-                  The window stays window_size synapses long (W-1 real + 1 foreign).
-                  Teaches detection of a single wrong segment merged in.
-    delete      : one synapse removed, creating an anomalous gap.
-                  The window takes W+1 synapses then drops one from the middle.
-                  Teaches detection of a chain that needs to be split.
+    splice-easy    : random two-cell concat (obvious position jump)
+    splice-hard    : KD-tree nearest-neighbor splice (spatially proximate)
+    insert         : one foreign synapse injected into the middle of a valid chain.
+                     The window stays window_size synapses long (W-1 real + 1 foreign).
+                     Teaches detection of a single wrong segment merged in.
+    delete         : one synapse removed, creating an anomalous gap.
+                     The window takes W+1 synapses then drops one from the middle.
+                     Teaches detection of a chain that needs to be split.
+    parallel-cell  : splice at a point where cell B runs in the SAME direction as
+                     cell A (cos_sim ≥ 0.8 between local directions).  This is the
+                     hardest case — the step at the junction looks completely normal
+                     in direction and distance; only longer-range trajectory divergence
+                     distinguishes them.
 
-    Hard negatives (KD-tree splice + insert + delete) share hard_neg_fraction of
-    the total negative budget.  Within that budget, insert_delete_fraction goes to
-    insert/delete examples (split equally); the remainder goes to KD-tree splices.
+    Hard negatives share hard_neg_fraction of the total budget.
+    Within that:
+      - insert_delete_fraction → insert/delete (split equally)
+      - parallel_cell_fraction → parallel-cell splices
+      - remainder              → KD-tree nearest-neighbor splices
 
-    Edit-history examples (real proofreading merge/split errors) can be added via
+    Edit-history examples (real CAVE proofreading merge/split errors) can be added via
     ``add_edit_history_examples()`` — these represent the ground-truth hard cases
     where the connectome boundary is genuinely ambiguous.
 
@@ -148,17 +168,21 @@ def generate_path_examples(
     chain_ids = list(chains.keys())
     chain_list = [chains[k] for k in chain_ids]
 
-    # --- Build global KD-tree for hard-negative lookup ---
+    # --- Build global KD-tree and direction index ---
     all_pos: list[np.ndarray] = []
+    all_dir: list[np.ndarray] = []
     all_ci: list[int] = []
     all_si: list[int] = []
     for ci, pts in enumerate(chain_list):
-        for si, pos in enumerate(pts):
+        dirs = _chain_directions(pts)
+        for si, (pos, d) in enumerate(zip(pts, dirs)):
             all_pos.append(pos)
+            all_dir.append(d)
             all_ci.append(ci)
             all_si.append(si)
 
     all_pos_arr = np.array(all_pos, dtype=np.float32)
+    all_dir_arr = np.array(all_dir, dtype=np.float32)
     all_ci_arr = np.array(all_ci, dtype=np.int32)
     all_si_arr = np.array(all_si, dtype=np.int32)
 
@@ -188,11 +212,12 @@ def generate_path_examples(
     n_hard_total = int(n_neg_total * hard_neg_fraction)
     n_easy = n_neg_total - n_hard_total
 
-    # Hard budget: split between insert/delete and KD-tree splices
+    # Hard budget: split between insert/delete, parallel-cell, and KD-tree splices
     n_ins_del = int(n_hard_total * insert_delete_fraction)
     n_insert = n_ins_del // 2
     n_delete = n_ins_del - n_insert
-    n_kd_splice = n_hard_total - n_ins_del
+    n_parallel = int(n_hard_total * parallel_cell_fraction)
+    n_kd_splice = n_hard_total - n_ins_del - n_parallel
 
     # Helper: find nearest different-cell synapse to a query position
     def _nearest_foreign(pos_nm: np.ndarray, exclude_ci: int, k: int = 32):
@@ -200,6 +225,28 @@ def generate_path_examples(
         for ni in nn_idx:
             if int(all_ci_arr[ni]) != exclude_ci:
                 return int(all_ci_arr[ni]), int(all_si_arr[ni])
+        return None, None
+
+    # Helper: find nearest synapse from a PARALLEL-RUNNING different cell.
+    # "Parallel" means the local direction of the candidate synapse has
+    # cos_sim ≥ min_cos with the query direction.  This creates the hardest
+    # possible splice — the junction step looks normal in both distance and
+    # direction; only longer-range trajectory divergence distinguishes it.
+    def _nearest_parallel_foreign(
+        pos_nm: np.ndarray,
+        dir_nm: np.ndarray,
+        exclude_ci: int,
+        k: int = 64,
+        min_cos: float = 0.75,
+    ):
+        _, nn_idx = tree.query(pos_nm, k=k)
+        for ni in nn_idx:
+            ci_b = int(all_ci_arr[ni])
+            if ci_b == exclude_ci:
+                continue
+            cos = float(np.dot(dir_nm, all_dir_arr[ni]))
+            if cos >= min_cos:
+                return ci_b, int(all_si_arr[ni])
         return None, None
 
     # --- Insert negatives ---
@@ -293,6 +340,41 @@ def generate_path_examples(
             features.append(feat)
             labels.append(0.0)
             kd_added += 1
+
+    # --- Parallel-cell negatives ---
+    # Cell B runs in the same direction as cell A at the junction.
+    # The splice step looks normal — only long-range trajectory divergence
+    # distinguishes the two cells.  These are the hardest possible negatives.
+    parallel_added = 0
+    pos_idx = rng.permutation(n_pos)
+    for pi in pos_idx:
+        if parallel_added >= n_parallel:
+            break
+        ci_a = source_ci[int(pi)]
+        pts_a = chain_list[ci_a]
+        dirs_a = _chain_directions(pts_a)
+        N_a = len(pts_a)
+        if N_a < half:
+            continue
+        start_a = int(rng.integers(0, max(1, N_a - window_size + 1)))
+        junction_idx = start_a + half - 1
+        junction_pos = pts_a[junction_idx]
+        junction_dir = dirs_a[junction_idx]
+        ci_b, si_b = _nearest_parallel_foreign(junction_pos, junction_dir, ci_a)
+        if ci_b is None:
+            continue
+        pts_b = chain_list[ci_b]
+        n_needed = window_size - half
+        si_b = min(si_b, max(0, len(pts_b) - n_needed))
+        seg_b = pts_b[si_b: si_b + n_needed]
+        if len(seg_b) < n_needed:
+            continue
+        splice = np.concatenate([pts_a[start_a: start_a + half], seg_b], axis=0)
+        feat = _featurize_window(splice)
+        if feat is not None:
+            features.append(feat)
+            labels.append(0.0)
+            parallel_added += 1
 
     # --- Easy negatives: random cell pair ---
     easy_added = 0
@@ -428,7 +510,9 @@ def train_path_encoder(
     lr: float = 1e-3,
     batch_size: int = 512,
     neg_per_pos: int = 4,
-    hard_neg_fraction: float = 0.5,
+    hard_neg_fraction: float = 0.65,
+    insert_delete_fraction: float = 0.3,
+    parallel_cell_fraction: float = 0.15,
     checkpoint_path: str = "models/path_encoder.pt",
     checkpoint_every: int = 5,
     rng_seed: int = 42,
@@ -482,6 +566,8 @@ def train_path_encoder(
             window_size=window_size,
             neg_per_pos=neg_per_pos,
             hard_neg_fraction=hard_neg_fraction,
+            insert_delete_fraction=insert_delete_fraction,
+            parallel_cell_fraction=parallel_cell_fraction,
             rng=rng,
             max_examples=max_examples_per_epoch,
         )

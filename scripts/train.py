@@ -2704,8 +2704,15 @@ def parse_args(argv=None) -> argparse.Namespace:
                         help="Number of synapses per path window (positive example length).")
     p_path.add_argument("--neg-per-pos", type=int, default=4,
                         help="Number of negative examples per positive.")
-    p_path.add_argument("--hard-neg-fraction", type=float, default=0.5,
-                        help="Fraction of negatives that are hard (spatially proximate splice).")
+    p_path.add_argument("--hard-neg-fraction", type=float, default=0.65,
+                        help="Fraction of negatives that are hard (default 0.65).")
+    p_path.add_argument("--insert-delete-fraction", type=float, default=0.3,
+                        help="Within hard negatives: fraction that are insert/delete "
+                             "(single-synapse edits). Remainder split between parallel-cell "
+                             "and KD-tree splices.")
+    p_path.add_argument("--parallel-cell-fraction", type=float, default=0.15,
+                        help="Within hard negatives: fraction that are parallel-cell splices "
+                             "(same direction at junction — hardest type).")
     p_path.add_argument("--d-model", type=int, default=32)
     p_path.add_argument("--n-heads", type=int, default=2)
     p_path.add_argument("--n-layers", type=int, default=3)
@@ -2762,6 +2769,8 @@ def cmd_train_path_encoder(args: argparse.Namespace) -> int:
         batch_size=args.batch_size,
         neg_per_pos=args.neg_per_pos,
         hard_neg_fraction=args.hard_neg_fraction,
+        insert_delete_fraction=getattr(args, "insert_delete_fraction", 0.3),
+        parallel_cell_fraction=getattr(args, "parallel_cell_fraction", 0.15),
         checkpoint_path=args.output,
         checkpoint_every=args.checkpoint_every,
         rng_seed=args.seed,
