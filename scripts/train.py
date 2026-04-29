@@ -2663,7 +2663,86 @@ def parse_args(argv=None) -> argparse.Namespace:
     p_scale.add_argument("--log-dir", default="run_logs")
     p_scale.set_defaults(func=cmd_scale_test)
 
+    # ---------------------------------------------------------------------------
+    # train-path-encoder
+    # ---------------------------------------------------------------------------
+    p_path = sub.add_parser(
+        "train-path-encoder",
+        help="Pre-train PathEdgeEncoder on path discrimination (valid vs spliced paths).",
+    )
+    p_path.add_argument("--cache-dir", default="data/boxes_30um",
+                        help="Box cache directory to extract cell chains from.")
+    p_path.add_argument("--role", default="pre", choices=["pre", "post"],
+                        help="Which synapse side to build chains for.")
+    p_path.add_argument("--min-synapses-per-cell", type=int, default=5,
+                        help="Minimum cross-box synapse count to include a cell chain.")
+    p_path.add_argument("--window-size", type=int, default=8,
+                        help="Number of synapses per path window (positive example length).")
+    p_path.add_argument("--neg-per-pos", type=int, default=4,
+                        help="Number of negative examples per positive.")
+    p_path.add_argument("--hard-neg-fraction", type=float, default=0.5,
+                        help="Fraction of negatives that are hard (spatially proximate splice).")
+    p_path.add_argument("--d-model", type=int, default=32)
+    p_path.add_argument("--n-heads", type=int, default=2)
+    p_path.add_argument("--n-layers", type=int, default=3)
+    p_path.add_argument("--output-dim", type=int, default=16,
+                        help="PathEdgeEncoder output embedding dimension.")
+    p_path.add_argument("--epochs", type=int, default=30)
+    p_path.add_argument("--lr", type=float, default=1e-3)
+    p_path.add_argument("--batch-size", type=int, default=512)
+    p_path.add_argument("--checkpoint-every", type=int, default=5)
+    p_path.add_argument("--output", default="models/path_encoder.pt",
+                        help="Output checkpoint path.")
+    p_path.add_argument("--seed", type=int, default=42)
+    p_path.set_defaults(func=cmd_train_path_encoder)
+
     return root.parse_args(argv)
+
+
+def cmd_train_path_encoder(args: argparse.Namespace) -> int:
+    """Pre-train PathEdgeEncoder on path discrimination across all cached boxes."""
+    from neuronauts.dataset_builder import BoxCache
+    from neuronauts.path_dataset import extract_cell_chains, train_path_encoder
+
+    import os
+    os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
+
+    cache = BoxCache(args.cache_dir)
+    records = cache.all_records()
+    if not records:
+        print(f"No cached boxes in {args.cache_dir}")
+        return 1
+
+    print(f"Extracting chains from {len(records)} boxes (role={args.role}, "
+          f"min_synapses_per_cell={args.min_synapses_per_cell})…")
+    chains = extract_cell_chains(
+        cache,
+        role=args.role,
+        min_synapses_per_cell=args.min_synapses_per_cell,
+    )
+    if not chains:
+        print("No chains extracted — increase --cache-dir or lower --min-synapses-per-cell")
+        return 1
+
+    print(f"Extracted {len(chains)} cell chains.")
+
+    train_path_encoder(
+        chains,
+        d_model=args.d_model,
+        n_heads=args.n_heads,
+        n_layers=args.n_layers,
+        output_dim=args.output_dim,
+        window_size=args.window_size,
+        epochs=args.epochs,
+        lr=args.lr,
+        batch_size=args.batch_size,
+        neg_per_pos=args.neg_per_pos,
+        hard_neg_fraction=args.hard_neg_fraction,
+        checkpoint_path=args.output,
+        checkpoint_every=args.checkpoint_every,
+        rng_seed=args.seed,
+    )
+    return 0
 
 
 def main(argv=None) -> int:

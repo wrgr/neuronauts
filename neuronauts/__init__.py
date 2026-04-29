@@ -33,6 +33,12 @@ from .helpers import UnionFind, pairwise_edges, safe_normalize
 from .line_graph import LineGraphMetrics, evaluate, evaluate_sampled
 from .merge import ConnectivityGraph, MergedNeuron, merge_agents
 from .path_edge_encoder import PathEdgeEncoder, pad_path_sequences
+from .path_dataset import (
+    extract_cell_chains,
+    generate_path_examples,
+    load_path_encoder,
+    train_path_encoder as train_path_encoder_fn,
+)
 
 __all__ = [
     # agents
@@ -62,6 +68,11 @@ __all__ = [
     # Path-edge encoder (Option 2)
     "PathEdgeEncoder",
     "pad_path_sequences",
+    # Path discrimination dataset
+    "extract_cell_chains",
+    "generate_path_examples",
+    "load_path_encoder",
+    "train_path_encoder_fn",
     # Edge-feature caches (precompute)
     "load_seg_score_cache",
     "load_self_skeleton_archive",
