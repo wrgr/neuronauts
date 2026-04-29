@@ -1769,6 +1769,9 @@ def train_cell_gnn(
         if val_cache is not None:
             import torch.nn.functional as F
             val_losses = []
+            # For edge_scoring: also collect all scores+labels to find optimal threshold
+            _val_all_scores: list[np.ndarray] = []
+            _val_all_labels: list[np.ndarray] = []
             for record in val_cache.iter_records():
                 try:
                     _, synapses = val_cache.load(record, load_volume=False)
@@ -1830,6 +1833,8 @@ def train_cell_gnn(
                                 val_losses.append(float(
                                     F.binary_cross_entropy_with_logits(logits, same).item()
                                 ))
+                                _val_all_scores.append(torch.sigmoid(logits).cpu().numpy())
+                                _val_all_labels.append(same.cpu().numpy())
                         else:
                             val_pos, _ = _sample_contrastive_pairs(
                                 graph.root_ids, cfg.max_pairs_per_box, rng,
@@ -1843,6 +1848,24 @@ def train_cell_gnn(
             val_loss = float(np.mean(val_losses)) if val_losses else 0.0
             history["val_loss"].append(val_loss)
 
+            # For edge scoring: find the threshold that maximises edge-level F1 on val
+            if cfg.edge_scoring and _val_all_scores:
+                _scores = np.concatenate(_val_all_scores)
+                _labels = np.concatenate(_val_all_labels).astype(bool)
+                best_t, best_f1 = 0.5, 0.0
+                for _t in np.arange(0.3, 0.98, 0.02):
+                    _pred = _scores >= _t
+                    _tp = float((_pred & _labels).sum())
+                    _fp = float((_pred & ~_labels).sum())
+                    _fn = float((~_pred & _labels).sum())
+                    _p = _tp / (_tp + _fp + 1e-9)
+                    _r = _tp / (_tp + _fn + 1e-9)
+                    _f1 = 2 * _p * _r / (_p + _r + 1e-9)
+                    if _f1 > best_f1:
+                        best_f1 = _f1; best_t = float(_t)
+                history.setdefault("val_best_t", []).append(best_t)
+                history.setdefault("val_edge_f1", []).append(best_f1)
+
         if verbose:
             _epoch_wall = _time.monotonic() - _epoch_start
             val_str = ""
@@ -1850,10 +1873,13 @@ def train_cell_gnn(
                 val_str = f"  val_loss={history['val_loss'][-1]:.4f}"
             if cfg.edge_scoring:
                 n_pos_edges = int(sum(epoch_metrics["n_hard_neg"]))
+                t_str = ""
+                if "val_best_t" in history:
+                    t_str = f"  val_f1={history['val_edge_f1'][-1]:.3f}@t={history['val_best_t'][-1]:.2f}"
                 print(
                     f"Epoch {epoch + 1}/{cfg.epochs}  "
                     f"loss={mean_loss:.4f}  acc={mean_pos:.3f}  n_pos_edges={n_pos_edges}"
-                    f"{val_str}  wall={_epoch_wall:.0f}s",
+                    f"{t_str}  wall={_epoch_wall:.0f}s",
                     flush=True,
                 )
             else:
