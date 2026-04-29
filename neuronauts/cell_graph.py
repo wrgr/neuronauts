@@ -124,6 +124,9 @@ class SynapseGraph:
     # means "no path".  Populated by callers that have run the
     # skeleton-path precompute (see ``precompute_skeleton_paths_for_cache``).
     edge_path_features: dict[tuple[int, int], np.ndarray] | None = None
+    # Optional boolean mask: True = core node (used in loss), False = halo
+    # node included only as message-passing context.  None means all core.
+    core_mask: np.ndarray | None = None
 
 
 def build_synapse_graph(
@@ -331,6 +334,7 @@ def subdivide_synapse_graph(
     n_nodes: int = 5000,
     n_subgraphs: int | None = None,
     *,
+    halo_hops: int = 0,
     rng: "np.random.Generator | None" = None,
     min_nodes: int = 50,
 ) -> "list[SynapseGraph]":
@@ -346,19 +350,26 @@ def subdivide_synapse_graph(
     graph : SynapseGraph
         Full graph (may be very large).
     n_nodes : int
-        Target size of each sub-graph.  BFS stops when this many nodes are
-        collected.  Actual size may be smaller for sparse regions.
+        Target number of *core* nodes per sub-graph.  Core nodes are used in
+        the contrastive loss; they have at least ``halo_hops`` hops of context.
     n_subgraphs : int or None
         How many sub-graphs to extract.  Defaults to
         ``max(1, graph.n_synapses // n_nodes)``.
+    halo_hops : int
+        After collecting ``n_nodes`` core nodes, expand BFS by this many
+        additional hops.  The extra "halo" nodes are included in the graph for
+        message-passing context but are masked out of the contrastive loss via
+        ``SynapseGraph.core_mask``.  Use ``halo_hops = n_layers`` so every
+        core node has a full receptive field.
     rng : np.random.Generator or None
         RNG for seed selection.
     min_nodes : int
-        Discard sub-graphs with fewer than this many nodes.
+        Discard sub-graphs with fewer than this many *core* nodes.
 
     Returns
     -------
-    list of SynapseGraph, each a connected induced sub-graph.
+    list of SynapseGraph, each a connected induced sub-graph with
+    ``core_mask`` set when ``halo_hops > 0``.
     """
     if rng is None:
         rng = np.random.default_rng()
@@ -386,37 +397,53 @@ def subdivide_synapse_graph(
             break
         seed = int(rng.choice(available))
 
-        # BFS up to n_nodes
-        visited: list[int] = []
+        # Phase 1: BFS up to n_nodes core nodes
+        core: list[int] = []
+        in_visited = np.zeros(N, dtype=bool)
         queue = [seed]
-        in_queue = np.zeros(N, dtype=bool)
-        in_queue[seed] = True
+        in_visited[seed] = True
         head = 0
-        while head < len(queue) and len(visited) < n_nodes:
+        while head < len(queue) and len(core) < n_nodes:
             node = queue[head]; head += 1
-            visited.append(node)
-            neighbours = adj[node]
-            # Shuffle neighbours for variety
-            order = rng.permutation(len(neighbours))
+            core.append(node)
+            order = rng.permutation(len(adj[node]))
             for idx in order:
-                nb = neighbours[idx]
-                if not in_queue[nb] and len(visited) + (len(queue) - head) < n_nodes:
-                    in_queue[nb] = True
+                nb = adj[node][idx]
+                if not in_visited[nb] and len(core) + (len(queue) - head) < n_nodes:
+                    in_visited[nb] = True
                     queue.append(nb)
 
-        if len(visited) < min_nodes:
+        if len(core) < min_nodes:
             continue
 
-        # Mark as used (allow overlap for small graphs)
+        # Mark core nodes as used for future sub-graphs
         if N > n_nodes:
-            for v in visited:
+            for v in core:
                 used[v] = True
 
-        # Build index remapping: old node index -> new index
-        old_to_new = {v: i for i, v in enumerate(visited)}
-        node_set = set(visited)
+        # Phase 2: expand halo_hops steps from the core frontier
+        halo: list[int] = []
+        if halo_hops > 0:
+            frontier = set(core)
+            halo_set: set[int] = set()
+            for _ in range(halo_hops):
+                next_frontier: set[int] = set()
+                for v in frontier:
+                    for nb in adj[v]:
+                        if nb not in in_visited:
+                            in_visited[nb] = True
+                            halo_set.add(nb)
+                            next_frontier.add(nb)
+                frontier = next_frontier
+                if not frontier:
+                    break
+            halo = list(halo_set)
 
-        # Induced sub-graph
+        all_nodes = core + halo
+        old_to_new = {v: i for i, v in enumerate(all_nodes)}
+        node_set = set(all_nodes)
+
+        # Induced sub-graph over core + halo
         sub_edges = []
         sub_edge_path: dict[tuple[int, int], np.ndarray] = {}
         for e in graph.edges:
@@ -439,15 +466,24 @@ def subdivide_synapse_graph(
                     if arr is not None:
                         sub_edge_path[new_key] = arr
 
-        idx = np.array(visited, dtype=np.int64)
+        idx = np.array(all_nodes, dtype=np.int64)
+        n_total = len(all_nodes)
+
+        # core_mask: True for core nodes, False for halo context nodes
+        core_mask: np.ndarray | None = None
+        if halo:
+            core_mask = np.zeros(n_total, dtype=bool)
+            core_mask[:len(core)] = True
+
         results.append(SynapseGraph(
-            n_synapses=len(visited),
+            n_synapses=n_total,
             role=graph.role,
             node_positions=graph.node_positions[idx],
             node_scaffold_ids=graph.node_scaffold_ids[idx],
             edges=sub_edges,
             root_ids=graph.root_ids[idx] if graph.root_ids is not None else None,
             edge_path_features=sub_edge_path if sub_edge_path else None,
+            core_mask=core_mask,
         ))
 
     return results
@@ -1068,17 +1104,33 @@ def _sample_contrastive_pairs(
     root_ids: np.ndarray,
     max_pairs: int,
     rng: np.random.Generator,
+    *,
+    core_mask: "np.ndarray | None" = None,
+    min_group_size: int = 3,
 ) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
-    """Sample balanced positive (same root) and negative (different root) pairs."""
+    """Sample balanced positive (same root) and negative (different root) pairs.
+
+    Parameters
+    ----------
+    core_mask : bool array [N] or None
+        If provided, only nodes where ``core_mask[i]`` is True are eligible
+        for pair sampling.  Halo context nodes are excluded from the loss.
+    min_group_size : int
+        Minimum number of visible synapses a root ID must have to be used as
+        a positive anchor.  Cells with fewer synapses are likely box-boundary
+        fragments with incomplete local evidence.
+    """
     root_groups: dict[int, list[int]] = {}
     for i, rid in enumerate(root_ids):
+        if core_mask is not None and not core_mask[i]:
+            continue
         rid_int = int(rid)
         if rid_int > 0:
             root_groups.setdefault(rid_int, []).append(i)
 
     pos_pairs: list[tuple[int, int]] = []
     for members in root_groups.values():
-        if len(members) < 2:
+        if len(members) < min_group_size:
             continue
         for i in range(len(members)):
             for j in range(i + 1, len(members)):
@@ -1088,17 +1140,28 @@ def _sample_contrastive_pairs(
             if len(pos_pairs) >= max_pairs:
                 break
 
-    all_roots = list(root_groups.keys())
+    # Negatives can still sample from any core node, regardless of group size
+    all_root_ids: list[int] = []
+    all_root_nodes: dict[int, list[int]] = {}
+    for i, rid in enumerate(root_ids):
+        if core_mask is not None and not core_mask[i]:
+            continue
+        rid_int = int(rid)
+        if rid_int > 0:
+            if rid_int not in all_root_nodes:
+                all_root_ids.append(rid_int)
+            all_root_nodes.setdefault(rid_int, []).append(i)
+
     neg_pairs: list[tuple[int, int]] = []
     n_neg = min(len(pos_pairs) * 2, max_pairs)
     attempts = 0
     while len(neg_pairs) < n_neg and attempts < n_neg * 4:
         attempts += 1
-        if len(all_roots) < 2:
+        if len(all_root_ids) < 2:
             break
-        r1, r2 = rng.choice(len(all_roots), size=2, replace=False)
-        i = int(rng.choice(root_groups[all_roots[r1]]))
-        j = int(rng.choice(root_groups[all_roots[r2]]))
+        r1, r2 = rng.choice(len(all_root_ids), size=2, replace=False)
+        i = int(rng.choice(all_root_nodes[all_root_ids[r1]]))
+        j = int(rng.choice(all_root_nodes[all_root_ids[r2]]))
         neg_pairs.append((i, j))
 
     return pos_pairs, neg_pairs
@@ -1190,7 +1253,9 @@ def cell_graph_train_step(
         embeddings = model(node_feat, edge_src, edge_dst, edge_feat)
     emb_norm = F.normalize(embeddings, p=2, dim=-1)
 
-    pos_pairs, neg_pairs = _sample_contrastive_pairs(graph.root_ids, max_pairs, rng)
+    pos_pairs, neg_pairs = _sample_contrastive_pairs(
+        graph.root_ids, max_pairs, rng, core_mask=graph.core_mask
+    )
 
     # Merge in edit-history pairs (filtering out-of-range indices)
     N = graph.n_synapses
@@ -1424,6 +1489,7 @@ def train_cell_gnn(
                     graphs_to_train = subdivide_synapse_graph(
                         full_graph,
                         n_nodes=cfg.max_synapses_per_box,
+                        halo_hops=cfg.n_layers,
                         rng=rng,
                     )
                 else:
@@ -1467,51 +1533,56 @@ def train_cell_gnn(
         history["train_neg_sim"].append(mean_neg)
 
         if val_cache is not None:
+            import torch.nn.functional as F
             val_losses = []
             for record in val_cache.iter_records():
                 try:
                     _, synapses = val_cache.load(record, load_volume=False)
                 except Exception:
                     continue
-                if synapses.n_synapses > cfg.max_synapses_per_box:
-                    keep = rng.choice(
-                        synapses.n_synapses,
-                        size=cfg.max_synapses_per_box,
-                        replace=False,
-                    )
-                    keep.sort()
-                    synapses = synapses.subset(keep)
                 for role in ("pre", "post"):
-                    graph = build_synapse_graph(
+                    full_val_graph = build_synapse_graph(
                         synapses, role,
                         proximity_radius_nm=cfg.proximity_radius_nm,
                     )
-                    if graph.n_synapses < 2:
+                    if full_val_graph.n_synapses < 2:
                         continue
-                    # Eval-only forward (no grad)
-                    model.eval()
-                    with torch.no_grad():
-                        import torch.nn.functional as F
-                        if getattr(model, "path_emb_dim", 0) > 0:
-                            nf, es, ed, ef, ps, pm, hp = _graph_to_tensors(graph, return_paths=True)
-                            emb = F.normalize(
-                                model(nf, es, ed, ef, path_seq=ps, path_mask=pm, has_path=hp),
-                                p=2, dim=-1,
-                            )
-                        else:
-                            node_feat, es, ed, ef = _graph_to_tensors(graph)
-                            emb = F.normalize(
-                                model(node_feat, es, ed, ef), p=2, dim=-1
-                            )
-                    model.train()
-                    val_pos, val_neg = _sample_contrastive_pairs(
-                        graph.root_ids, cfg.max_pairs_per_box, rng
-                    )
-                    if val_pos:
-                        pi = [p[0] for p in val_pos]
-                        pj = [p[1] for p in val_pos]
-                        pos_sims = (emb[pi] * emb[pj]).sum(dim=-1)
-                        val_losses.append(float((1.0 - pos_sims).mean()))
+                    # Use same subdivision as training for a consistent distribution
+                    if full_val_graph.n_synapses > cfg.max_synapses_per_box:
+                        val_subgraphs = subdivide_synapse_graph(
+                            full_val_graph,
+                            n_nodes=cfg.max_synapses_per_box,
+                            halo_hops=cfg.n_layers,
+                            rng=rng,
+                        )
+                    else:
+                        val_subgraphs = [full_val_graph]
+                    for graph in val_subgraphs:
+                        if graph.n_synapses < 2:
+                            continue
+                        model.eval()
+                        with torch.no_grad():
+                            if getattr(model, "path_emb_dim", 0) > 0:
+                                nf, es, ed, ef, ps, pm, hp = _graph_to_tensors(graph, return_paths=True)
+                                emb = F.normalize(
+                                    model(nf, es, ed, ef, path_seq=ps, path_mask=pm, has_path=hp),
+                                    p=2, dim=-1,
+                                )
+                            else:
+                                node_feat, es, ed, ef = _graph_to_tensors(graph)
+                                emb = F.normalize(
+                                    model(node_feat, es, ed, ef), p=2, dim=-1
+                                )
+                        model.train()
+                        val_pos, _ = _sample_contrastive_pairs(
+                            graph.root_ids, cfg.max_pairs_per_box, rng,
+                            core_mask=graph.core_mask,
+                        )
+                        if val_pos:
+                            pi = [p[0] for p in val_pos]
+                            pj = [p[1] for p in val_pos]
+                            pos_sims = (emb[pi] * emb[pj]).sum(dim=-1)
+                            val_losses.append(float((1.0 - pos_sims).mean()))
             val_loss = float(np.mean(val_losses)) if val_losses else 0.0
             history["val_loss"].append(val_loss)
 
