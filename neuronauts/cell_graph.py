@@ -1808,15 +1808,38 @@ def train_cell_gnn(
                                     model(node_feat, es, ed, ef), p=2, dim=-1
                                 )
                         model.train()
-                        val_pos, _ = _sample_contrastive_pairs(
-                            graph.root_ids, cfg.max_pairs_per_box, rng,
-                            core_mask=graph.core_mask,
-                        )
-                        if val_pos:
-                            pi = [p[0] for p in val_pos]
-                            pj = [p[1] for p in val_pos]
-                            pos_sims = (emb[pi] * emb[pj]).sum(dim=-1)
-                            val_losses.append(float((1.0 - pos_sims).mean()))
+                        if cfg.edge_scoring:
+                            # Val metric: edge BCE loss over all valid-root edges
+                            root_ids = graph.root_ids
+                            es_np = es.cpu().numpy()
+                            ed_np = ed.cpu().numpy()
+                            r_src = root_ids[es_np]
+                            r_dst = root_ids[ed_np]
+                            valid = np.flatnonzero((r_src > 0) & (r_dst > 0))
+                            if len(valid) > 0:
+                                same = torch.tensor(
+                                    (r_src[valid] == r_dst[valid]).astype(np.float32),
+                                    device=emb.device,
+                                )
+                                logits = model.score_edges(
+                                    emb,
+                                    es[valid],
+                                    ed[valid],
+                                    ef[valid],
+                                )
+                                val_losses.append(float(
+                                    F.binary_cross_entropy_with_logits(logits, same).item()
+                                ))
+                        else:
+                            val_pos, _ = _sample_contrastive_pairs(
+                                graph.root_ids, cfg.max_pairs_per_box, rng,
+                                core_mask=graph.core_mask,
+                            )
+                            if val_pos:
+                                pi = [p[0] for p in val_pos]
+                                pj = [p[1] for p in val_pos]
+                                pos_sims = (emb[pi] * emb[pj]).sum(dim=-1)
+                                val_losses.append(float((1.0 - pos_sims).mean()))
             val_loss = float(np.mean(val_losses)) if val_losses else 0.0
             history["val_loss"].append(val_loss)
 
