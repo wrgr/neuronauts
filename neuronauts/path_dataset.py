@@ -109,20 +109,35 @@ def generate_path_examples(
     stride: int | None = None,
     neg_per_pos: int = 4,
     hard_neg_fraction: float = 0.5,
+    insert_delete_fraction: float = 0.4,
     rng: np.random.Generator | None = None,
     max_examples: int | None = None,
 ) -> tuple[list[np.ndarray], np.ndarray]:
     """Build (feature_array, label) training pairs.
 
-    Positive examples are sliding windows over real chains.  Negative
-    examples are splices: the first half from cell A, the second half from
-    cell B, where hard negatives pick B's synapse nearest to A's endpoint
-    using a KD-tree.
+    Negative example types
+    ----------------------
+    splice-easy : random two-cell concat (obvious position jump)
+    splice-hard : KD-tree nearest-neighbor splice (spatially proximate)
+    insert      : one foreign synapse injected into the middle of a valid chain.
+                  The window stays window_size synapses long (W-1 real + 1 foreign).
+                  Teaches detection of a single wrong segment merged in.
+    delete      : one synapse removed, creating an anomalous gap.
+                  The window takes W+1 synapses then drops one from the middle.
+                  Teaches detection of a chain that needs to be split.
+
+    Hard negatives (KD-tree splice + insert + delete) share hard_neg_fraction of
+    the total negative budget.  Within that budget, insert_delete_fraction goes to
+    insert/delete examples (split equally); the remainder goes to KD-tree splices.
+
+    Edit-history examples (real proofreading merge/split errors) can be added via
+    ``add_edit_history_examples()`` — these represent the ground-truth hard cases
+    where the connectome boundary is genuinely ambiguous.
 
     Returns
     -------
     features : list of float32 arrays, each [window_size-1, 6]
-    labels   : float32 array [N], 1 = valid path, 0 = splice
+    labels   : float32 array [N], 1 = valid path, 0 = negative
     """
     if rng is None:
         rng = np.random.default_rng()
@@ -130,12 +145,10 @@ def generate_path_examples(
         stride = max(1, window_size // 2)
 
     half = window_size // 2
-
     chain_ids = list(chains.keys())
     chain_list = [chains[k] for k in chain_ids]
 
-    # --- Build global position index for hard-negative lookup ---
-    # Each entry: (chain_idx, syn_idx_within_chain, position_nm)
+    # --- Build global KD-tree for hard-negative lookup ---
     all_pos: list[np.ndarray] = []
     all_ci: list[int] = []
     all_si: list[int] = []
@@ -155,7 +168,7 @@ def generate_path_examples(
     # --- Positive examples ---
     features: list[np.ndarray] = []
     labels: list[float] = []
-    source_ci: list[int] = []  # for hard-negative pairing
+    source_ci: list[int] = []
 
     for ci, pts in enumerate(chain_list):
         N = len(pts)
@@ -171,58 +184,117 @@ def generate_path_examples(
             start += stride
 
     n_pos = len(features)
-    n_neg_target = n_pos * neg_per_pos
-    n_hard = int(n_neg_target * hard_neg_fraction)
-    n_easy = n_neg_target - n_hard
+    n_neg_total = n_pos * neg_per_pos
+    n_hard_total = int(n_neg_total * hard_neg_fraction)
+    n_easy = n_neg_total - n_hard_total
 
-    # --- Hard negatives: B's first synapse is nearest neighbour of A's junction point ---
-    hard_added = 0
-    attempts = 0
-    pos_indices = list(range(n_pos))
-    rng.shuffle(pos_indices)
+    # Hard budget: split between insert/delete and KD-tree splices
+    n_ins_del = int(n_hard_total * insert_delete_fraction)
+    n_insert = n_ins_del // 2
+    n_delete = n_ins_del - n_insert
+    n_kd_splice = n_hard_total - n_ins_del
 
-    for pi in pos_indices:
-        if hard_added >= n_hard:
+    # Helper: find nearest different-cell synapse to a query position
+    def _nearest_foreign(pos_nm: np.ndarray, exclude_ci: int, k: int = 32):
+        _, nn_idx = tree.query(pos_nm, k=k)
+        for ni in nn_idx:
+            if int(all_ci_arr[ni]) != exclude_ci:
+                return int(all_ci_arr[ni]), int(all_si_arr[ni])
+        return None, None
+
+    # --- Insert negatives ---
+    # Take window_size-1 real synapses, inject one foreign synapse at position M.
+    # Result: [s0..s_{M-1}, X, s_M..s_{W-2}] → window_size positions.
+    insert_added = 0
+    pos_idx = rng.permutation(n_pos)
+    for pi in pos_idx:
+        if insert_added >= n_insert:
             break
-        attempts += 1
-        if attempts > n_hard * 10:
-            break
+        ci_a = source_ci[int(pi)]
+        pts_a = chain_list[ci_a]
+        N_a = len(pts_a)
+        if N_a < window_size:
+            continue
+        start_a = int(rng.integers(0, max(1, N_a - (window_size - 1) + 1)))
+        seg = pts_a[start_a: start_a + window_size - 1]  # W-1 real synapses
+        if len(seg) < window_size - 1:
+            continue
+        insert_pos = int(rng.integers(1, window_size - 1))  # inject inside, not at ends
+        junction = seg[insert_pos - 1]  # position just before injection
+        ci_b, si_b = _nearest_foreign(junction, ci_a)
+        if ci_b is None:
+            continue
+        foreign = all_pos_arr[all_ci_arr == ci_b][0:1]  # fallback: first syn of chain B
+        # Use the actual nearest synapse position
+        for gidx in range(len(all_pos_arr)):
+            if int(all_ci_arr[gidx]) == ci_b and int(all_si_arr[gidx]) == si_b:
+                foreign = all_pos_arr[gidx: gidx + 1]
+                break
+        injected = np.concatenate([seg[:insert_pos], foreign, seg[insert_pos:]], axis=0)
+        feat = _featurize_window(injected)
+        if feat is not None:
+            features.append(feat)
+            labels.append(0.0)
+            insert_added += 1
 
-        ci_a = source_ci[pi]
+    # --- Delete negatives ---
+    # Take window_size+1 real synapses, remove one from the middle.
+    # Result: window_size positions with an anomalous gap at the deletion site.
+    delete_added = 0
+    pos_idx = rng.permutation(n_pos)
+    for pi in pos_idx:
+        if delete_added >= n_delete:
+            break
+        ci_a = source_ci[int(pi)]
+        pts_a = chain_list[ci_a]
+        N_a = len(pts_a)
+        if N_a < window_size + 1:
+            continue
+        start_a = int(rng.integers(0, max(1, N_a - (window_size + 1) + 1)))
+        seg = pts_a[start_a: start_a + window_size + 1]  # W+1 real synapses
+        if len(seg) < window_size + 1:
+            continue
+        # Delete from the middle third to make the gap clearly anomalous
+        del_lo = window_size // 3
+        del_hi = 2 * window_size // 3
+        del_pos = int(rng.integers(del_lo, del_hi + 1))
+        gapped = np.concatenate([seg[:del_pos], seg[del_pos + 1:]], axis=0)
+        feat = _featurize_window(gapped)
+        if feat is not None:
+            features.append(feat)
+            labels.append(0.0)
+            delete_added += 1
+
+    # --- KD-tree splice negatives (hard) ---
+    kd_added = 0
+    pos_idx = rng.permutation(n_pos)
+    for pi in pos_idx:
+        if kd_added >= n_kd_splice:
+            break
+        ci_a = source_ci[int(pi)]
         pts_a = chain_list[ci_a]
         N_a = len(pts_a)
         if N_a < half:
             continue
-
-        # Pick a random start within chain A; use the half-point as junction
         start_a = int(rng.integers(0, max(1, N_a - window_size + 1)))
-        junction_pos = pts_a[start_a + half - 1]  # last pos of A's portion
+        junction_pos = pts_a[start_a + half - 1]
+        ci_b, si_b = _nearest_foreign(junction_pos, ci_a)
+        if ci_b is None:
+            continue
+        pts_b = chain_list[ci_b]
+        n_needed = window_size - half
+        si_b = min(si_b, max(0, len(pts_b) - n_needed))
+        seg_b = pts_b[si_b: si_b + n_needed]
+        if len(seg_b) < n_needed:
+            continue
+        splice = np.concatenate([pts_a[start_a: start_a + half], seg_b], axis=0)
+        feat = _featurize_window(splice)
+        if feat is not None:
+            features.append(feat)
+            labels.append(0.0)
+            kd_added += 1
 
-        # Find nearest synapses from a DIFFERENT chain
-        k_query = 32
-        dists, nn_indices = tree.query(junction_pos, k=k_query)
-        for ni in nn_indices:
-            ci_b = int(all_ci_arr[ni])
-            si_b = int(all_si_arr[ni])
-            if ci_b == ci_a:
-                continue
-            pts_b = chain_list[ci_b]
-            n_needed = window_size - half
-            if si_b + n_needed > len(pts_b):
-                si_b = max(0, len(pts_b) - n_needed)
-            seg_b = pts_b[si_b: si_b + n_needed]
-            if len(seg_b) < n_needed:
-                continue
-            seg_a = pts_a[start_a: start_a + half]
-            splice = np.concatenate([seg_a, seg_b], axis=0)
-            feat = _featurize_window(splice)
-            if feat is not None:
-                features.append(feat)
-                labels.append(0.0)
-                hard_added += 1
-            break
-
-    # --- Easy negatives: random chain pair ---
+    # --- Easy negatives: random cell pair ---
     easy_added = 0
     attempts = 0
     while easy_added < n_easy and attempts < n_easy * 10:
@@ -254,6 +326,94 @@ def generate_path_examples(
     labels_arr = labels_arr[idx]
 
     return features, labels_arr
+
+
+def add_edit_history_examples(
+    features: list[np.ndarray],
+    labels: list[float],
+    edit_pairs_tsv: str,
+    chains: dict[int, np.ndarray],
+    *,
+    window_size: int = 8,
+    rng: np.random.Generator | None = None,
+) -> tuple[list[np.ndarray], np.ndarray]:
+    """Augment a feature/label list with edit-history–derived examples.
+
+    Reads a TSV of (root_id_before, root_id_after, operation) rows produced
+    by CAVE proofreading history.  Each row corresponds to a real merge or
+    split correction:
+
+    - merge (two roots became one): the junction between the two pre-merge
+      chains is a ground-truth hard splice negative.  The model should learn
+      "this crossing point is the kind of thing that gets merged by mistake."
+
+    - split (one root became two): the split point is a hard positive boundary —
+      a chain that was incorrectly cut.  Treated as a positive example here
+      (the path across the split point IS valid).
+
+    Edit-history examples are the hardest training signal because they represent
+    the exact confusion boundary where the data is genuinely ambiguous — these
+    are the cases that human proofreaders had to fix.
+
+    Parameters
+    ----------
+    features, labels : mutable lists to append into
+    edit_pairs_tsv : path to TSV with columns root_id_a, root_id_b, operation
+    chains : output of extract_cell_chains() keyed by root_id
+    window_size : synapse window length (same as generate_path_examples)
+    rng : random generator
+
+    Returns
+    -------
+    features_arr : list (extended in place and returned)
+    labels_arr   : np.ndarray
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+
+    import csv
+    added = 0
+    with open(edit_pairs_tsv, newline="") as fh:
+        reader = csv.DictReader(fh, delimiter="\t")
+        for row in reader:
+            root_a = int(row.get("root_id_a", row.get("root_id_before", 0)))
+            root_b = int(row.get("root_id_b", row.get("root_id_after", 0)))
+            op = row.get("operation", "merge").strip().lower()
+
+            if root_a not in chains or root_b not in chains:
+                continue
+
+            pts_a = chains[root_a]
+            pts_b = chains[root_b]
+            half = window_size // 2
+
+            if op == "merge":
+                # The merge joined pts_a and pts_b incorrectly.
+                # Generate a splice negative at their natural junction.
+                if len(pts_a) < half or len(pts_b) < (window_size - half):
+                    continue
+                seg = np.concatenate([pts_a[-half:], pts_b[: window_size - half]], axis=0)
+                feat = _featurize_window(seg)
+                if feat is not None:
+                    features.append(feat)
+                    labels.append(0.0)
+                    added += 1
+
+            elif op == "split":
+                # The split broke what should be one chain.
+                # Generate a positive that crosses the split boundary.
+                half_a = min(half, len(pts_a))
+                half_b = min(window_size - half_a, len(pts_b))
+                if half_a + half_b < window_size:
+                    continue
+                seg = np.concatenate([pts_a[-half_a:], pts_b[:half_b]], axis=0)
+                feat = _featurize_window(seg)
+                if feat is not None:
+                    features.append(feat)
+                    labels.append(1.0)
+                    added += 1
+
+    return features, np.array(labels, dtype=np.float32)
 
 
 def train_path_encoder(

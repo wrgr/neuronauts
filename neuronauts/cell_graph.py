@@ -778,6 +778,7 @@ class CellGNN:
         path_n_layers: int = 2,
         path_max_len: int = 64,
         edge_scoring: bool = False,
+        pretrained_path_emb_dim: int = 0,
     ):
         torch, nn = _require_torch()
         import torch.nn.functional as F
@@ -787,6 +788,8 @@ class CellGNN:
         # When path encoding is enabled, the edge projection sees
         # [scalar edge feats || path embedding].
         effective_edge_input = edge_input_dim + (path_emb_dim if path_emb_dim > 0 else 0)
+        # Edge head sees GNN embeddings + raw feats + optional pre-trained path emb.
+        effective_edge_head_input = embedding_dim * 2 + edge_input_dim + pretrained_path_emb_dim
 
         class _CellGNN(nn.Module):
             def __init__(self):
@@ -806,13 +809,16 @@ class CellGNN:
                     "path_n_layers": path_n_layers,
                     "path_max_len": path_max_len,
                     "edge_scoring": edge_scoring,
+                    "pretrained_path_emb_dim": pretrained_path_emb_dim,
                 }
                 self.d_model = d_model
                 self.n_heads = n_heads
                 self.head_dim = head_dim
                 self.embedding_dim = embedding_dim
                 self.path_emb_dim = path_emb_dim
+                self.pretrained_path_emb_dim = pretrained_path_emb_dim
                 self.edge_scoring = edge_scoring
+                self._pretrained_path_enc = None  # set via attach_pretrained_path_encoder()
 
                 # Optional path encoder for skeleton-path edge features.
                 if path_emb_dim > 0:
@@ -850,11 +856,11 @@ class CellGNN:
                 # Output projection
                 self.output_proj = nn.Linear(d_model, embedding_dim)
 
-                # Edge scoring head: takes (emb_u ‖ emb_v ‖ raw_edge_feats) and
-                # produces a logit for P(same_cell | K-hop context).
+                # Edge scoring head: takes (emb_u ‖ emb_v ‖ raw_edge_feats ‖ path_emb)
+                # and produces a logit for P(same_cell | K-hop context).
                 if edge_scoring:
                     self.edge_head = nn.Sequential(
-                        nn.Linear(embedding_dim * 2 + edge_input_dim, d_model),
+                        nn.Linear(effective_edge_head_input, d_model),
                         nn.GELU(),
                         nn.Linear(d_model, d_model // 2),
                         nn.GELU(),
@@ -863,7 +869,36 @@ class CellGNN:
                 else:
                     self.edge_head = None
 
-            def score_edges(self, node_emb, edge_src, edge_dst, raw_edge_feat):
+            def attach_pretrained_path_encoder(self, encoder) -> None:
+                """Attach a pre-trained PathEdgeEncoder to enhance edge scoring.
+
+                The encoder's output (shape [E, pretrained_path_emb_dim]) is
+                concatenated to raw edge features before the edge head.  The
+                encoder is kept frozen (eval mode, no grad) by default.
+
+                Call this after loading a checkpoint from ``train_path_encoder``.
+                The model's ``pretrained_path_emb_dim`` must match the encoder's
+                ``output_dim``.
+                """
+                assert pretrained_path_emb_dim > 0, (
+                    "Model was built with pretrained_path_emb_dim=0; rebuild with "
+                    "the correct dimension to use a pre-trained path encoder."
+                )
+                encoder.eval()
+                for p in encoder.parameters():
+                    p.requires_grad_(False)
+                self._pretrained_path_enc = encoder
+
+            def score_edges(
+                self,
+                node_emb,
+                edge_src,
+                edge_dst,
+                raw_edge_feat,
+                path_seq=None,
+                path_mask=None,
+                has_path=None,
+            ):
                 """Compute per-edge logits from node embeddings and raw edge features.
 
                 Parameters
@@ -871,6 +906,11 @@ class CellGNN:
                 node_emb : Tensor [N, embedding_dim]  (output of forward())
                 edge_src, edge_dst : Tensor [E]
                 raw_edge_feat : Tensor [E, edge_input_dim]  (un-projected scalar features)
+                path_seq : Tensor [E, T, path_feat_dim] or None
+                    Path step features for each edge; used when a pre-trained
+                    PathEdgeEncoder is attached.
+                path_mask : Tensor [E, T] bool or None  (True = padding)
+                has_path : Tensor [E] bool or None
 
                 Returns
                 -------
@@ -880,7 +920,26 @@ class CellGNN:
                     raise RuntimeError("score_edges() called on model without edge_scoring=True")
                 src_emb = node_emb[edge_src]
                 dst_emb = node_emb[edge_dst]
-                edge_input = torch.cat([src_emb, dst_emb, raw_edge_feat], dim=-1)
+
+                if (
+                    self._pretrained_path_enc is not None
+                    and path_seq is not None
+                    and pretrained_path_emb_dim > 0
+                ):
+                    with torch.no_grad():
+                        path_emb = self._pretrained_path_enc(path_seq, path_mask, has_path)
+                    edge_input = torch.cat([src_emb, dst_emb, raw_edge_feat, path_emb], dim=-1)
+                else:
+                    # Pad with zeros if no encoder attached or no path features provided.
+                    if pretrained_path_emb_dim > 0:
+                        pad = torch.zeros(
+                            raw_edge_feat.shape[0], pretrained_path_emb_dim,
+                            dtype=raw_edge_feat.dtype, device=raw_edge_feat.device,
+                        )
+                        edge_input = torch.cat([src_emb, dst_emb, raw_edge_feat, pad], dim=-1)
+                    else:
+                        edge_input = torch.cat([src_emb, dst_emb, raw_edge_feat], dim=-1)
+
                 return self.edge_head(edge_input).squeeze(-1)
 
             def forward(
@@ -1132,6 +1191,9 @@ class CellGNNConfig:
     # Edge scoring mode (replaces contrastive clustering)
     edge_scoring: bool = False
     edge_threshold: float = 0.5   # sigmoid threshold for union-find at inference
+    # Pre-trained PathEdgeEncoder integration (set > 0 to enable)
+    pretrained_path_emb_dim: int = 0        # must match PathEdgeEncoder.output_dim
+    pretrained_path_encoder_checkpoint: str | None = None  # load from this path
     # Training
     epochs: int = 50
     learning_rate: float = 1e-3
@@ -1494,7 +1556,37 @@ def cell_graph_edge_train_step(
     ef_k = raw_edge_feat[keep_global]
     labels = torch.tensor(same[keep], dtype=torch.float32, device=node_emb.device)
 
-    logits = model.score_edges(node_emb, es_k, ed_k, ef_k)
+    # Build per-edge path features for the kept batch if the model has a
+    # pre-trained path encoder attached.
+    _path_seq_k = _path_mask_k = _has_path_k = None
+    if getattr(model, "_pretrained_path_enc", None) is not None:
+        from .path_edge_encoder import pad_path_sequences, PATH_STEP_FEAT_DIM
+
+        # Ensure path features are computed from ground-truth chain ordering.
+        path_feat_dict = graph.edge_path_features or {}
+        if not path_feat_dict and graph.root_ids is not None:
+            path_feat_dict = build_synapse_chain_paths(graph)
+
+        keep_np = keep_global.cpu().numpy()
+        es_np_k = es_k.cpu().numpy()
+        ed_np_k = ed_k.cpu().numpy()
+        path_seqs: list[np.ndarray] = []
+        for idx in range(len(keep_np)):
+            i, j = int(es_np_k[idx]), int(ed_np_k[idx])
+            key = (min(i, j), max(i, j))
+            arr = path_feat_dict.get(key)
+            path_seqs.append(arr if arr is not None else np.zeros((0, PATH_STEP_FEAT_DIM), dtype=np.float32))
+
+        ps_np, pm_np, hp_np = pad_path_sequences(path_seqs, feat_dim=PATH_STEP_FEAT_DIM)
+        dev = node_emb.device
+        _path_seq_k = torch.from_numpy(ps_np).float().to(dev)
+        _path_mask_k = torch.from_numpy(pm_np).to(dev)
+        _has_path_k = torch.from_numpy(hp_np).to(dev)
+
+    logits = model.score_edges(node_emb, es_k, ed_k, ef_k,
+                               path_seq=_path_seq_k,
+                               path_mask=_path_mask_k,
+                               has_path=_has_path_k)
 
     # pos_weight balances the class imbalance within the kept batch
     n_pos_kept = int(labels.sum().item())

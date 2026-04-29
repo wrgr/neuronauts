@@ -1176,6 +1176,8 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
 
     path_emb_dim = getattr(args, "path_emb_dim", 0) or 0
     path_input_dim = getattr(args, "path_input_dim", 6) or 6
+    pretrained_path_emb_dim = getattr(args, "pretrained_path_emb_dim", 0) or 0
+    pretrained_path_ckpt = getattr(args, "path_encoder_checkpoint", None)
 
     if args.resume and Path(args.cell_gnn_output).exists():
         print(f"Resuming from {args.cell_gnn_output}")
@@ -1189,11 +1191,21 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
             path_emb_dim=path_emb_dim,
             path_input_dim=path_input_dim,
             edge_scoring=use_edge_scoring,
+            pretrained_path_emb_dim=pretrained_path_emb_dim,
         )
+
+    # Load and attach pre-trained PathEdgeEncoder if provided
+    if pretrained_path_ckpt and Path(pretrained_path_ckpt).exists():
+        from neuronauts.path_dataset import load_path_encoder
+        pretrained_enc, _ = load_path_encoder(pretrained_path_ckpt)
+        model.attach_pretrained_path_encoder(pretrained_enc)
+        print(f"Attached pre-trained path encoder from {pretrained_path_ckpt} "
+              f"(output_dim={pretrained_enc.output_dim})")
 
     edge_str = "  [edge-scoring]" if use_edge_scoring else ""
     path_str = f"  path_emb_dim={path_emb_dim}" if path_emb_dim > 0 else ""
-    print(f"CellGNN: d={cfg.d_model} layers={cfg.n_layers} heads={cfg.n_heads} emb={cfg.embedding_dim}{path_str}{edge_str}")
+    penc_str = f"  pretrained_path={pretrained_path_emb_dim}D" if pretrained_path_emb_dim > 0 else ""
+    print(f"CellGNN: d={cfg.d_model} layers={cfg.n_layers} heads={cfg.n_heads} emb={cfg.embedding_dim}{path_str}{penc_str}{edge_str}")
     print(f"Training: epochs={cfg.epochs} lr={cfg.learning_rate} margin={cfg.margin}")
 
     # --- Optional edit-history pairs ---
@@ -2532,6 +2544,18 @@ def parse_args(argv=None) -> argparse.Namespace:
                              "edge; inference uses union-find on high-confidence edges.")
     p_cell.add_argument("--edge-threshold", type=float, default=0.5,
                         help="Sigmoid threshold for same-cell edge at inference (default 0.5).")
+    p_cell.add_argument(
+        "--path-encoder-checkpoint", default=None,
+        help="Pre-trained PathEdgeEncoder checkpoint (from train-path-encoder).  "
+             "When set, the encoder's output is concatenated to the edge head's "
+             "input features.  Requires --pretrained-path-emb-dim to match the "
+             "checkpoint's output_dim.",
+    )
+    p_cell.add_argument(
+        "--pretrained-path-emb-dim", type=int, default=0,
+        help="Output dimension of the pre-trained PathEdgeEncoder (default 0 = disabled). "
+             "Must match the checkpoint saved by train-path-encoder.",
+    )
     p_cell.set_defaults(func=cmd_train_cell_gnn)
 
     # ---------------------------------------------------------------------------
