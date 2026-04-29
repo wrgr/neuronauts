@@ -1616,6 +1616,7 @@ def infer_cells_edge(
     *,
     threshold: float = 0.5,
     proximity_radius_nm: float = 5000.0,
+    coverage_floor: float | None = None,
 ) -> np.ndarray:
     """Infer cell labels using edge classification + union-find.
 
@@ -1623,6 +1624,12 @@ def infer_cells_edge(
     ----------
     threshold : float
         Sigmoid score above which an edge is considered a same-cell link.
+    coverage_floor : float or None
+        If set, any synapse that remains a singleton after the main union-find
+        pass is tentatively merged with its highest-scoring neighbor, provided
+        that score is ≥ coverage_floor.  This approximates the "every synapse
+        must be claimed" coverage constraint without a global solver.
+        Typical value: 0.2–0.35.  None (default) disables forced claiming.
 
     Returns
     -------
@@ -1654,13 +1661,40 @@ def infer_cells_edge(
         logits = model.score_edges(node_emb, edge_src, edge_dst, raw_edge_feat)
         scores = torch.sigmoid(logits).cpu().numpy()
 
-    # Union-find: merge nodes connected by high-confidence same-cell edges
-    uf = _UF(graph.n_synapses)
     es_np = edge_src.cpu().numpy()
     ed_np = edge_dst.cpu().numpy()
+
+    # First pass: union-find on high-confidence edges
+    uf = _UF(graph.n_synapses)
     for k, (u, v) in enumerate(zip(es_np, ed_np)):
         if scores[k] >= threshold:
             uf.union(int(u), int(v))
+
+    # Second pass (coverage): for each singleton, claim its best-scoring neighbor
+    # if that score exceeds coverage_floor.  Avoids global optimization — O(E) pass.
+    if coverage_floor is not None:
+        # Per-node best-score and corresponding neighbor
+        best_score = np.full(graph.n_synapses, -1.0, dtype=np.float32)
+        best_nbr = np.full(graph.n_synapses, -1, dtype=np.int64)
+        for k, (u, v) in enumerate(zip(es_np, ed_np)):
+            s = scores[k]
+            if s > best_score[u]:
+                best_score[u] = s
+                best_nbr[u] = v
+            if s > best_score[v]:
+                best_score[v] = s
+                best_nbr[v] = u
+
+        # Claim singletons whose best neighbor is above the floor
+        cluster_counts = np.bincount(
+            np.array([uf.find(i) for i in range(graph.n_synapses)], dtype=np.int64),
+            minlength=graph.n_synapses,
+        )
+        for i in range(graph.n_synapses):
+            if cluster_counts[uf.find(i)] == 1:  # still a singleton
+                nbr = int(best_nbr[i])
+                if nbr >= 0 and best_score[i] >= coverage_floor:
+                    uf.union(i, nbr)
 
     raw_labels = np.array([uf.find(i) for i in range(graph.n_synapses)], dtype=np.int64)
     # Compact label IDs
