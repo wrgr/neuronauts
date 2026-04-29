@@ -326,6 +326,133 @@ def build_synapse_graph(
     )
 
 
+def subdivide_synapse_graph(
+    graph: SynapseGraph,
+    n_nodes: int = 5000,
+    n_subgraphs: int | None = None,
+    *,
+    rng: "np.random.Generator | None" = None,
+    min_nodes: int = 50,
+) -> "list[SynapseGraph]":
+    """Extract connected sub-graphs from a large SynapseGraph via BFS sampling.
+
+    Instead of randomly dropping nodes (which destroys chain paths and spatial
+    structure), this grows a BFS neighbourhood from a random seed node and
+    returns the induced sub-graph.  A 50µm box with 40K synapses yields ~20
+    non-overlapping sub-graphs of 2K nodes, each preserving local topology.
+
+    Parameters
+    ----------
+    graph : SynapseGraph
+        Full graph (may be very large).
+    n_nodes : int
+        Target size of each sub-graph.  BFS stops when this many nodes are
+        collected.  Actual size may be smaller for sparse regions.
+    n_subgraphs : int or None
+        How many sub-graphs to extract.  Defaults to
+        ``max(1, graph.n_synapses // n_nodes)``.
+    rng : np.random.Generator or None
+        RNG for seed selection.
+    min_nodes : int
+        Discard sub-graphs with fewer than this many nodes.
+
+    Returns
+    -------
+    list of SynapseGraph, each a connected induced sub-graph.
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+
+    N = graph.n_synapses
+    if N == 0:
+        return []
+
+    if n_subgraphs is None:
+        n_subgraphs = max(1, N // n_nodes)
+
+    # Build adjacency list once
+    adj: list[list[int]] = [[] for _ in range(N)]
+    for e in graph.edges:
+        adj[e.src].append(e.dst)
+        adj[e.dst].append(e.src)
+
+    results: list[SynapseGraph] = []
+    used = np.zeros(N, dtype=bool)
+
+    for _ in range(n_subgraphs):
+        # Pick a random unused seed
+        available = np.flatnonzero(~used)
+        if len(available) == 0:
+            break
+        seed = int(rng.choice(available))
+
+        # BFS up to n_nodes
+        visited: list[int] = []
+        queue = [seed]
+        in_queue = np.zeros(N, dtype=bool)
+        in_queue[seed] = True
+        head = 0
+        while head < len(queue) and len(visited) < n_nodes:
+            node = queue[head]; head += 1
+            visited.append(node)
+            neighbours = adj[node]
+            # Shuffle neighbours for variety
+            order = rng.permutation(len(neighbours))
+            for idx in order:
+                nb = neighbours[idx]
+                if not in_queue[nb] and len(visited) + (len(queue) - head) < n_nodes:
+                    in_queue[nb] = True
+                    queue.append(nb)
+
+        if len(visited) < min_nodes:
+            continue
+
+        # Mark as used (allow overlap for small graphs)
+        if N > n_nodes:
+            for v in visited:
+                used[v] = True
+
+        # Build index remapping: old node index -> new index
+        old_to_new = {v: i for i, v in enumerate(visited)}
+        node_set = set(visited)
+
+        # Induced sub-graph
+        sub_edges = []
+        sub_edge_path: dict[tuple[int, int], np.ndarray] = {}
+        for e in graph.edges:
+            if e.src in node_set and e.dst in node_set:
+                new_src = old_to_new[e.src]
+                new_dst = old_to_new[e.dst]
+                sub_edges.append(SynapseEdge(
+                    src=new_src, dst=new_dst,
+                    distance=e.distance,
+                    same_scaffold=e.same_scaffold,
+                    grammar_score=e.grammar_score,
+                    shared_agents=e.shared_agents,
+                    shared_partners=e.shared_partners,
+                    seg_connectivity=e.seg_connectivity,
+                ))
+                if graph.edge_path_features:
+                    old_key = (min(e.src, e.dst), max(e.src, e.dst))
+                    new_key = (min(new_src, new_dst), max(new_src, new_dst))
+                    arr = graph.edge_path_features.get(old_key)
+                    if arr is not None:
+                        sub_edge_path[new_key] = arr
+
+        idx = np.array(visited, dtype=np.int64)
+        results.append(SynapseGraph(
+            n_synapses=len(visited),
+            role=graph.role,
+            node_positions=graph.node_positions[idx],
+            node_scaffold_ids=graph.node_scaffold_ids[idx],
+            edges=sub_edges,
+            root_ids=graph.root_ids[idx] if graph.root_ids is not None else None,
+            edge_path_features=sub_edge_path if sub_edge_path else None,
+        ))
+
+    return results
+
+
 def build_synapse_chain_paths(
     graph: SynapseGraph,
     labels: "np.ndarray | None" = None,
@@ -1262,17 +1389,6 @@ def train_cell_gnn(
             except Exception:
                 continue
 
-            # Cap graph size: randomly subsample synapses to keep memory bounded.
-            # Preserves the root-ID distribution so contrastive pairs remain valid.
-            if synapses.n_synapses > cfg.max_synapses_per_box:
-                keep = rng.choice(
-                    synapses.n_synapses,
-                    size=cfg.max_synapses_per_box,
-                    replace=False,
-                )
-                keep.sort()
-                synapses = synapses.subset(keep)
-
             # Look up pre-computed seg connectivity scores for this box
             _box_seg = seg_score_cache.get(record.box_hash, {}) if seg_score_cache else {}
             # Look up pre-computed skeleton path features for this box
@@ -1286,50 +1402,60 @@ def train_cell_gnn(
                     for k, v in _side_seg_raw.items()
                 } if _side_seg_raw else {}
 
-                graph = build_synapse_graph(
+                full_graph = build_synapse_graph(
                     synapses, role,
                     proximity_radius_nm=cfg.proximity_radius_nm,
                     seg_connectivity_scores=_side_seg or None,
                 )
-                if graph.n_synapses < 2:
+                if full_graph.n_synapses < 2:
                     continue
 
-                # Attach skeleton path features when available
+                # Attach skeleton path features to the full graph before subdivision
                 _side_raw_paths = _box_paths.get(role, {})
                 if _side_raw_paths:
-                    graph.edge_path_features = _featurize_path_lookup(
+                    full_graph.edge_path_features = _featurize_path_lookup(
                         _side_raw_paths, mode=path_feature_mode
                     )
 
-                # Always augment with synapse-chain paths built from ground-truth
-                # root IDs.  Chain paths cover *every* within-cell proximity edge
-                # with no seg dependency; kimimaro paths (if present) take priority
-                # since they have richer geometry.
-                if getattr(model, "path_emb_dim", 0) > 0:
-                    chain = build_synapse_chain_paths(graph, mode=path_feature_mode)
-                    if chain:
-                        merged = dict(chain)
-                        if graph.edge_path_features:
-                            merged.update(graph.edge_path_features)
-                        graph.edge_path_features = merged
+                # Subdivide large graphs into connected BFS sub-graphs rather than
+                # randomly dropping nodes.  BFS subdivision preserves chain paths
+                # and local topology; random dropping destroys both.
+                if full_graph.n_synapses > cfg.max_synapses_per_box:
+                    graphs_to_train = subdivide_synapse_graph(
+                        full_graph,
+                        n_nodes=cfg.max_synapses_per_box,
+                        rng=rng,
+                    )
+                else:
+                    graphs_to_train = [full_graph]
 
-                m = cell_graph_train_step(
-                    model, optimizer, graph,
-                    margin=cfg.margin,
-                    max_pairs=cfg.max_pairs_per_box,
-                    rng=rng,
-                    edit_positive_pairs=_edit_pos[role] or None,
-                    edit_negative_pairs=_edit_neg[role] or None,
-                    edit_weight=edit_weight,
-                    hard_neg_mining=hard_neg_mining,
-                    hard_neg_threshold=hard_neg_threshold,
-                    hard_neg_weight=hard_neg_weight,
-                )
-                epoch_metrics["loss"].append(m["loss"])
-                epoch_metrics["pos_sim"].append(m["pos_sim"])
-                epoch_metrics["neg_sim"].append(m["neg_sim"])
-                epoch_metrics["hard_neg_sim"].append(m.get("hard_neg_sim", 0.0))
-                epoch_metrics["n_hard_neg"].append(float(m.get("n_hard_neg", 0)))
+                for graph in graphs_to_train:
+                    # Augment with synapse-chain paths built from ground-truth root IDs.
+                    if getattr(model, "path_emb_dim", 0) > 0:
+                        chain = build_synapse_chain_paths(graph, mode=path_feature_mode)
+                        if chain:
+                            merged = dict(chain)
+                            if graph.edge_path_features:
+                                merged.update(graph.edge_path_features)
+                            graph.edge_path_features = merged
+
+                    m = cell_graph_train_step(
+                        model, optimizer, graph,
+                        margin=cfg.margin,
+                        max_pairs=cfg.max_pairs_per_box,
+                        rng=rng,
+                        edit_positive_pairs=_edit_pos[role] or None,
+                        edit_negative_pairs=_edit_neg[role] or None,
+                        edit_weight=edit_weight,
+                        hard_neg_mining=hard_neg_mining,
+                        hard_neg_threshold=hard_neg_threshold,
+                        hard_neg_weight=hard_neg_weight,
+                    )
+                    epoch_metrics["loss"].append(m["loss"])
+                    epoch_metrics["pos_sim"].append(m["pos_sim"])
+                    epoch_metrics["neg_sim"].append(m["neg_sim"])
+                    epoch_metrics["hard_neg_sim"].append(m.get("hard_neg_sim", 0.0))
+                    epoch_metrics["n_hard_neg"].append(float(m.get("n_hard_neg", 0)))
 
         mean_loss = float(np.mean(epoch_metrics["loss"])) if epoch_metrics["loss"] else 0.0
         mean_pos = float(np.mean(epoch_metrics["pos_sim"])) if epoch_metrics["pos_sim"] else 0.0

@@ -23,6 +23,7 @@ from .cell_graph import (
     precompute_skeleton_paths_for_cache,
     save_seg_score_cache,
     save_skeleton_path_cache,
+    subdivide_synapse_graph,
     train_cell_gnn,
 )
 from .dijkstra import BridgeGraph, BridgePath
@@ -49,6 +50,7 @@ __all__ = [
     "cell_graph_train_step",
     "cell_gnn_assembly",
     "build_synapse_chain_paths",
+    "subdivide_synapse_graph",
     "infer_cells",
     "infer_cells_two_pass",
     "partition_from_embeddings",
