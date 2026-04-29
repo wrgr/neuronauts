@@ -421,12 +421,17 @@ def subdivide_synapse_graph(
             for v in core:
                 used[v] = True
 
-        # Phase 2: expand halo_hops steps from the core frontier
+        # Phase 2: expand halo_hops steps from the core frontier.
+        # Cap at n_nodes // 4 to prevent dense graphs from ballooning the halo
+        # to full-box size (which would defeat the purpose of subdivision).
         halo: list[int] = []
         if halo_hops > 0:
+            max_halo = n_nodes // 4
             frontier = set(core)
             halo_set: set[int] = set()
             for _ in range(halo_hops):
+                if len(halo_set) >= max_halo:
+                    break
                 next_frontier: set[int] = set()
                 for v in frontier:
                     for nb in adj[v]:
@@ -434,6 +439,10 @@ def subdivide_synapse_graph(
                             in_visited[nb] = True
                             halo_set.add(nb)
                             next_frontier.add(nb)
+                            if len(halo_set) >= max_halo:
+                                break
+                    if len(halo_set) >= max_halo:
+                        break
                 frontier = next_frontier
                 if not frontier:
                     break
@@ -1489,7 +1498,7 @@ def train_cell_gnn(
                     graphs_to_train = subdivide_synapse_graph(
                         full_graph,
                         n_nodes=cfg.max_synapses_per_box,
-                        halo_hops=cfg.n_layers,
+                        halo_hops=1,
                         rng=rng,
                     )
                 else:
@@ -1552,7 +1561,7 @@ def train_cell_gnn(
                         val_subgraphs = subdivide_synapse_graph(
                             full_val_graph,
                             n_nodes=cfg.max_synapses_per_box,
-                            halo_hops=cfg.n_layers,
+                            halo_hops=1,
                             rng=rng,
                         )
                     else:
