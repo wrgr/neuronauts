@@ -1079,22 +1079,40 @@ def fetch_cave_false_merge_chains(
     # Build root → [(svid, position_nm)] mapping
     _vox = np.array([8.0, 8.0, 40.0], dtype=np.float32)  # Minnie65 voxel size nm
     root_to_entries: dict[int, list] = defaultdict(list)
+    all_svids: list[int] = []
     for row in df.itertuples(index=False):
         pos_vox = np.asarray(row.pre_pt_position, dtype=np.float32)
         pos_nm = pos_vox * _vox
-        root_to_entries[int(row.pre_pt_root_id)].append(
-            (int(row.pre_pt_supervoxel_id), pos_nm)
-        )
+        svid = int(row.pre_pt_supervoxel_id)
+        root_to_entries[int(row.pre_pt_root_id)].append((svid, pos_nm))
+        all_svids.append(svid)
 
-    # ---- Step 3: supervoxel → current root lookup; detect both error types ----
+    # ---- Step 3: ONE batched get_roots call for all supervoxels at once ----
+    # Sending 2000 individual calls (one per root) would take 30-60 min.
+    # Sending all svids in large batches takes seconds.
+    print(
+        f"[CAVE false-merge] looking up current roots for {len(all_svids):,} supervoxels "
+        f"in batches of {svid_batch_size} ...",
+        flush=True,
+    )
+    all_cur_roots: list[int] = []
+    for i in range(0, len(all_svids), svid_batch_size):
+        batch = all_svids[i : i + svid_batch_size]
+        all_cur_roots.extend(int(r) for r in client.chunkedgraph.get_roots(batch))
+        if (i // svid_batch_size) % 50 == 0 and i > 0:
+            print(f"  {i:,}/{len(all_svids):,} svids resolved", flush=True)
+    print(f"[CAVE false-merge] svid lookup complete", flush=True)
+
+    # Map svid → current root for O(1) lookup
+    svid_to_cur_root = dict(zip(all_svids, all_cur_roots))
+
+    # ---- Step 4: classify both error types ----
     # false merge : one v117 root → 2+ current roots  → hard negative (merge)
     # false split : 2+ v117 roots → same current root → hard positive  (split)
     chains: dict[int, np.ndarray] = {}
     pairs: list[tuple[int, int, str]] = []
     synthetic_id = -1  # negative IDs don't clash with real root IDs
 
-    # cur_root → list of synthetic chain IDs contributed by distinct v117 roots.
-    # Used after the loop to emit false-split (hard positive) pairs.
     cur_root_to_sids: dict[int, list[int]] = defaultdict(list)
 
     n_checked = 0
@@ -1102,16 +1120,8 @@ def fetch_cave_false_merge_chains(
         if len(pairs) >= max_false_merges * 2:
             break
 
-        svids = [e[0] for e in entries]
         positions = [e[1] for e in entries]
-
-        # Batch supervoxel → current root lookup
-        cur_roots_list: list[int] = []
-        for i in range(0, len(svids), svid_batch_size):
-            batch_svids = svids[i : i + svid_batch_size]
-            cur_roots_list.extend(
-                int(r) for r in client.chunkedgraph.get_roots(batch_svids)
-            )
+        cur_roots_list = [svid_to_cur_root[e[0]] for e in entries]
 
         # Group positions by current root; build a chain per group
         cur_root_to_positions: dict[int, list] = defaultdict(list)
@@ -1128,7 +1138,6 @@ def fetch_cave_false_merge_chains(
             synthetic_id -= 1
             chains[sid] = chain
             half_ids.append(sid)
-            # Register for false-split detection
             cur_root_to_sids[cur_root].append(sid)
 
         # False merge: this v117 root spanned 2+ biological cells
@@ -1138,12 +1147,6 @@ def fetch_cave_false_merge_chains(
                     pairs.append((half_ids[i], half_ids[j], "merge"))
 
         n_checked += 1
-        if n_checked % 200 == 0:
-            print(
-                f"[CAVE false-merge] checked {n_checked}/{len(root_to_entries)}, "
-                f"{len(pairs)} merge pairs so far",
-                flush=True,
-            )
 
     # False splits: same current root absorbing chains from 2+ distinct v117 roots.
     # Those v117 roots were incorrectly split; their junction is a hard positive.
