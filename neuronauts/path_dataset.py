@@ -523,11 +523,18 @@ def add_edit_history_examples(
             half = window_size // 2
 
             if op == "merge":
-                # The merge joined pts_a and pts_b incorrectly.
-                # Generate a splice negative at their natural junction.
-                if len(pts_a) < half or len(pts_b) < (window_size - half):
+                # The merge joined pts_a and pts_b incorrectly — splice negative.
+                # Allow short half-chains (even 1 synapse = isolate) by taking
+                # as many synapses as available from each side (min 1 each) then
+                # padding the window with repeated leading points if total < window_size.
+                n_from_a = min(window_size - 1, max(1, len(pts_a)))
+                n_from_b = min(window_size - n_from_a, max(1, len(pts_b)))
+                if n_from_a < 1 or n_from_b < 1:
                     continue
-                seg = np.concatenate([pts_a[-half:], pts_b[: window_size - half]], axis=0)
+                seg = np.concatenate([pts_a[-n_from_a:], pts_b[:n_from_b]], axis=0)
+                if len(seg) < window_size:
+                    pad = np.tile(seg[:1], (window_size - len(seg), 1))
+                    seg = np.concatenate([pad, seg], axis=0)
                 feat = _featurize_window(seg)
                 if feat is not None:
                     features.append(feat)
@@ -535,13 +542,16 @@ def add_edit_history_examples(
                     added += 1
 
             elif op == "split":
-                # The split broke what should be one chain.
-                # Generate a positive that crosses the split boundary.
-                half_a = min(half, len(pts_a))
-                half_b = min(window_size - half_a, len(pts_b))
-                if half_a + half_b < window_size:
+                # The split broke what should be one chain — valid junction positive.
+                # Same short-chain handling as the merge case above.
+                n_from_a = min(window_size - 1, max(1, len(pts_a)))
+                n_from_b = min(window_size - n_from_a, max(1, len(pts_b)))
+                if n_from_a < 1 or n_from_b < 1:
                     continue
-                seg = np.concatenate([pts_a[-half_a:], pts_b[:half_b]], axis=0)
+                seg = np.concatenate([pts_a[-n_from_a:], pts_b[:n_from_b]], axis=0)
+                if len(seg) < window_size:
+                    pad = np.tile(seg[:1], (window_size - len(seg), 1))
+                    seg = np.concatenate([pad, seg], axis=0)
                 feat = _featurize_window(seg)
                 if feat is not None:
                     features.append(feat)
@@ -1136,8 +1146,11 @@ def fetch_cave_false_merge_chains(
 
     n_checked = 0
     for v117_root, entries in root_to_entries.items():
-        if len(pairs) >= max_false_merges * 2:
-            break
+        # Process ALL roots for split detection — only cap merge pair accumulation.
+        # Breaking early here would leave cur_root_to_sids incomplete and produce 0
+        # split pairs (different v117 roots mapping to the same current root can only
+        # be detected if we walk the full root list).
+        merge_cap_hit = len(pairs) >= max_false_merges * 2
 
         positions = [e[1] for e in entries]
         cur_roots_list = [svid_to_cur_root[e[0]] for e in entries]
@@ -1160,7 +1173,7 @@ def fetch_cave_false_merge_chains(
             cur_root_to_sids[cur_root].append(sid)
 
         # False merge: this v117 root spanned 2+ biological cells
-        if len(half_ids) >= 2:
+        if not merge_cap_hit and len(half_ids) >= 2:
             for i in range(len(half_ids)):
                 for j in range(i + 1, len(half_ids)):
                     pairs.append((half_ids[i], half_ids[j], "merge"))
