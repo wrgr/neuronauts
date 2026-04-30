@@ -982,6 +982,7 @@ def fetch_cave_false_merge_chains(
     n_sample_old_roots: int = 10000,
     max_false_merges: int = 500,
     svid_batch_size: int = 2000,
+    min_synapses_per_root: int = 8,
     rng_seed: int = 0,
 ) -> "tuple[dict[int, np.ndarray], list[tuple[int, int, str]]]":
     """Build real CV-error training pairs from CAVE delta root history.
@@ -1025,6 +1026,10 @@ def fetch_cave_false_merge_chains(
     n_sample_old_roots : delta roots to probe (more → richer signal, slower).
     max_false_merges : soft cap on merge pairs (split pairs are uncapped).
     svid_batch_size : supervoxels per get_roots call.
+    min_synapses_per_root : drop v117 roots with fewer than this many synapses
+        before the svid lookup.  Very short roots produce half-chains that can't
+        fill a training window and are silently skipped by
+        ``add_edit_history_examples``; filtering here avoids wasting API budget.
     rng_seed : RNG seed.
 
     Returns
@@ -1076,16 +1081,30 @@ def fetch_cave_false_merge_chains(
         print("[CAVE false-merge] no synapses found — try an earlier past_timestamp")
         return {}, []
 
-    # Build root → [(svid, position_nm)] mapping
+    # Build root → [(svid, position_nm)] mapping, then drop roots whose
+    # total synapse count is below min_synapses_per_root.  Pairs from very
+    # short roots produce half-chains that can't fill a training window and
+    # are silently skipped by add_edit_history_examples; filtering here avoids
+    # wasting svid lookup budget on useless entries.
     _vox = np.array([8.0, 8.0, 40.0], dtype=np.float32)  # Minnie65 voxel size nm
-    root_to_entries: dict[int, list] = defaultdict(list)
-    all_svids: list[int] = []
+    root_to_entries_raw: dict[int, list] = defaultdict(list)
     for row in df.itertuples(index=False):
         pos_vox = np.asarray(row.pre_pt_position, dtype=np.float32)
         pos_nm = pos_vox * _vox
         svid = int(row.pre_pt_supervoxel_id)
-        root_to_entries[int(row.pre_pt_root_id)].append((svid, pos_nm))
-        all_svids.append(svid)
+        root_to_entries_raw[int(row.pre_pt_root_id)].append((svid, pos_nm))
+
+    root_to_entries = {
+        r: entries
+        for r, entries in root_to_entries_raw.items()
+        if len(entries) >= min_synapses_per_root
+    }
+    all_svids: list[int] = [e[0] for entries in root_to_entries.values() for e in entries]
+    print(
+        f"[CAVE false-merge] {len(root_to_entries)} roots with "
+        f">={min_synapses_per_root} synapses ({len(all_svids):,} svids to resolve)",
+        flush=True,
+    )
 
     # ---- Step 3: ONE batched get_roots call for all supervoxels at once ----
     # Sending 2000 individual calls (one per root) would take 30-60 min.

@@ -2755,6 +2755,8 @@ def parse_args(argv=None) -> argparse.Namespace:
                         help="Number of delta roots to probe for false merges.")
     p_cave.add_argument("--max-false-merges", type=int, default=500,
                         help="Maximum false-merge events to return (each yields ≥1 pair).")
+    p_cave.add_argument("--min-synapses-per-root", type=int, default=8,
+                        help="Drop v117 roots with fewer than this many synapses before svid lookup.")
     p_cave.add_argument("--output-tsv", default="data/cave_edit_pairs.tsv",
                         help="Output TSV path for edit pairs.")
     p_cave.add_argument("--output-chains", default="data/cave_edit_chains.npz",
@@ -2874,6 +2876,7 @@ def cmd_fetch_cave_edits(args: argparse.Namespace) -> int:
         past_timestamp=args.past_timestamp,
         n_sample_old_roots=args.n_sample,
         max_false_merges=args.max_false_merges,
+        min_synapses_per_root=args.min_synapses_per_root,
         rng_seed=args.seed,
     )
 
