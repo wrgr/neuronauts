@@ -981,7 +981,7 @@ def fetch_cave_false_merge_chains(
     past_timestamp: str = "2021-06-11",
     n_sample_old_roots: int = 10000,
     max_false_merges: int = 500,
-    svid_batch_size: int = 200,
+    svid_batch_size: int = 2000,
     rng_seed: int = 0,
 ) -> "tuple[dict[int, np.ndarray], list[tuple[int, int, str]]]":
     """Build real CV-error training pairs from CAVE delta root history.
