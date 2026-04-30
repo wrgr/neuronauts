@@ -663,3 +663,191 @@ def load_path_encoder(path: str):
     head = nn.Linear(ckpt["init_kwargs"]["output_dim"], 1)
     head.load_state_dict(ckpt["head_state"])
     return encoder, head
+
+
+# ---------------------------------------------------------------------------
+# CAVE edit-history chain fetcher
+# ---------------------------------------------------------------------------
+
+_CAVE_MIP2_VOXEL_NM = np.array([8.0, 8.0, 40.0], dtype=np.float32)
+# Minnie65 synapses are stored in 8-8-40 nm voxels
+
+
+def _build_chain_from_positions(positions_nm: np.ndarray) -> "np.ndarray | None":
+    """Sort [N,3] absolute-nm positions along their PCA axis.  Returns None if N<2."""
+    if len(positions_nm) < 2:
+        return None
+    pts = positions_nm.astype(np.float32)
+    centred = pts - pts.mean(axis=0)
+    try:
+        _, _, Vt = np.linalg.svd(centred, full_matrices=False)
+        order = np.argsort(centred @ Vt[0])
+    except np.linalg.LinAlgError:
+        order = np.arange(len(pts))
+    return pts[order]
+
+
+def fetch_cave_edit_history(
+    cave_token: str,
+    datastack: str = "minnie65_phase3_v1",
+    *,
+    n_ops: int = 500,
+    min_synapses: int = 5,
+    old_mat_version: int = 117,
+    rng_seed: int = 0,
+) -> "tuple[dict[int, np.ndarray], list[tuple[int, int, str]]]":
+    """Fetch real merge/split corrections from CAVE and build training chains.
+
+    For each **split** correction (proofreader fixed a false merge):
+    - Queries pre-synapses of each after-root at the current materialization.
+    - Records the pair as ``operation='merge'`` (junction was a false merge).
+
+    For each **merge** correction (proofreader fixed a false split):
+    - Queries pre-synapses of each before-root at the oldest available
+      materialization version (``old_mat_version``), where those leaf-node
+      roots still exist.
+    - Records the pair as ``operation='split'`` (junction was a false split).
+
+    Parameters
+    ----------
+    cave_token:
+        CAVE authentication token.
+    datastack:
+        CAVE datastack name (default: Minnie65 phase 3).
+    n_ops:
+        Maximum number of distinct operation IDs to sample (splits and merges
+        combined).
+    min_synapses:
+        Skip roots with fewer than this many pre-synapses.
+    old_mat_version:
+        Materialization version used to retrieve before-roots for merge ops.
+    rng_seed:
+        Random seed for sampling operations.
+
+    Returns
+    -------
+    chains : dict[int, np.ndarray]
+        root_id -> float32 [N, 3] sorted positions in absolute nm.
+        Can be merged into the output of :func:`extract_cell_chains`.
+    edit_pairs : list of (root_id_a, root_id_b, operation) tuples
+        Operation is ``'merge'`` or ``'split'``.  Only pairs where both
+        roots are present in the returned ``chains`` dict are included.
+    """
+    try:
+        import caveclient
+        import datetime
+    except ImportError as exc:
+        raise ImportError("caveclient is required: pip install caveclient") from exc
+
+    rng = np.random.default_rng(rng_seed)
+    client = caveclient.CAVEclient(datastack, auth_token=cave_token)
+
+    # Collect operations over the full proofreading window
+    start = datetime.datetime(2020, 1, 1, tzinfo=datetime.timezone.utc)
+    end = datetime.datetime.now(tz=datetime.timezone.utc)
+    print(f"[CAVE] fetching delta roots {start.date()} -> today ...")
+    _, new_roots = client.chunkedgraph.get_delta_roots(
+        timestamp_past=start, timestamp_future=end
+    )
+    print(f"[CAVE] {len(new_roots):,} new roots found")
+
+    # Sample roots and retrieve their change logs
+    sample_size = min(n_ops * 20, len(new_roots))
+    idx = rng.choice(len(new_roots), sample_size, replace=False)
+    sample_roots = new_roots[idx].tolist()
+
+    import pandas as pd
+    all_op_rows = []
+    batch = 100
+    for i in range(0, len(sample_roots), batch):
+        logs = client.chunkedgraph.get_tabular_change_log(sample_roots[i: i + batch])
+        for df in logs.values():
+            if len(df) > 0:
+                all_op_rows.append(df)
+        if i % 2000 == 0 and i > 0:
+            collected = sum(len(d) for d in all_op_rows)
+            print(f"[CAVE] scanned {i}/{len(sample_roots)} roots, "
+                  f"{collected} ops so far ...")
+
+    if not all_op_rows:
+        print("[CAVE] no operations found; returning empty")
+        return {}, []
+
+    all_ops = pd.concat(all_op_rows, ignore_index=True).drop_duplicates("operation_id")
+    merges = all_ops[all_ops["is_merge"]].head(n_ops // 2)
+    splits = all_ops[~all_ops["is_merge"]].head(n_ops // 2)
+    print(f"[CAVE] {len(merges)} merge ops, {len(splits)} split ops sampled")
+
+    def _query_synapses(root_ids, mat_version=None):
+        """Return root_id -> [N,3] absolute-nm positions for roots with >= min_synapses."""
+        result: dict[int, np.ndarray] = {}
+        for rid in root_ids:
+            try:
+                kwargs: dict = dict(
+                    filter_equal_dict={"pre_pt_root_id": int(rid)},
+                    select_columns=["pre_pt_root_id", "pre_pt_position"],
+                )
+                if mat_version is not None:
+                    kwargs["materialization_version"] = mat_version
+                df = client.materialize.query_table("synapses_pni_2", **kwargs)
+                if len(df) < min_synapses:
+                    continue
+                pos_vox = np.array(df["pre_pt_position"].tolist(), dtype=np.float32)
+                pos_nm = pos_vox * _CAVE_MIP2_VOXEL_NM
+                chain = _build_chain_from_positions(pos_nm)
+                if chain is not None:
+                    result[int(rid)] = chain
+            except Exception:
+                pass
+        return result
+
+    chains: dict[int, np.ndarray] = {}
+    edit_pairs: list[tuple[int, int, str]] = []
+
+    # Split ops: proofreader fixed a false merge -> after-roots are a negative pair
+    n_split_added = 0
+    for _, row in splits.iterrows():
+        after = [int(r) for r in row["after_root_ids"]]
+        if len(after) < 2:
+            continue
+        root_a, root_b = after[0], after[1]
+        new_chains = _query_synapses([root_a, root_b])
+        if root_a in new_chains and root_b in new_chains:
+            chains.update(new_chains)
+            edit_pairs.append((root_a, root_b, "merge"))
+            n_split_added += 1
+
+    print(f"[CAVE] split ops -> {n_split_added} negative pairs added")
+
+    # Merge ops: proofreader fixed a false split -> before-roots are a positive pair
+    n_merge_added = 0
+    for _, row in merges.iterrows():
+        before = [int(r) for r in row["before_root_ids"]]
+        if len(before) < 2:
+            continue
+        root_a, root_b = before[0], before[1]
+        new_chains = _query_synapses([root_a, root_b], mat_version=old_mat_version)
+        if root_a in new_chains and root_b in new_chains:
+            chains.update(new_chains)
+            edit_pairs.append((root_a, root_b, "split"))
+            n_merge_added += 1
+
+    print(f"[CAVE] merge ops -> {n_merge_added} positive pairs added")
+    print(f"[CAVE] total: {len(chains)} chains, {len(edit_pairs)} edit pairs")
+    return chains, edit_pairs
+
+
+def save_edit_pairs_tsv(
+    edit_pairs: "list[tuple[int, int, str]]",
+    tsv_path: str,
+) -> None:
+    """Write edit pairs to a TSV for :func:`add_edit_history_examples`."""
+    import csv
+    import os
+    os.makedirs(os.path.dirname(os.path.abspath(tsv_path)), exist_ok=True)
+    with open(tsv_path, "w", newline="") as fh:
+        writer = csv.writer(fh, delimiter="\t")
+        writer.writerow(["root_id_a", "root_id_b", "operation"])
+        for root_a, root_b, op in edit_pairs:
+            writer.writerow([root_a, root_b, op])
+    print(f"[CAVE] saved {len(edit_pairs)} edit pairs -> {tsv_path}")

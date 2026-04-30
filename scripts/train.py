@@ -2727,6 +2727,29 @@ def parse_args(argv=None) -> argparse.Namespace:
     p_path.add_argument("--seed", type=int, default=42)
     p_path.set_defaults(func=cmd_train_path_encoder)
 
+    # fetch-cave-edits
+    # ---------------------------------------------------------------------------
+    p_cave = sub.add_parser(
+        "fetch-cave-edits",
+        help="Fetch CAVE proofreading corrections and build edit-history TSV for path encoder training.",
+    )
+    p_cave.add_argument("--token", default=None,
+                        help="CAVE auth token.  Defaults to ~/.cloudvolume/secrets/cave-secret.json.")
+    p_cave.add_argument("--datastack", default="minnie65_phase3_v1",
+                        help="CAVE datastack name.")
+    p_cave.add_argument("--n-ops", type=int, default=500,
+                        help="Number of merge/split operations to sample.")
+    p_cave.add_argument("--min-synapses", type=int, default=5,
+                        help="Minimum pre-synapses per root to include.")
+    p_cave.add_argument("--old-mat-version", type=int, default=117,
+                        help="Materialization version for querying pre-merge before-roots.")
+    p_cave.add_argument("--output-tsv", default="data/cave_edit_pairs.tsv",
+                        help="Output TSV path for edit pairs.")
+    p_cave.add_argument("--output-chains", default="data/cave_edit_chains.npz",
+                        help="Output NPZ path for the fetched chains.")
+    p_cave.add_argument("--seed", type=int, default=0)
+    p_cave.set_defaults(func=cmd_fetch_cave_edits)
+
     return root.parse_args(argv)
 
 
@@ -2775,6 +2798,47 @@ def cmd_train_path_encoder(args: argparse.Namespace) -> int:
         checkpoint_every=args.checkpoint_every,
         rng_seed=args.seed,
     )
+    return 0
+
+
+def cmd_fetch_cave_edits(args: argparse.Namespace) -> int:
+    """Fetch CAVE proofreading corrections and save edit-history TSV + chains NPZ."""
+    import json, os
+    from neuronauts.path_dataset import fetch_cave_edit_history, save_edit_pairs_tsv
+
+    token = args.token
+    if token is None:
+        secret_path = os.path.expanduser("~/.cloudvolume/secrets/cave-secret.json")
+        if os.path.exists(secret_path):
+            with open(secret_path) as fh:
+                token = json.load(fh).get("token")
+    if not token:
+        print("No CAVE token found.  Pass --token or set ~/.cloudvolume/secrets/cave-secret.json")
+        return 1
+
+    chains, edit_pairs = fetch_cave_edit_history(
+        cave_token=token,
+        datastack=args.datastack,
+        n_ops=args.n_ops,
+        min_synapses=args.min_synapses,
+        old_mat_version=args.old_mat_version,
+        rng_seed=args.seed,
+    )
+
+    if not edit_pairs:
+        print("No edit pairs found.")
+        return 1
+
+    save_edit_pairs_tsv(edit_pairs, args.output_tsv)
+
+    # Save chains as NPZ so they can be loaded and merged with cache chains
+    import numpy as np
+    os.makedirs(os.path.dirname(os.path.abspath(args.output_chains)), exist_ok=True)
+    np.savez_compressed(
+        args.output_chains,
+        **{str(rid): arr for rid, arr in chains.items()},
+    )
+    print(f"Saved {len(chains)} chains -> {args.output_chains}")
     return 0
 
 

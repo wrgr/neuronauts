@@ -35,8 +35,10 @@ from .merge import ConnectivityGraph, MergedNeuron, merge_agents
 from .path_edge_encoder import PathEdgeEncoder, pad_path_sequences
 from .path_dataset import (
     extract_cell_chains,
+    fetch_cave_edit_history,
     generate_path_examples,
     load_path_encoder,
+    save_edit_pairs_tsv,
     train_path_encoder as train_path_encoder_fn,
 )
 
@@ -70,6 +72,8 @@ __all__ = [
     "pad_path_sequences",
     # Path discrimination dataset
     "extract_cell_chains",
+    "fetch_cave_edit_history",
+    "save_edit_pairs_tsv",
     "generate_path_examples",
     "load_path_encoder",
     "train_path_encoder_fn",
