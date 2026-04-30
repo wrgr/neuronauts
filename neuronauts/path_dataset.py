@@ -984,37 +984,58 @@ def fetch_cave_false_merge_chains(
     svid_batch_size: int = 200,
     rng_seed: int = 0,
 ) -> "tuple[dict[int, np.ndarray], list[tuple[int, int, str]]]":
-    """Build real false-merge training pairs from CAVE delta root history.
+    """Build real CV-error training pairs from CAVE delta root history.
 
-    A false merge is a v117 root whose supervoxels now belong to 2+ different
-    current roots — incorrectly merged in the CV output, later split by
-    proofreaders.  This is the pre/post signal the path encoder needs: the
-    path encoder learns the transfer function from CV output → proofread output.
+    This implements the pre/post proofreading training approach: the path
+    encoder learns the transfer function from CV output (past_timestamp) to
+    proofread ground truth (current).
 
-    Single-synapse isolates swept into a false merge are included — even a
-    1-synapse foreign segment crossing into a chain is a real "insert" pattern.
+    A single pass of supervoxel → current-root lookups yields **both** error
+    types simultaneously, at no extra API cost:
 
-    For each false merge detected:
-    1. Groups v117 synapse positions by current root ID.
-    2. Sorts each group along its PCA axis (same as _build_chain_from_positions).
-    3. Assigns a synthetic negative chain ID (to avoid clashing with real root IDs).
-    4. Records a (chain_id_a, chain_id_b, 'merge') pair.
+    **False merge** (hard negative, label=0):
+        One past root whose supervoxels now map to 2+ current roots.
+        The CV incorrectly merged two biological cells; proofreaders split them.
+        The junction between the two half-chains is a real cell boundary the
+        model must learn to detect.  Single-synapse isolates are included —
+        even a 1-synapse foreign segment creates a real "insert" pattern.
+
+    **False split** (hard positive, label=1):
+        Two or more past roots whose supervoxels all map to the *same* current
+        root.  The CV incorrectly split one biological cell; proofreaders
+        merged the fragments.  The junction between their chains IS a valid
+        same-cell path — the model must learn NOT to flag it.
+
+    Training requires **both** types to calibrate correctly.  Training only on
+    false merges teaches the model to distrust all junctions; the false-split
+    positives force it to rely on actual path features (trajectory, step
+    distances, curvature) rather than junction presence alone.
+
+    Complex edit histories (interleaved merge+split sequences) are handled
+    correctly because all labels are conditioned on the final v1412 ground
+    truth, not on intermediate edit operations.  A supervoxel that passed
+    through multiple intermediate roots still gets its correct final label.
 
     Parameters
     ----------
     cave_token : CAVE auth token.
-    past_timestamp : ISO date of the raw/early state (v117 ≈ 2021-06-11).
-    n_sample_old_roots : how many delta roots to probe (more → richer but slower).
-    max_false_merges : cap on the number of false-merge events returned.
+    past_timestamp : ISO date of the raw/early state (v117 ≈ 2021-06-11;
+        use the latest timestamp *before* manual proofreading began for the
+        cleanest CV-output signal).
+    n_sample_old_roots : delta roots to probe (more → richer signal, slower).
+    max_false_merges : soft cap on merge pairs (split pairs are uncapped).
     svid_batch_size : supervoxels per get_roots call.
     rng_seed : RNG seed.
 
     Returns
     -------
     chains : dict[int → np.ndarray [N, 3] float32]
-        Synthetic (negative) root_id → nm positions.  Merge into the main
-        chains dict before calling :func:`add_edit_history_examples`.
-    pairs : list of (chain_id_a, chain_id_b, 'merge')
+        Synthetic (negative) root_id → nm positions sorted along PCA axis.
+        Merge into the main chains dict before calling
+        :func:`add_edit_history_examples`.
+    pairs : list of (chain_id_a, chain_id_b, operation)
+        ``operation`` is ``'merge'`` (hard negative) or ``'split'``
+        (hard positive).  Both chain IDs are keys in ``chains``.
     """
     try:
         import caveclient

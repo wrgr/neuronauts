@@ -2827,19 +2827,33 @@ def cmd_train_path_encoder(args: argparse.Namespace) -> int:
 
 
 def cmd_fetch_cave_edits(args: argparse.Namespace) -> int:
-    """Fetch real false-merge pairs from CAVE delta root history and save for training.
+    """Fetch real CV-error training pairs from CAVE and save for path encoder training.
 
-    Probes old roots (v117 roots that changed since past_timestamp) for synaptic
-    records at v117 materialization.  For each root whose supervoxels now belong
-    to 2+ current roots, the root was a false merge in the CV output — the junction
-    of its two halves is a real hard-negative training example.
+    Implements the pre/post proofreading approach: compares the CV output state
+    (--past-timestamp, ideally the latest timestamp before manual proofreading
+    began) against the current proofread ground truth.
 
-    Single-synapse isolates swept into a false merge are included: even a 1-synapse
-    foreign chain creates a real 'insert' pattern at the junction.
+    A single supervoxel → current-root pass yields both error types:
+
+    False merges (hard negatives, label=0):
+        One past root → 2+ current roots.  CV merged two cells; proofreaders
+        split them.  Junction between the half-chains is a real cell boundary.
+        Single-synapse isolates are included (real "insert" patterns).
+
+    False splits (hard positives, label=1):
+        2+ past roots → same current root.  CV split one cell; proofreaders
+        merged them.  Junction between their chains IS valid — same cell.
+
+    Both types are required for correct calibration: merge-only training makes
+    the model distrust all junctions; split positives force it to use actual
+    path features (trajectory, curvature) rather than junction presence alone.
+
+    Complex edit histories (interleaved merge+split sequences) are handled
+    correctly: all labels are conditioned on the final ground-truth state.
 
     Outputs:
-      --output-tsv   : pairs TSV for add_edit_history_examples (synthetic IDs)
-      --output-chains: NPZ of half-chain position arrays keyed by synthetic ID
+      --output-tsv   : pairs TSV consumed by add_edit_history_examples
+      --output-chains: NPZ of chain position arrays (synthetic negative IDs)
     """
     import json, os, numpy as np
     from neuronauts.path_dataset import fetch_cave_false_merge_chains, save_edit_pairs_tsv
