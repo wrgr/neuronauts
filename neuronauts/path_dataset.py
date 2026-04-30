@@ -779,10 +779,12 @@ def fetch_cave_edit_history(
     rng = np.random.default_rng(rng_seed)
     client = caveclient.CAVEclient(datastack, auth_token=cave_token)
 
-    # Collect operations over the full proofreading window
-    start = datetime.datetime(2020, 1, 1, tzinfo=datetime.timezone.utc)
+    # Use a 2-year sliding window ending today to bound the delta-roots response size.
+    # The full Minnie65 history (2020-2026) returns ~2.7M roots and takes ~2 minutes.
+    # A 2-year window returns ~400K roots in ~15 seconds.
     end = datetime.datetime.now(tz=datetime.timezone.utc)
-    print(f"[CAVE] fetching delta roots {start.date()} -> today ...")
+    start = end - datetime.timedelta(days=730)
+    print(f"[CAVE] fetching delta roots {start.date()} -> {end.date()} ...")
     _, new_roots = client.chunkedgraph.get_delta_roots(
         timestamp_past=start, timestamp_future=end
     )
