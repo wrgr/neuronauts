@@ -2725,6 +2725,10 @@ def parse_args(argv=None) -> argparse.Namespace:
     p_path.add_argument("--output", default="models/path_encoder.pt",
                         help="Output checkpoint path.")
     p_path.add_argument("--seed", type=int, default=42)
+    p_path.add_argument("--edit-pairs-tsv", default=None,
+                        help="TSV of CAVE edit pairs (from fetch-cave-edits) to augment training.")
+    p_path.add_argument("--edit-chains-npz", default=None,
+                        help="NPZ of CAVE edit chains (from fetch-cave-edits) to merge with cache chains.")
     p_path.set_defaults(func=cmd_train_path_encoder)
 
     # fetch-cave-edits
@@ -2780,6 +2784,15 @@ def cmd_train_path_encoder(args: argparse.Namespace) -> int:
 
     print(f"Extracted {len(chains)} cell chains.")
 
+    # Load optional CAVE edit chains (from fetch-cave-edits)
+    edit_chains = None
+    edit_chains_npz = getattr(args, "edit_chains_npz", None)
+    if edit_chains_npz and os.path.exists(edit_chains_npz):
+        import numpy as np
+        data = np.load(edit_chains_npz, allow_pickle=True)
+        edit_chains = {int(k): data[k] for k in data.files}
+        print(f"Loaded {len(edit_chains)} CAVE edit chains from {edit_chains_npz}")
+
     train_path_encoder(
         chains,
         d_model=args.d_model,
@@ -2797,6 +2810,8 @@ def cmd_train_path_encoder(args: argparse.Namespace) -> int:
         checkpoint_path=args.output,
         checkpoint_every=args.checkpoint_every,
         rng_seed=args.seed,
+        edit_pairs_tsv=getattr(args, "edit_pairs_tsv", None),
+        edit_chains=edit_chains,
     )
     return 0
 

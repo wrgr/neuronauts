@@ -524,6 +524,8 @@ def train_path_encoder(
     checkpoint_every: int = 5,
     rng_seed: int = 42,
     max_examples_per_epoch: int | None = None,
+    edit_pairs_tsv: "str | None" = None,
+    edit_chains: "dict[int, np.ndarray] | None" = None,
 ) -> object:
     """Train PathEdgeEncoder on path discrimination and save checkpoint.
 
@@ -553,8 +555,13 @@ def train_path_encoder(
     optimizer = torch.optim.Adam(params, lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
-    n_cells = len(chains)
-    chain_list = list(chains.values())
+    # Merge CAVE edit chains into the main chains dict for training
+    all_chains = dict(chains)
+    if edit_chains:
+        all_chains.update(edit_chains)
+
+    n_cells = len(all_chains)
+    chain_list = list(all_chains.values())
     print(
         f"PathEncoder: d={d_model} layers={n_layers} heads={n_heads} out={output_dim}"
     )
@@ -565,11 +572,35 @@ def train_path_encoder(
     print(f"Chains: {n_cells} cells  "
           f"(median_len={int(np.median([len(c) for c in chain_list]))})")
 
+    # Pre-generate edit history examples (static — same pairs each epoch)
+    edit_feats: list = []
+    edit_lbls = np.empty(0, dtype=np.float32)
+    if edit_pairs_tsv is not None:
+        import os
+        if os.path.exists(edit_pairs_tsv):
+            edit_feats_list: list = []
+            edit_lbls_list: list = []
+            add_edit_history_examples(
+                edit_feats_list,
+                edit_lbls_list,
+                edit_pairs_tsv,
+                all_chains,
+                window_size=window_size,
+                rng=np.random.default_rng(rng_seed + 9999),
+            )
+            edit_feats = edit_feats_list
+            edit_lbls = np.array(edit_lbls_list, dtype=np.float32)
+            print(f"Edit history: {len(edit_feats)} examples "
+                  f"({int(edit_lbls.sum())} pos, "
+                  f"{len(edit_lbls) - int(edit_lbls.sum())} neg) from {edit_pairs_tsv}")
+        else:
+            print(f"[warn] edit_pairs_tsv not found: {edit_pairs_tsv}")
+
     for epoch in range(1, epochs + 1):
         t0 = time.monotonic()
 
         features, labels = generate_path_examples(
-            chains,
+            all_chains,
             window_size=window_size,
             neg_per_pos=neg_per_pos,
             hard_neg_fraction=hard_neg_fraction,
@@ -578,6 +609,12 @@ def train_path_encoder(
             rng=rng,
             max_examples=max_examples_per_epoch,
         )
+
+        # Append edit history examples (ground-truth hard cases from real corrections)
+        if edit_feats:
+            features = features + edit_feats
+            labels = np.concatenate([labels, edit_lbls])
+
         n_pos = int(labels.sum())
         n_neg = len(labels) - n_pos
 
