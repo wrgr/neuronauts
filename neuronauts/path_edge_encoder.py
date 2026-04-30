@@ -198,10 +198,17 @@ class PathEdgeEncoder:
                 cls_out = out[:, 0, :]                        # [P, d_model]
 
                 if self.pool_mode == "cls_max":
-                    # Max-pool over step positions: gives model a direct "worst-case
-                    # step" signal that attention-based CLS pooling can't express.
+                    # Max-pool over transformer step outputs: "worst-case step" in
+                    # the contextually-enriched representation space.
                     step_out = out[:, 1:, :].masked_fill(pm.unsqueeze(-1), -1e4)
                     cls_out = cls_out + step_out.max(dim=1).values  # [P, d_model]
+                elif self.pool_mode == "cls_rawmax":
+                    # Max-pool over RAW input projections (before transformer):
+                    # directly exposes "which step had the most extreme initial
+                    # feature values" without routing through attention.
+                    raw_proj = self.input_proj(ps.float())  # [P, T, d_model]
+                    raw_proj = raw_proj.masked_fill(pm.unsqueeze(-1), -1e4)
+                    cls_out = cls_out + raw_proj.max(dim=1).values  # [P, d_model]
 
                 emb = self.output_proj(cls_out)               # [P, output_dim]
 

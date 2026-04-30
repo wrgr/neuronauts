@@ -2726,9 +2726,10 @@ def parse_args(argv=None) -> argparse.Namespace:
                         help="Cap examples per epoch (useful on CPU to keep epochs short). "
                              "Spatial index is still built once and reused every epoch.")
     p_path.add_argument("--pool-mode", default="cls",
-                        choices=["cls", "cls_max"],
+                        choices=["cls", "cls_max", "cls_rawmax"],
                         help="Pooling strategy: 'cls' = CLS token only (v5/v6); "
-                             "'cls_max' = CLS + max-pool over step positions (v7+).")
+                             "'cls_max' = CLS + max-pool over transformer outputs (v7); "
+                             "'cls_rawmax' = CLS + max-pool over raw input projections (v8).")
     p_path.add_argument("--output", default="models/path_encoder.pt",
                         help="Output checkpoint path.")
     p_path.add_argument("--seed", type=int, default=42)
