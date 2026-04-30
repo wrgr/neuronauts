@@ -114,6 +114,53 @@ def _chain_directions(pts: np.ndarray) -> np.ndarray:
     return dirs / np.maximum(norms, 1e-6)
 
 
+def build_spatial_index(chains: dict[int, np.ndarray]) -> dict:
+    """Pre-build the KD-tree and global arrays from chains.
+
+    Call once before the training epoch loop and pass the result as
+    ``spatial_index=`` to ``generate_path_examples`` to avoid rebuilding
+    the KD-tree every epoch (which accounts for most of the per-epoch wall
+    time on CPU).
+
+    Returns a dict with keys: tree, all_pos_arr, all_dir_arr, all_ci_arr,
+    all_si_arr, chain_start, chain_list.
+    """
+    from scipy.spatial import KDTree
+
+    chain_ids = list(chains.keys())
+    chain_list = [chains[k] for k in chain_ids]
+    chain_dirs_list = [_chain_directions(pts) for pts in chain_list]
+
+    all_pos: list[np.ndarray] = []
+    all_dir: list[np.ndarray] = []
+    all_ci: list[int] = []
+    all_si: list[int] = []
+    chain_start = np.zeros(len(chain_list) + 1, dtype=np.int64)
+    for ci, pts in enumerate(chain_list):
+        dirs = chain_dirs_list[ci]
+        for si, (pos, d) in enumerate(zip(pts, dirs)):
+            all_pos.append(pos)
+            all_dir.append(d)
+            all_ci.append(ci)
+            all_si.append(si)
+        chain_start[ci + 1] = chain_start[ci] + len(pts)
+
+    all_pos_arr = np.array(all_pos, dtype=np.float32)
+    all_dir_arr = np.array(all_dir, dtype=np.float32)
+    all_ci_arr = np.array(all_ci, dtype=np.int32)
+    all_si_arr = np.array(all_si, dtype=np.int32)
+    return {
+        "tree": KDTree(all_pos_arr),
+        "all_pos_arr": all_pos_arr,
+        "all_dir_arr": all_dir_arr,
+        "all_ci_arr": all_ci_arr,
+        "all_si_arr": all_si_arr,
+        "chain_start": chain_start,
+        "chain_list": chain_list,
+        "chain_dirs_list": chain_dirs_list,
+    }
+
+
 def generate_path_examples(
     chains: dict[int, np.ndarray],
     *,
@@ -125,6 +172,7 @@ def generate_path_examples(
     parallel_cell_fraction: float = 0.15,
     rng: np.random.Generator | None = None,
     max_examples: int | None = None,
+    spatial_index: dict | None = None,
 ) -> tuple[list[np.ndarray], np.ndarray]:
     """Build (feature_array, label) training pairs.
 
@@ -165,43 +213,43 @@ def generate_path_examples(
         stride = max(1, window_size // 2)
 
     half = window_size // 2
-    chain_ids = list(chains.keys())
-    chain_list = [chains[k] for k in chain_ids]
 
-    # --- Build global KD-tree, direction index, and O(1) position lookup ---
-    # Precompute chain directions once (not inside negative-generation loops).
-    chain_dirs_list = [_chain_directions(pts) for pts in chain_list]
-
-    all_pos: list[np.ndarray] = []
-    all_dir: list[np.ndarray] = []
-    all_ci: list[int] = []
-    all_si: list[int] = []
-    # chain_start[ci] = first global index for chain ci; allows O(1) lookup:
-    #   global_idx(ci, si) = chain_start[ci] + si
-    chain_start = np.zeros(len(chain_list) + 1, dtype=np.int64)
-    for ci, pts in enumerate(chain_list):
-        dirs = chain_dirs_list[ci]
-        for si, (pos, d) in enumerate(zip(pts, dirs)):
-            all_pos.append(pos)
-            all_dir.append(d)
-            all_ci.append(ci)
-            all_si.append(si)
-        chain_start[ci + 1] = chain_start[ci] + len(pts)
-
-    all_pos_arr = np.array(all_pos, dtype=np.float32)
-    all_dir_arr = np.array(all_dir, dtype=np.float32)
-    all_ci_arr = np.array(all_ci, dtype=np.int32)
-    all_si_arr = np.array(all_si, dtype=np.int32)
-
-    from scipy.spatial import KDTree
-    tree = KDTree(all_pos_arr)
+    if spatial_index is not None:
+        tree = spatial_index["tree"]
+        all_pos_arr = spatial_index["all_pos_arr"]
+        all_dir_arr = spatial_index["all_dir_arr"]
+        all_ci_arr = spatial_index["all_ci_arr"]
+        all_si_arr = spatial_index["all_si_arr"]
+        chain_start = spatial_index["chain_start"]
+        chain_list = spatial_index["chain_list"]
+        chain_dirs_list = spatial_index["chain_dirs_list"]
+    else:
+        idx = build_spatial_index(chains)
+        tree = idx["tree"]
+        all_pos_arr = idx["all_pos_arr"]
+        all_dir_arr = idx["all_dir_arr"]
+        all_ci_arr = idx["all_ci_arr"]
+        all_si_arr = idx["all_si_arr"]
+        chain_start = idx["chain_start"]
+        chain_list = idx["chain_list"]
+        chain_dirs_list = idx["chain_dirs_list"]
 
     # --- Positive examples ---
     features: list[np.ndarray] = []
     labels: list[float] = []
     source_ci: list[int] = []
 
-    for ci, pts in enumerate(chain_list):
+    # Target budget: with neg_per_pos negatives per positive, we need at most
+    # max_examples / (1 + neg_per_pos) positives.  Shuffle chains so that with
+    # early stopping we sample a random subset rather than always the same cells.
+    n_pos_target = (
+        max(1, max_examples // (1 + neg_per_pos)) if max_examples is not None else None
+    )
+    ci_order = rng.permutation(len(chain_list))
+    for ci in ci_order:
+        if n_pos_target is not None and len(features) >= n_pos_target:
+            break
+        pts = chain_list[ci]
         N = len(pts)
         if N < window_size:
             continue
@@ -407,10 +455,8 @@ def generate_path_examples(
 
     labels_arr = np.array(labels, dtype=np.float32)
 
-    # Shuffle and optionally cap
+    # Shuffle
     idx = rng.permutation(len(features))
-    if max_examples is not None and len(features) > max_examples:
-        idx = idx[:max_examples]
     features = [features[i] for i in idx]
     labels_arr = labels_arr[idx]
 
@@ -572,6 +618,12 @@ def train_path_encoder(
     print(f"Chains: {n_cells} cells  "
           f"(median_len={int(np.median([len(c) for c in chain_list]))})")
 
+    # Build spatial index once — reused every epoch to avoid per-epoch KD-tree rebuild
+    print("Building spatial index… ", end="", flush=True)
+    _t_idx = time.monotonic()
+    _spatial_index = build_spatial_index(all_chains)
+    print(f"{time.monotonic() - _t_idx:.1f}s")
+
     # Pre-generate edit history examples (static — same pairs each epoch)
     edit_feats: list = []
     edit_lbls = np.empty(0, dtype=np.float32)
@@ -608,6 +660,7 @@ def train_path_encoder(
             parallel_cell_fraction=parallel_cell_fraction,
             rng=rng,
             max_examples=max_examples_per_epoch,
+            spatial_index=_spatial_index,
         )
 
         # Append edit history examples (ground-truth hard cases from real corrections)
