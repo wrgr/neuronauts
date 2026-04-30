@@ -640,8 +640,11 @@ def train_path_encoder(
             emb = encoder(path_seq_t, path_mask_t, has_path_t)
             logits = head(emb).squeeze(-1)
 
-            # pos_weight to handle class imbalance (neg_per_pos:1 negatives)
-            pos_w = torch.tensor(float(neg_per_pos), dtype=torch.float32)
+            # Use actual observed neg:pos ratio as pos_weight rather than
+            # the target neg_per_pos, because hard-negative generation fails
+            # for short chains, yielding fewer negatives than requested.
+            actual_ratio = n_neg / max(n_pos, 1)
+            pos_w = torch.tensor(float(actual_ratio), dtype=torch.float32)
             loss = F.binary_cross_entropy_with_logits(logits, lbl_t, pos_weight=pos_w)
 
             optimizer.zero_grad()
@@ -705,6 +708,26 @@ def load_path_encoder(path: str):
 # ---------------------------------------------------------------------------
 # CAVE edit-history chain fetcher
 # ---------------------------------------------------------------------------
+#
+# NOTE (Minnie65 v1412 limitation):
+# The cells in the box cache at root_id_version=1412 are *already fully
+# proofread* neurons.  All proofreading merge/split operations happened
+# between tiny supervoxel fragments whose synapses (if any) are not
+# accessible through the current materialization table.
+# Querying before-roots at v117 (2021-06-11) and after-roots at current
+# version both return 0 synapses because:
+# - Split after-roots are stubs/debris with no pre-synapses
+# - Merge before-roots were tiny fragments from the initial over-segmentation
+# - Merge after-roots have been further split/merged hundreds of times and
+#   are no longer valid root IDs by v943+ (2024+)
+#
+# The proofread neurons already *are* the ground-truth positive data.
+# Their synapse chains (used in generate_path_examples) directly encode what
+# correct arbor trajectories look like.  No separate edit-history augmentation
+# is needed for the Minnie65 dataset at v1412.
+#
+# This module is retained for datasets where proofreading is less complete
+# and intermediate states are accessible through versioned materialization.
 
 _CAVE_MIP2_VOXEL_NM = np.array([8.0, 8.0, 40.0], dtype=np.float32)
 # Minnie65 synapses are stored in 8-8-40 nm voxels
