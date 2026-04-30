@@ -616,6 +616,12 @@ def skeleton_stepwise_features(
     cumulative = np.concatenate([[0.0], np.cumsum(step_dists)]).astype(np.float32)
     total = cumulative[-1]
     norm_cum = (cumulative[:-1] / max(total, eps)).astype(np.float32)
+    # Centered arc-length: deviation from the expected position for uniform spacing.
+    # For a valid path with equal step sizes this is ~0; a splice between two cells
+    # with different step sizes creates a visible deviation that the transformer can
+    # detect without needing to learn an absolute threshold.
+    T = len(step_dists)
+    centered_cum = (norm_cum - np.arange(T, dtype=np.float32) / max(T, 1)).astype(np.float32)
 
     units = diffs / np.clip(step_dists[:, None], eps, None)
     if len(units) >= 2:
@@ -626,7 +632,7 @@ def skeleton_stepwise_features(
     else:
         turning = np.zeros(len(step_dists), dtype=np.float32)
 
-    return np.stack([step_dists, norm_cum, turning], axis=-1).astype(np.float32)
+    return np.stack([step_dists, centered_cum, turning], axis=-1).astype(np.float32)
 
 
 def mesh_volume_surface_ratio(
