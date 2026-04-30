@@ -778,25 +778,34 @@ def fetch_cave_edit_history(
     splits = all_ops[~all_ops["is_merge"]].head(n_ops // 2)
     print(f"[CAVE] {len(merges)} merge ops, {len(splits)} split ops sampled")
 
-    def _query_synapses(root_ids, mat_version=None):
-        """Return root_id -> [N,3] absolute-nm positions for roots with >= min_synapses."""
+    def _batch_query_synapses(root_ids, mat_version=None, batch_size=200):
+        """Batch-query synapses for a list of root IDs using filter_in_dict.
+
+        Returns root_id -> [N,3] absolute-nm positions for roots with >= min_synapses.
+        Uses one query per batch of root_ids rather than one query per root.
+        """
         result: dict[int, np.ndarray] = {}
-        for rid in root_ids:
+        root_ids = [int(r) for r in root_ids]
+        for i in range(0, len(root_ids), batch_size):
+            batch = root_ids[i: i + batch_size]
             try:
                 kwargs: dict = dict(
-                    filter_equal_dict={"pre_pt_root_id": int(rid)},
+                    filter_in_dict={"pre_pt_root_id": batch},
                     select_columns=["pre_pt_root_id", "pre_pt_position"],
                 )
                 if mat_version is not None:
                     kwargs["materialization_version"] = mat_version
                 df = client.materialize.query_table("synapses_pni_2", **kwargs)
-                if len(df) < min_synapses:
+                if len(df) == 0:
                     continue
-                pos_vox = np.array(df["pre_pt_position"].tolist(), dtype=np.float32)
-                pos_nm = pos_vox * _CAVE_MIP2_VOXEL_NM
-                chain = _build_chain_from_positions(pos_nm)
-                if chain is not None:
-                    result[int(rid)] = chain
+                for rid, grp in df.groupby("pre_pt_root_id"):
+                    if len(grp) < min_synapses:
+                        continue
+                    pos_vox = np.array(grp["pre_pt_position"].tolist(), dtype=np.float32)
+                    pos_nm = pos_vox * _CAVE_MIP2_VOXEL_NM
+                    chain = _build_chain_from_positions(pos_nm)
+                    if chain is not None:
+                        result[int(rid)] = chain
             except Exception:
                 pass
         return result
@@ -805,34 +814,45 @@ def fetch_cave_edit_history(
     edit_pairs: list[tuple[int, int, str]] = []
 
     # Split ops: proofreader fixed a false merge -> after-roots are a negative pair
-    n_split_added = 0
+    split_pairs = []
     for _, row in splits.iterrows():
         after = [int(r) for r in row["after_root_ids"]]
-        if len(after) < 2:
-            continue
-        root_a, root_b = after[0], after[1]
-        new_chains = _query_synapses([root_a, root_b])
-        if root_a in new_chains and root_b in new_chains:
-            chains.update(new_chains)
-            edit_pairs.append((root_a, root_b, "merge"))
-            n_split_added += 1
+        if len(after) >= 2:
+            split_pairs.append((after[0], after[1]))
 
-    print(f"[CAVE] split ops -> {n_split_added} negative pairs added")
+    if split_pairs:
+        all_split_roots = list({r for pair in split_pairs for r in pair})
+        print(f"[CAVE] querying synapses for {len(all_split_roots)} split-op roots ...")
+        split_chains = _batch_query_synapses(all_split_roots)
+        n_split_added = 0
+        for root_a, root_b in split_pairs:
+            if root_a in split_chains and root_b in split_chains:
+                chains[root_a] = split_chains[root_a]
+                chains[root_b] = split_chains[root_b]
+                edit_pairs.append((root_a, root_b, "merge"))
+                n_split_added += 1
+        print(f"[CAVE] split ops -> {n_split_added} negative pairs added")
 
     # Merge ops: proofreader fixed a false split -> before-roots are a positive pair
-    n_merge_added = 0
+    merge_pairs = []
     for _, row in merges.iterrows():
         before = [int(r) for r in row["before_root_ids"]]
-        if len(before) < 2:
-            continue
-        root_a, root_b = before[0], before[1]
-        new_chains = _query_synapses([root_a, root_b], mat_version=old_mat_version)
-        if root_a in new_chains and root_b in new_chains:
-            chains.update(new_chains)
-            edit_pairs.append((root_a, root_b, "split"))
-            n_merge_added += 1
+        if len(before) >= 2:
+            merge_pairs.append((before[0], before[1]))
 
-    print(f"[CAVE] merge ops -> {n_merge_added} positive pairs added")
+    if merge_pairs:
+        all_merge_roots = list({r for pair in merge_pairs for r in pair})
+        print(f"[CAVE] querying synapses for {len(all_merge_roots)} merge-op roots "
+              f"(mat v{old_mat_version}) ...")
+        merge_chains = _batch_query_synapses(all_merge_roots, mat_version=old_mat_version)
+        n_merge_added = 0
+        for root_a, root_b in merge_pairs:
+            if root_a in merge_chains and root_b in merge_chains:
+                chains[root_a] = merge_chains[root_a]
+                chains[root_b] = merge_chains[root_b]
+                edit_pairs.append((root_a, root_b, "split"))
+                n_merge_added += 1
+        print(f"[CAVE] merge ops -> {n_merge_added} positive pairs added")
     print(f"[CAVE] total: {len(chains)} chains, {len(edit_pairs)} edit pairs")
     return chains, edit_pairs
 
