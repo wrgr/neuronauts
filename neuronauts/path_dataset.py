@@ -1065,14 +1065,20 @@ def fetch_cave_false_merge_chains(
             (int(row.pre_pt_supervoxel_id), pos_nm)
         )
 
-    # ---- Step 3: find false merges via supervoxel → current root lookup ----
+    # ---- Step 3: supervoxel → current root lookup; detect both error types ----
+    # false merge : one v117 root → 2+ current roots  → hard negative (merge)
+    # false split : 2+ v117 roots → same current root → hard positive  (split)
     chains: dict[int, np.ndarray] = {}
     pairs: list[tuple[int, int, str]] = []
     synthetic_id = -1  # negative IDs don't clash with real root IDs
 
+    # cur_root → list of synthetic chain IDs contributed by distinct v117 roots.
+    # Used after the loop to emit false-split (hard positive) pairs.
+    cur_root_to_sids: dict[int, list[int]] = defaultdict(list)
+
     n_checked = 0
     for v117_root, entries in root_to_entries.items():
-        if len(pairs) // 2 >= max_false_merges:
+        if len(pairs) >= max_false_merges * 2:
             break
 
         svids = [e[0] for e in entries]
@@ -1086,16 +1092,11 @@ def fetch_cave_false_merge_chains(
                 int(r) for r in client.chunkedgraph.get_roots(batch_svids)
             )
 
-        # Group positions by current root
+        # Group positions by current root; build a chain per group
         cur_root_to_positions: dict[int, list] = defaultdict(list)
         for cur_root, pos in zip(cur_roots_list, positions):
             cur_root_to_positions[cur_root].append(pos)
 
-        if len(cur_root_to_positions) < 2:
-            n_checked += 1
-            continue
-
-        # False merge confirmed: assign synthetic chain IDs for each half
         half_ids: list[int] = []
         for cur_root, pos_list in cur_root_to_positions.items():
             pos_arr = np.stack(pos_list, axis=0).astype(np.float32)
@@ -1106,27 +1107,45 @@ def fetch_cave_false_merge_chains(
             synthetic_id -= 1
             chains[sid] = chain
             half_ids.append(sid)
+            # Register for false-split detection
+            cur_root_to_sids[cur_root].append(sid)
 
-        # Generate all pairs from this false-merge root (usually just 2 halves)
-        for i in range(len(half_ids)):
-            for j in range(i + 1, len(half_ids)):
-                pairs.append((half_ids[i], half_ids[j], "merge"))
+        # False merge: this v117 root spanned 2+ biological cells
+        if len(half_ids) >= 2:
+            for i in range(len(half_ids)):
+                for j in range(i + 1, len(half_ids)):
+                    pairs.append((half_ids[i], half_ids[j], "merge"))
 
         n_checked += 1
         if n_checked % 200 == 0:
             print(
                 f"[CAVE false-merge] checked {n_checked}/{len(root_to_entries)}, "
-                f"{len(pairs)} pairs so far",
+                f"{len(pairs)} merge pairs so far",
                 flush=True,
             )
 
-    rng.shuffle(pairs)
+    # False splits: same current root absorbing chains from 2+ distinct v117 roots.
+    # Those v117 roots were incorrectly split; their junction is a hard positive.
+    split_pairs: list[tuple[int, int, str]] = []
+    for cur_root, sids in cur_root_to_sids.items():
+        if len(sids) < 2:
+            continue
+        for i in range(len(sids)):
+            for j in range(i + 1, len(sids)):
+                split_pairs.append((sids[i], sids[j], "split"))
+
+    all_pairs = pairs + split_pairs
+    rng.shuffle(all_pairs)
+
+    n_merge = sum(1 for _, _, op in all_pairs if op == "merge")
+    n_split = len(all_pairs) - n_merge
     print(
-        f"[CAVE false-merge] done: {len(chains)} half-chains, {len(pairs)} merge pairs "
+        f"[CAVE false-merge] done: {len(chains)} chains, "
+        f"{n_merge} merge pairs (hard-neg), {n_split} split pairs (hard-pos) "
         f"from {n_checked} checked roots",
         flush=True,
     )
-    return chains, pairs
+    return chains, all_pairs
 
 
 def fetch_cave_lineage_pairs(
