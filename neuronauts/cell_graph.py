@@ -1567,7 +1567,7 @@ def cell_graph_edge_train_step(
         if not path_feat_dict and graph.root_ids is not None:
             path_feat_dict = build_synapse_chain_paths(graph)
 
-        keep_np = keep_global.cpu().numpy()
+        keep_np = np.asarray(keep_global)
         es_np_k = es_k.cpu().numpy()
         ed_np_k = ed_k.cpu().numpy()
         path_seqs: list[np.ndarray] = []
