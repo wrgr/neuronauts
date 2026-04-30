@@ -974,6 +974,161 @@ def fetch_cave_edit_history(
     return chains, edit_pairs
 
 
+def fetch_cave_false_merge_chains(
+    cave_token: str,
+    datastack: str = "minnie65_phase3_v1",
+    *,
+    past_timestamp: str = "2021-06-11",
+    n_sample_old_roots: int = 10000,
+    max_false_merges: int = 500,
+    svid_batch_size: int = 200,
+    rng_seed: int = 0,
+) -> "tuple[dict[int, np.ndarray], list[tuple[int, int, str]]]":
+    """Build real false-merge training pairs from CAVE delta root history.
+
+    A false merge is a v117 root whose supervoxels now belong to 2+ different
+    current roots — incorrectly merged in the CV output, later split by
+    proofreaders.  This is the pre/post signal the path encoder needs: the
+    path encoder learns the transfer function from CV output → proofread output.
+
+    Single-synapse isolates swept into a false merge are included — even a
+    1-synapse foreign segment crossing into a chain is a real "insert" pattern.
+
+    For each false merge detected:
+    1. Groups v117 synapse positions by current root ID.
+    2. Sorts each group along its PCA axis (same as _build_chain_from_positions).
+    3. Assigns a synthetic negative chain ID (to avoid clashing with real root IDs).
+    4. Records a (chain_id_a, chain_id_b, 'merge') pair.
+
+    Parameters
+    ----------
+    cave_token : CAVE auth token.
+    past_timestamp : ISO date of the raw/early state (v117 ≈ 2021-06-11).
+    n_sample_old_roots : how many delta roots to probe (more → richer but slower).
+    max_false_merges : cap on the number of false-merge events returned.
+    svid_batch_size : supervoxels per get_roots call.
+    rng_seed : RNG seed.
+
+    Returns
+    -------
+    chains : dict[int → np.ndarray [N, 3] float32]
+        Synthetic (negative) root_id → nm positions.  Merge into the main
+        chains dict before calling :func:`add_edit_history_examples`.
+    pairs : list of (chain_id_a, chain_id_b, 'merge')
+    """
+    try:
+        import caveclient
+        import datetime
+    except ImportError as exc:
+        raise ImportError("caveclient is required: pip install caveclient") from exc
+
+    from collections import defaultdict
+
+    past_dt = datetime.datetime.fromisoformat(past_timestamp).replace(
+        tzinfo=datetime.timezone.utc
+    )
+    rng = np.random.default_rng(rng_seed)
+    client = caveclient.CAVEclient(datastack, auth_token=cave_token)
+
+    # ---- Step 1: sample old roots (v117 roots that changed since past_dt) ----
+    print(f"[CAVE false-merge] fetching delta roots since {past_dt.date()} ...", flush=True)
+    old_roots, _ = client.chunkedgraph.get_delta_roots(timestamp_past=past_dt)
+    sample_size = min(n_sample_old_roots, len(old_roots))
+    sample = rng.choice(old_roots, sample_size, replace=False).tolist()
+    print(f"[CAVE false-merge] sampled {sample_size:,} of {len(old_roots):,} old roots", flush=True)
+
+    # ---- Step 2: query v117 synapse positions + supervoxel IDs ----
+    print(f"[CAVE false-merge] querying v117 synapses ...", flush=True)
+    df = client.materialize.query_table(
+        "synapses_pni_2",
+        filter_in_dict={"pre_pt_root_id": sample},
+        select_columns=[
+            "pre_pt_root_id",
+            "pre_pt_supervoxel_id",
+            "pre_pt_position",
+        ],
+        materialization_version=117,
+    )
+    print(f"[CAVE false-merge] got {len(df):,} synapses from {df['pre_pt_root_id'].nunique()} roots", flush=True)
+
+    if len(df) == 0:
+        print("[CAVE false-merge] no synapses found — try an earlier past_timestamp")
+        return {}, []
+
+    # Build root → [(svid, position_nm)] mapping
+    _vox = np.array([8.0, 8.0, 40.0], dtype=np.float32)  # Minnie65 voxel size nm
+    root_to_entries: dict[int, list] = defaultdict(list)
+    for row in df.itertuples(index=False):
+        pos_vox = np.asarray(row.pre_pt_position, dtype=np.float32)
+        pos_nm = pos_vox * _vox
+        root_to_entries[int(row.pre_pt_root_id)].append(
+            (int(row.pre_pt_supervoxel_id), pos_nm)
+        )
+
+    # ---- Step 3: find false merges via supervoxel → current root lookup ----
+    chains: dict[int, np.ndarray] = {}
+    pairs: list[tuple[int, int, str]] = []
+    synthetic_id = -1  # negative IDs don't clash with real root IDs
+
+    n_checked = 0
+    for v117_root, entries in root_to_entries.items():
+        if len(pairs) // 2 >= max_false_merges:
+            break
+
+        svids = [e[0] for e in entries]
+        positions = [e[1] for e in entries]
+
+        # Batch supervoxel → current root lookup
+        cur_roots_list: list[int] = []
+        for i in range(0, len(svids), svid_batch_size):
+            batch_svids = svids[i : i + svid_batch_size]
+            cur_roots_list.extend(
+                int(r) for r in client.chunkedgraph.get_roots(batch_svids)
+            )
+
+        # Group positions by current root
+        cur_root_to_positions: dict[int, list] = defaultdict(list)
+        for cur_root, pos in zip(cur_roots_list, positions):
+            cur_root_to_positions[cur_root].append(pos)
+
+        if len(cur_root_to_positions) < 2:
+            n_checked += 1
+            continue
+
+        # False merge confirmed: assign synthetic chain IDs for each half
+        half_ids: list[int] = []
+        for cur_root, pos_list in cur_root_to_positions.items():
+            pos_arr = np.stack(pos_list, axis=0).astype(np.float32)
+            chain = _build_chain_from_positions(pos_arr)
+            if chain is None:
+                chain = pos_arr  # single point — still usable as isolate
+            sid = synthetic_id
+            synthetic_id -= 1
+            chains[sid] = chain
+            half_ids.append(sid)
+
+        # Generate all pairs from this false-merge root (usually just 2 halves)
+        for i in range(len(half_ids)):
+            for j in range(i + 1, len(half_ids)):
+                pairs.append((half_ids[i], half_ids[j], "merge"))
+
+        n_checked += 1
+        if n_checked % 200 == 0:
+            print(
+                f"[CAVE false-merge] checked {n_checked}/{len(root_to_entries)}, "
+                f"{len(pairs)} pairs so far",
+                flush=True,
+            )
+
+    rng.shuffle(pairs)
+    print(
+        f"[CAVE false-merge] done: {len(chains)} half-chains, {len(pairs)} merge pairs "
+        f"from {n_checked} checked roots",
+        flush=True,
+    )
+    return chains, pairs
+
+
 def fetch_cave_lineage_pairs(
     cave_token: str,
     current_root_ids: "list[int]",
