@@ -87,6 +87,7 @@ class PathEdgeEncoder:
         max_len: int = 64,
         dropout: float = 0.1,
         ffn_dim: int = 64,
+        pool_mode: str = "cls",
     ):
         torch, nn = _require_torch()
         import math
@@ -104,6 +105,7 @@ class PathEdgeEncoder:
                 self.d_model = _d_model
                 self.output_dim = int(output_dim)
                 self.max_len = int(max_len)
+                self.pool_mode = str(pool_mode)
                 self._init_kwargs = {
                     "input_dim": self.input_dim,
                     "d_model": self.d_model,
@@ -113,6 +115,7 @@ class PathEdgeEncoder:
                     "max_len": self.max_len,
                     "dropout": float(dropout),
                     "ffn_dim": int(ffn_dim),
+                    "pool_mode": self.pool_mode,
                 }
 
                 self.input_proj = nn.Linear(self.input_dim, self.d_model)
@@ -193,6 +196,13 @@ class PathEdgeEncoder:
 
                 out = self.transformer(tokens, src_key_padding_mask=full_mask)
                 cls_out = out[:, 0, :]                        # [P, d_model]
+
+                if self.pool_mode == "cls_max":
+                    # Max-pool over step positions: gives model a direct "worst-case
+                    # step" signal that attention-based CLS pooling can't express.
+                    step_out = out[:, 1:, :].masked_fill(pm.unsqueeze(-1), -1e4)
+                    cls_out = cls_out + step_out.max(dim=1).values  # [P, d_model]
+
                 emb = self.output_proj(cls_out)               # [P, output_dim]
 
                 # Scatter back: only the P path-having edges are updated

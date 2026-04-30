@@ -2725,6 +2725,10 @@ def parse_args(argv=None) -> argparse.Namespace:
     p_path.add_argument("--max-examples-per-epoch", type=int, default=None,
                         help="Cap examples per epoch (useful on CPU to keep epochs short). "
                              "Spatial index is still built once and reused every epoch.")
+    p_path.add_argument("--pool-mode", default="cls",
+                        choices=["cls", "cls_max"],
+                        help="Pooling strategy: 'cls' = CLS token only (v5/v6); "
+                             "'cls_max' = CLS + max-pool over step positions (v7+).")
     p_path.add_argument("--output", default="models/path_encoder.pt",
                         help="Output checkpoint path.")
     p_path.add_argument("--seed", type=int, default=42)
@@ -2816,6 +2820,7 @@ def cmd_train_path_encoder(args: argparse.Namespace) -> int:
         max_examples_per_epoch=getattr(args, "max_examples_per_epoch", None),
         edit_pairs_tsv=getattr(args, "edit_pairs_tsv", None),
         edit_chains=edit_chains,
+        pool_mode=getattr(args, "pool_mode", "cls"),
     )
     return 0
 

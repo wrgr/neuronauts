@@ -572,6 +572,7 @@ def train_path_encoder(
     max_examples_per_epoch: int | None = None,
     edit_pairs_tsv: "str | None" = None,
     edit_chains: "dict[int, np.ndarray] | None" = None,
+    pool_mode: str = "cls",
 ) -> object:
     """Train PathEdgeEncoder on path discrimination and save checkpoint.
 
@@ -594,6 +595,7 @@ def train_path_encoder(
         n_heads=n_heads,
         n_layers=n_layers,
         output_dim=output_dim,
+        pool_mode=pool_mode,
     )
     head = nn.Linear(output_dim, 1)
 
