@@ -2743,22 +2743,22 @@ def parse_args(argv=None) -> argparse.Namespace:
     # ---------------------------------------------------------------------------
     p_cave = sub.add_parser(
         "fetch-cave-edits",
-        help="Fetch CAVE proofreading corrections and build edit-history TSV for path encoder training.",
+        help="Fetch CAVE proofreading lineage pairs and build edit-history TSV for path encoder training.",
     )
     p_cave.add_argument("--token", default=None,
                         help="CAVE auth token.  Defaults to ~/.cloudvolume/secrets/cave-secret.json.")
     p_cave.add_argument("--datastack", default="minnie65_phase3_v1",
                         help="CAVE datastack name.")
-    p_cave.add_argument("--n-ops", type=int, default=500,
-                        help="Number of merge/split operations to sample.")
-    p_cave.add_argument("--min-synapses", type=int, default=5,
-                        help="Minimum pre-synapses per root to include.")
-    p_cave.add_argument("--old-mat-version", type=int, default=117,
-                        help="Materialization version for querying pre-merge before-roots.")
+    p_cave.add_argument("--cache-dir", default="data/boxes_30um",
+                        help="Box cache directory — root IDs are read from here (no CAVE synapse fetch needed).")
+    p_cave.add_argument("--past-timestamp", default="2021-06-11",
+                        help="ISO date of the raw/early version (v117 ≈ 2021-06-11).")
+    p_cave.add_argument("--max-pairs", type=int, default=2000,
+                        help="Maximum number of lineage pairs to return.")
+    p_cave.add_argument("--batch-size", type=int, default=500,
+                        help="Roots per CAVE API call.")
     p_cave.add_argument("--output-tsv", default="data/cave_edit_pairs.tsv",
                         help="Output TSV path for edit pairs.")
-    p_cave.add_argument("--output-chains", default="data/cave_edit_chains.npz",
-                        help="Output NPZ path for the fetched chains.")
     p_cave.add_argument("--seed", type=int, default=0)
     p_cave.set_defaults(func=cmd_fetch_cave_edits)
 
@@ -2827,9 +2827,23 @@ def cmd_train_path_encoder(args: argparse.Namespace) -> int:
 
 
 def cmd_fetch_cave_edits(args: argparse.Namespace) -> int:
-    """Fetch CAVE proofreading corrections and save edit-history TSV + chains NPZ."""
+    """Fetch CAVE lineage pairs (pre/post proofreading) and save edit-history TSV.
+
+    Uses the chunkedgraph lineage API to find which current (v1412) root IDs
+    descended from the same raw-segmentation (v117) ancestor.  Two current roots
+    sharing a v117 ancestor were incorrectly merged in the CV output — their
+    junction is a real false-merge hard negative.
+
+    No CAVE synapse fetching is needed: the root IDs are read from the box cache
+    (--cache-dir) and their chains are already available from extract_cell_chains().
+    """
     import json, os
-    from neuronauts.path_dataset import fetch_cave_edit_history, save_edit_pairs_tsv
+    from neuronauts.dataset_builder import BoxCache
+    from neuronauts.path_dataset import (
+        extract_cell_chains,
+        fetch_cave_lineage_pairs,
+        save_edit_pairs_tsv,
+    )
 
     token = args.token
     if token is None:
@@ -2841,29 +2855,32 @@ def cmd_fetch_cave_edits(args: argparse.Namespace) -> int:
         print("No CAVE token found.  Pass --token or set ~/.cloudvolume/secrets/cave-secret.json")
         return 1
 
-    chains, edit_pairs = fetch_cave_edit_history(
+    # Load root IDs from the box cache — these are the v1412 proofread neurons.
+    cache = BoxCache(args.cache_dir)
+    records = cache.all_records()
+    if not records:
+        print(f"No cached boxes in {args.cache_dir}")
+        return 1
+
+    chains = extract_cell_chains(cache)
+    current_root_ids = list(chains.keys())
+    print(f"Box cache: {len(records)} boxes, {len(current_root_ids)} root IDs")
+
+    edit_pairs = fetch_cave_lineage_pairs(
         cave_token=token,
+        current_root_ids=current_root_ids,
         datastack=args.datastack,
-        n_ops=args.n_ops,
-        min_synapses=args.min_synapses,
-        old_mat_version=args.old_mat_version,
+        past_timestamp=args.past_timestamp,
+        batch_size=args.batch_size,
+        max_pairs=args.max_pairs,
         rng_seed=args.seed,
     )
 
     if not edit_pairs:
-        print("No edit pairs found.")
+        print("No lineage pairs found — all roots may be unchanged since past_timestamp.")
         return 1
 
     save_edit_pairs_tsv(edit_pairs, args.output_tsv)
-
-    # Save chains as NPZ so they can be loaded and merged with cache chains
-    import numpy as np
-    os.makedirs(os.path.dirname(os.path.abspath(args.output_chains)), exist_ok=True)
-    np.savez_compressed(
-        args.output_chains,
-        **{str(rid): arr for rid, arr in chains.items()},
-    )
-    print(f"Saved {len(chains)} chains -> {args.output_chains}")
     return 0
 
 

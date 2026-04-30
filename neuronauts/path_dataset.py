@@ -974,6 +974,133 @@ def fetch_cave_edit_history(
     return chains, edit_pairs
 
 
+def fetch_cave_lineage_pairs(
+    cave_token: str,
+    current_root_ids: "list[int]",
+    datastack: str = "minnie65_phase3_v1",
+    *,
+    past_timestamp: str = "2021-06-11",
+    batch_size: int = 500,
+    max_pairs: int = 2000,
+    rng_seed: int = 0,
+) -> "list[tuple[int, int, str]]":
+    """Find real false-merge and false-split pairs via CAVE chunkedgraph lineage.
+
+    This implements the correct pre/post training data approach:
+
+    * The **past** state (``past_timestamp``, default v117 2021-06-11) is the raw
+      automated-segmentation output before human proofreading — the CV output.
+    * The **current** state (v1412+) is the proofread ground truth.
+
+    We are learning the transfer function from CV output → proofread output.
+    The path encoder's job is to detect where the CV got it wrong.
+
+    Two current v1412 roots that share the same v117 ancestor were incorrectly
+    **merged** in the raw output (false merge → hard negative at their junction).
+
+    One current v1412 root that descends from multiple v117 roots means the raw
+    output had them incorrectly **split** (false split → hard positive across
+    the split boundary).  These chains are not fetched here; the caller must
+    supply v117 chains separately to use split pairs.
+
+    Both root IDs in each returned pair are v1412 IDs drawn from
+    ``current_root_ids``, so their chains are already available from
+    :func:`extract_cell_chains` on the box cache — no extra CAVE synapse
+    queries are needed for the merge pairs.
+
+    Parameters
+    ----------
+    cave_token : CAVE auth token.
+    current_root_ids : v1412 root IDs from the box cache.
+    past_timestamp : ISO date string for the raw/early version (v117 ≈ 2021-06-11).
+    batch_size : roots per CAVE API call (500 is safe under rate limits).
+    max_pairs : cap on returned pairs (shuffled before truncation).
+    rng_seed : RNG seed for shuffle.
+
+    Returns
+    -------
+    list of (root_id_a, root_id_b, operation) tuples where operation is
+    ``'merge'`` (false merge → hard negative) or ``'split'`` (false split
+    → hard positive, only if both v117 roots are in ``current_root_ids``).
+    """
+    try:
+        import caveclient
+        import datetime
+    except ImportError as exc:
+        raise ImportError("caveclient is required: pip install caveclient") from exc
+
+    from collections import defaultdict
+
+    past_dt = datetime.datetime.fromisoformat(past_timestamp).replace(
+        tzinfo=datetime.timezone.utc
+    )
+
+    rng = np.random.default_rng(rng_seed)
+    client = caveclient.CAVEclient(datastack, auth_token=cave_token)
+
+    root_ids = list(current_root_ids)
+    rng.shuffle(root_ids)
+
+    print(
+        f"[CAVE lineage] querying {len(root_ids)} roots' ancestors at {past_dt.date()} ..."
+    )
+
+    current_set = set(current_root_ids)
+    current_to_past: dict[int, list[int]] = {}
+    n_batches = (len(root_ids) + batch_size - 1) // batch_size
+    for i in range(0, len(root_ids), batch_size):
+        batch = root_ids[i : i + batch_size]
+        result = client.chunkedgraph.get_past_ids(
+            root_ids=batch,
+            timestamp_past=past_dt,
+        )
+        past_map = result["past_id_map"]
+        for cid, pids in past_map.items():
+            current_to_past[int(cid)] = [int(p) for p in pids]
+        bn = i // batch_size + 1
+        if bn % 10 == 0 or bn == n_batches:
+            print(f"  batch {bn}/{n_batches}")
+
+    # False merges: two current roots sharing the same past root.
+    past_to_current: dict[int, list[int]] = defaultdict(list)
+    for cid, pids in current_to_past.items():
+        for pid in pids:
+            past_to_current[pid].append(cid)
+
+    merge_pairs: list[tuple[int, int, str]] = []
+    for _past_root, cur_roots in past_to_current.items():
+        if len(cur_roots) < 2:
+            continue
+        unique = sorted(set(cur_roots))
+        for ii in range(len(unique)):
+            for jj in range(ii + 1, len(unique)):
+                merge_pairs.append((unique[ii], unique[jj], "merge"))
+
+    # False splits: one current root descended from multiple past roots.
+    # Only include if BOTH past roots happen to be in current_root_ids (rare
+    # but possible when a cell was incorrectly over-split then later merged).
+    split_pairs: list[tuple[int, int, str]] = []
+    for cid, pids in current_to_past.items():
+        if len(pids) < 2:
+            continue
+        pid_set = [p for p in pids if p in current_set]
+        for ii in range(len(pid_set)):
+            for jj in range(ii + 1, len(pid_set)):
+                split_pairs.append((pid_set[ii], pid_set[jj], "split"))
+
+    all_pairs = merge_pairs + split_pairs
+    rng.shuffle(all_pairs)
+    all_pairs = all_pairs[:max_pairs]
+
+    n_merge = sum(1 for _, _, op in all_pairs if op == "merge")
+    n_split = len(all_pairs) - n_merge
+    print(
+        f"[CAVE lineage] {len(all_pairs)} pairs "
+        f"({n_merge} merge/hard-neg, {n_split} split/hard-pos)"
+    )
+    return all_pairs
+
+
 def save_edit_pairs_tsv(
     edit_pairs: "list[tuple[int, int, str]]",
     tsv_path: str,
