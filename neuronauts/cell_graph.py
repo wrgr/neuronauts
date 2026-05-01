@@ -1855,7 +1855,13 @@ def train_cell_gnn(
 
                 for graph in graphs_to_train:
                     # Augment with synapse-chain paths built from ground-truth root IDs.
-                    if getattr(model, "path_emb_dim", 0) > 0:
+                    # Used by both the in-model PathEdgeEncoder (path_emb_dim > 0) and
+                    # the frozen pre-trained encoder (pretrained_path_emb_dim > 0).
+                    _needs_paths = (
+                        getattr(model, "path_emb_dim", 0) > 0
+                        or getattr(model, "pretrained_path_emb_dim", 0) > 0
+                    )
+                    if _needs_paths:
                         chain = build_synapse_chain_paths(graph, mode=path_feature_mode)
                         if chain:
                             merged = dict(chain)
@@ -1933,9 +1939,17 @@ def train_cell_gnn(
                     for graph in val_subgraphs:
                         if graph.n_synapses < 2:
                             continue
+                        _val_needs_paths = (
+                            getattr(model, "path_emb_dim", 0) > 0
+                            or getattr(model, "pretrained_path_emb_dim", 0) > 0
+                        )
+                        if _val_needs_paths and not graph.edge_path_features:
+                            chain = build_synapse_chain_paths(graph, mode=path_feature_mode)
+                            if chain:
+                                graph.edge_path_features = chain
                         model.eval()
                         with torch.no_grad():
-                            if getattr(model, "path_emb_dim", 0) > 0:
+                            if _val_needs_paths:
                                 nf, es, ed, ef, ps, pm, hp = _graph_to_tensors(graph, return_paths=True)
                                 emb = F.normalize(
                                     model(nf, es, ed, ef, path_seq=ps, path_mask=pm, has_path=hp),
