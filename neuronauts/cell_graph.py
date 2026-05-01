@@ -2601,7 +2601,25 @@ def load_cell_gnn(path):
     torch, _ = _require_torch()
     ckpt = torch.load(path, map_location="cpu", weights_only=False)
     model = CellGNN(**ckpt.get("init_kwargs", {}))
-    model.load_state_dict(ckpt["state_dict"])
+    # If the checkpoint includes a frozen pretrained path encoder, reconstruct
+    # it from the saved weights before calling load_state_dict.
+    state = ckpt["state_dict"]
+    if any(k.startswith("_pretrained_path_enc.") for k in state):
+        from .path_edge_encoder import PathEdgeEncoder
+        enc_keys = [k for k in state if k.startswith("_pretrained_path_enc.")]
+        out_dim = state["_pretrained_path_enc.output_proj.weight"].shape[0]
+        in_dim = state["_pretrained_path_enc.input_proj.weight"].shape[1]
+        d_model = state["_pretrained_path_enc.input_proj.weight"].shape[0]
+        n_layers = max(
+            int(k.split(".")[3]) + 1
+            for k in enc_keys
+            if k.startswith("_pretrained_path_enc.transformer.layers.")
+        )
+        enc = PathEdgeEncoder(
+            input_dim=in_dim, d_model=d_model, n_layers=n_layers, output_dim=out_dim
+        )
+        model.attach_pretrained_path_encoder(enc)
+    model.load_state_dict(state)
     model.eval()
     return model
 
