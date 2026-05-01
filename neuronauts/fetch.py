@@ -10,6 +10,7 @@ from typing import Optional, Tuple
 import numpy as np
 
 MICRONS_EM_PATH = "precomputed://https://bossdb-open-data.s3.amazonaws.com/iarpa_microns/minnie/minnie65/em"
+MICRONS_SEG_PATH = "precomputed://https://bossdb-open-data.s3.amazonaws.com/iarpa_microns/minnie/minnie65/seg"
 MICRONS_DATASTACK = "minnie65_public"
 CAVE_SERVER = "https://global.daf-apis.com"
 DEFAULT_BOX_SIDE_UM = 6.0
@@ -81,6 +82,22 @@ class SynapseTable:
     synapse_id: np.ndarray
     pre_seg_id: np.ndarray | None = None
     post_seg_id: np.ndarray | None = None
+
+    @property
+    def n_synapses(self) -> int:
+        return len(self.pre_pt)
+
+    def subset(self, indices: np.ndarray) -> "SynapseTable":
+        """Return a new SynapseTable containing only the given row indices."""
+        return SynapseTable(
+            pre_pt=self.pre_pt[indices],
+            post_pt=self.post_pt[indices],
+            pre_root_id=self.pre_root_id[indices],
+            post_root_id=self.post_root_id[indices],
+            synapse_id=self.synapse_id[indices],
+            pre_seg_id=self.pre_seg_id[indices] if self.pre_seg_id is not None else None,
+            post_seg_id=self.post_seg_id[indices] if self.post_seg_id is not None else None,
+        )
 
 
 @dataclass(frozen=True)
@@ -171,6 +188,47 @@ def fetch_volume(
     )
 
 
+def fetch_seg_volume(
+    bbox_nm: Tuple[Tuple, Tuple],
+    mip: int = 2,
+    seg_path: str = MICRONS_SEG_PATH,
+) -> VolumeChunk:
+    """Fetch a segmentation volume chunk (uint64 neurite seg IDs).
+
+    Returns the same VolumeChunk structure as fetch_volume but with uint64
+    data encoding the MICrONS neurite segmentation IDs.  MIP 2 (32×32×40
+    nm/vox) is the default — the seg volume at MIP 3 uses 80 nm z-resolution
+    which differs from the EM; MIP 2 is consistent across both volumes.
+
+    Voxel sizes are read from the CloudVolume metadata (not from the hardcoded
+    MIP_VOXEL_SIZES dict) since the seg volume z-resolution differs at high MIPs.
+    """
+    _install_system_trust_store()
+    try:
+        from cloudvolume import CloudVolume
+    except ImportError as exc:
+        raise ImportError("pip install cloud-volume") from exc
+
+    cv = CloudVolume(seg_path, mip=mip, use_https=True, progress=False, fill_missing=True)
+    # Read actual voxel size from the volume's metadata — seg resolution differs from EM at MIP 3+
+    res = cv.resolution  # [x, y, z] in nm
+    vox = (int(res[0]), int(res[1]), int(res[2]))
+    x0 = int(bbox_nm[0][0] / vox[0])
+    y0 = int(bbox_nm[0][1] / vox[1])
+    z0 = int(bbox_nm[0][2] / vox[2])
+    x1 = int(bbox_nm[1][0] / vox[0])
+    y1 = int(bbox_nm[1][1] / vox[1])
+    z1 = int(bbox_nm[1][2] / vox[2])
+
+    data = np.squeeze(cv[x0:x1, y0:y1, z0:z1])
+    return VolumeChunk(
+        data=data.astype(np.uint64),
+        voxel_size_nm=vox,
+        bbox_voxels=((x0, y0, z0), (x1, y1, z1)),
+        mip=mip,
+    )
+
+
 def fetch_synapses(
     bbox_nm: Tuple[Tuple, Tuple],
     mip: int = 2,
@@ -207,6 +265,18 @@ def fetch_synapses(
             )
             break
         except Exception as exc:
+            # Server-side bug: caveclient sends return_pyarrow=True but older CAVE
+            # servers don't handle the ipc_compress parameter. Fall back to JSON.
+            if "ipc_compress" in str(exc):
+                try:
+                    df = client.materialize.query_table(
+                        "synapses_pni_2",
+                        filter_spatial_dict={"ctr_pt_position": bbox_synapse_units},
+                        return_pyarrow=False,
+                    )
+                    break
+                except Exception as fallback_exc:
+                    exc = fallback_exc
             last_exc = exc
             if attempt + 1 >= max(1, int(max_retries)):
                 raise
@@ -546,6 +616,12 @@ def skeleton_stepwise_features(
     cumulative = np.concatenate([[0.0], np.cumsum(step_dists)]).astype(np.float32)
     total = cumulative[-1]
     norm_cum = (cumulative[:-1] / max(total, eps)).astype(np.float32)
+    # Centered arc-length: deviation from the expected position for uniform spacing.
+    # For a valid path with equal step sizes this is ~0; a splice between two cells
+    # with different step sizes creates a visible deviation that the transformer can
+    # detect without needing to learn an absolute threshold.
+    T = len(step_dists)
+    centered_cum = (norm_cum - np.arange(T, dtype=np.float32) / max(T, 1)).astype(np.float32)
 
     units = diffs / np.clip(step_dists[:, None], eps, None)
     if len(units) >= 2:
@@ -556,7 +632,7 @@ def skeleton_stepwise_features(
     else:
         turning = np.zeros(len(step_dists), dtype=np.float32)
 
-    return np.stack([step_dists, norm_cum, turning], axis=-1).astype(np.float32)
+    return np.stack([step_dists, centered_cum, turning], axis=-1).astype(np.float32)
 
 
 def mesh_volume_surface_ratio(

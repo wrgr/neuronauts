@@ -365,9 +365,9 @@ class TestCmdScaleTest:
 
 class TestPartitionEdgeCases:
     def test_threshold_zero_merges_everything(self):
-        """threshold=0.0 should merge all synapses into one cell."""
+        """With single-linkage, threshold=0.0 merges everything via positive-sim chain."""
         emb = np.random.default_rng(0).standard_normal((10, 16)).astype(np.float32)
-        labels = partition_from_embeddings(emb, threshold=0.0)
+        labels = partition_from_embeddings(emb, threshold=0.0, method="agglomerative")
         assert len(set(labels.tolist())) == 1
 
     def test_threshold_one_splits_everything(self):

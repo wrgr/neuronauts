@@ -310,17 +310,26 @@ class BoxCache:
         self._save_index()
         return record
 
-    def load(self, record: BoxRecord) -> tuple[VolumeChunk, SynapseTable]:
+    def load(
+        self,
+        record: BoxRecord,
+        *,
+        load_volume: bool = True,
+    ) -> tuple[VolumeChunk, SynapseTable]:
         """Load a (VolumeChunk, SynapseTable) pair from disk.
 
         For CAVE-only boxes (``record.has_volume is False``) the returned
         ``VolumeChunk`` has an empty ``data`` array.  Grammar training ignores
         the volume; only GAT/agent-simulation steps need a real volume.
+
+        Pass ``load_volume=False`` to skip loading the EM array entirely —
+        use this in training loops that only need synapse metadata to avoid
+        loading hundreds of MB per box into RAM.
         """
         npz = np.load(self._npz_path(record.box_hash), allow_pickle=False)
         meta = json.loads(self._meta_path(record.box_hash).read_text(encoding="utf-8"))
 
-        if "volume" in npz and meta.get("has_volume", True):
+        if load_volume and "volume" in npz and meta.get("has_volume", True):
             volume = VolumeChunk(
                 data=npz["volume"],
                 voxel_size_nm=tuple(meta["voxel_size_nm"]),

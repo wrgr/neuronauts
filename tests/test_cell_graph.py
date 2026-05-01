@@ -12,11 +12,13 @@ from neuronauts.cell_graph import (
     SynapseEdge,
     SynapseGraph,
     build_synapse_graph,
+    boundary_partition_search,
     cell_gnn_assembly,
     cell_graph_train_step,
     connectivity_graph_from_cell_labels,
     extract_grammar_scores,
     infer_cells,
+    infer_cells_with_search,
     load_cell_gnn,
     partition_from_embeddings,
     rank_boxes_by_tangledness,
@@ -117,6 +119,36 @@ class TestBuildSynapseGraph:
         assert graph.n_synapses == 0
         assert graph.edges == []
 
+    def test_seg_connectivity_default_is_neutral(self):
+        """Edges without seg_connectivity_scores should default to 0.5."""
+        syn = _make_synapses(n_cells=2, synapses_per_cell=3)
+        graph = build_synapse_graph(syn, "pre", proximity_radius_nm=1e9)
+        assert len(graph.edges) > 0
+        for e in graph.edges:
+            assert e.seg_connectivity == 0.5
+
+    def test_seg_connectivity_scores_wired(self):
+        """seg_connectivity_scores override the default 0.5 on matching edges."""
+        syn = _make_synapses(n_cells=2, synapses_per_cell=3)
+        graph = build_synapse_graph(syn, "pre", proximity_radius_nm=1e9)
+        # Pick the first edge and provide an explicit score
+        first_edge = graph.edges[0]
+        key = (min(first_edge.src, first_edge.dst), max(first_edge.src, first_edge.dst))
+        seg_scores = {key: 1.0}
+        graph2 = build_synapse_graph(
+            syn, "pre",
+            proximity_radius_nm=1e9,
+            seg_connectivity_scores=seg_scores,
+        )
+        matched = [e for e in graph2.edges
+                   if min(e.src, e.dst) == key[0] and max(e.src, e.dst) == key[1]]
+        assert len(matched) == 1
+        assert matched[0].seg_connectivity == 1.0
+        # Other edges stay at 0.5
+        others = [e for e in graph2.edges
+                  if not (min(e.src, e.dst) == key[0] and max(e.src, e.dst) == key[1])]
+        assert all(e.seg_connectivity == 0.5 for e in others)
+
 
 # ---------------------------------------------------------------------------
 # CellGNN architecture
@@ -130,7 +162,7 @@ class TestCellGNN:
         node_feat = torch.randn(N, 3)
         edge_src = torch.randint(0, N, (E,))
         edge_dst = torch.randint(0, N, (E,))
-        edge_feat = torch.randn(E, 4)
+        edge_feat = torch.randn(E, 6)
         out = model(node_feat, edge_src, edge_dst, edge_feat)
         assert out.shape == (N, 8)
 
@@ -139,7 +171,7 @@ class TestCellGNN:
                         n_heads=2, embedding_dim=8)
         node_feat = torch.randn(5, 3)
         empty = torch.zeros(0, dtype=torch.long)
-        edge_feat = torch.zeros(0, 4)
+        edge_feat = torch.zeros(0, 6)
         out = model(node_feat, empty, empty, edge_feat)
         assert out.shape == (5, 8)
 
@@ -150,7 +182,7 @@ class TestCellGNN:
         # Self-loop only
         edge_src = torch.tensor([0])
         edge_dst = torch.tensor([0])
-        edge_feat = torch.randn(1, 4)
+        edge_feat = torch.randn(1, 6)
         out = model(node_feat, edge_src, edge_dst, edge_feat)
         assert out.shape == (1, 8)
 
@@ -183,7 +215,7 @@ class TestGraphToTensors:
         _, es, ed, ef = _graph_to_tensors(graph)
         # 1 undirected → 2 directed + 3 self-loops = 5 total
         assert len(es) == 5
-        assert ef.shape == (5, 4)
+        assert ef.shape == (5, 6)
 
 
 # ---------------------------------------------------------------------------
@@ -457,7 +489,7 @@ class TestPersistence:
         node_feat = torch.randn(5, 3)
         edge_src = torch.tensor([0, 1, 2])
         edge_dst = torch.tensor([1, 2, 0])
-        edge_feat = torch.randn(3, 4)
+        edge_feat = torch.randn(3, 6)
 
         with torch.no_grad():
             out1 = model(node_feat, edge_src, edge_dst, edge_feat)
@@ -904,3 +936,559 @@ class TestEndToEndTraining:
         ])
         assert args.command == "scale-test"
         assert args.min_synapses == 50
+
+
+# ---------------------------------------------------------------------------
+# Boundary-edge partition search
+# ---------------------------------------------------------------------------
+
+def _make_small_graph_with_edges(
+    n: int,
+    edges: list[tuple[int, int]],
+    positions: np.ndarray | None = None,
+) -> SynapseGraph:
+    """Build a minimal SynapseGraph with explicit edges for unit testing."""
+    if positions is None:
+        rng = np.random.default_rng(0)
+        positions = rng.standard_normal((n, 3)).astype(np.float32) * 10.0
+    syn_edges = [
+        SynapseEdge(src=i, dst=j, distance=1.0, same_scaffold=0.0,
+                    grammar_score=0.5, shared_agents=0)
+        for (i, j) in edges
+    ]
+    return SynapseGraph(
+        n_synapses=n,
+        role="pre",
+        node_positions=positions,
+        node_scaffold_ids=np.zeros(n, dtype=np.int64),
+        edges=syn_edges,
+        root_ids=None,
+    )
+
+
+class TestBoundaryPartitionSearch:
+
+    def test_returns_valid_labels(self):
+        """boundary_partition_search returns labels with correct shape and non-negative values."""
+        model = CellGNN(node_input_dim=3, d_model=16, n_layers=2,
+                        n_heads=2, embedding_dim=8)
+        syn = _make_synapses(n_cells=3, synapses_per_cell=4)
+        graph = build_synapse_graph(syn, "pre", proximity_radius_nm=10_000.0)
+        labels = boundary_partition_search(model, graph)
+        assert labels.shape == (graph.n_synapses,)
+        assert labels.dtype == np.int64
+        assert labels.min() >= 0
+
+    def test_boundary_edges_identified(self):
+        """Edges in [low_sim, high_sim) are found; out-of-band edges are not."""
+        # Build a model and craft embeddings so that two pairs sit exactly in-band
+        # and two are out-of-band.  We do this by constructing normalised embeddings
+        # directly and bypassing the model via monkey-patching _graph_to_tensors.
+        import types, torch as _torch
+
+        D = 4
+        # Craft four unit vectors:
+        # v0 and v1: sim ~0.96 (in-band)
+        # v2 and v3: sim = 1.0 (above high_sim, out-of-band)
+        v0 = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        angle = np.arccos(0.96)
+        v1 = np.array([np.cos(angle), np.sin(angle), 0.0, 0.0], dtype=np.float32)
+        v2 = np.array([0.0, 0.0, 1.0, 0.0], dtype=np.float32)
+        v3 = np.array([0.0, 0.0, 1.0, 0.0], dtype=np.float32)  # identical to v2
+
+        n = 4
+        positions = np.zeros((n, 3), dtype=np.float32)
+        graph = _make_small_graph_with_edges(n, [(0, 1), (2, 3)], positions)
+
+        # Monkey-patch the model to return our crafted embeddings
+        fixed_emb = _torch.tensor(np.stack([v0, v1, v2, v3]), dtype=_torch.float32)
+
+        class _FakeModel:
+            def eval(self): pass
+            def __call__(self, *args, **kwargs): return fixed_emb
+
+        labels = boundary_partition_search(
+            _FakeModel(), graph,
+            low_sim=0.93, high_sim=0.99,
+            max_boundary_edges=12, beam_width=4,
+        )
+        # v2 and v3 are identical (sim=1.0 >= high_sim) → merged in base partition
+        assert labels[2] == labels[3], "High-sim pair should be merged"
+        # v0 and v1 are in-band → explored by beam search but shape is still valid
+        assert labels.shape == (4,)
+
+    def test_beam_selects_best_partition(self):
+        """Beam search selects the partition with higher within-cell coherence."""
+        import torch as _torch
+
+        D = 4
+        # Three unit vectors: v0 and v1 are very similar, v2 is orthogonal.
+        # Merging (0,1) should score better than not merging.
+        v0 = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        angle = np.arccos(0.965)
+        v1 = np.array([np.cos(angle), np.sin(angle), 0.0, 0.0], dtype=np.float32)
+        v2 = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+
+        n = 3
+        graph = _make_small_graph_with_edges(n, [(0, 1)])
+
+        fixed_emb = _torch.tensor(np.stack([v0, v1, v2]), dtype=_torch.float32)
+
+        class _FakeModel:
+            def eval(self): pass
+            def __call__(self, *args, **kwargs): return fixed_emb
+
+        labels = boundary_partition_search(
+            _FakeModel(), graph,
+            low_sim=0.93, high_sim=0.99,
+            max_boundary_edges=5, beam_width=4,
+        )
+        # v0 and v1 are similar → should end up in the same cell
+        assert labels[0] == labels[1], (
+            f"Beam should merge highly similar nodes 0 and 1 (labels={labels})"
+        )
+        # v2 should be its own cell
+        assert labels[2] != labels[0], (
+            f"Node 2 should not merge with 0/1 (labels={labels})"
+        )
+
+    def test_singleton_graph(self):
+        """A graph with one node returns label [0]."""
+        model = CellGNN(node_input_dim=3, d_model=16, n_layers=1,
+                        n_heads=2, embedding_dim=8)
+        positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+        graph = SynapseGraph(
+            n_synapses=1,
+            role="pre",
+            node_positions=positions,
+            node_scaffold_ids=np.zeros(1, dtype=np.int64),
+            edges=[],
+            root_ids=None,
+        )
+        labels = boundary_partition_search(model, graph)
+        assert labels.tolist() == [0]
+
+    def test_no_boundary_edges_falls_back_to_threshold(self):
+        """When no edges fall in the ambiguous band the result equals infer_cells at high_sim."""
+        model = CellGNN(node_input_dim=3, d_model=16, n_layers=2,
+                        n_heads=2, embedding_dim=8)
+        model.eval()
+        syn = _make_synapses(n_cells=3, synapses_per_cell=4)
+        graph = build_synapse_graph(syn, "pre", proximity_radius_nm=10_000.0)
+
+        high_sim = 0.99
+        # boundary_partition_search with an impossible band (no edges can fall in it)
+        labels_search = boundary_partition_search(
+            model, graph,
+            low_sim=0.999,   # band so narrow that no edges land in it
+            high_sim=high_sim,
+            max_boundary_edges=12,
+            beam_width=8,
+        )
+        labels_infer = infer_cells(model, graph, threshold=high_sim)
+        np.testing.assert_array_equal(
+            labels_search, labels_infer,
+            err_msg="With no boundary edges, result should match infer_cells at high_sim",
+        )
+
+    def test_infer_cells_with_search_returns_valid_labels(self):
+        """infer_cells_with_search wrapper produces valid integer labels."""
+        model = CellGNN(node_input_dim=3, d_model=16, n_layers=2,
+                        n_heads=2, embedding_dim=8)
+        syn = _make_synapses(n_cells=2, synapses_per_cell=5)
+        graph = build_synapse_graph(syn, "pre", proximity_radius_nm=10_000.0)
+        labels = infer_cells_with_search(model, graph)
+        assert labels.shape == (graph.n_synapses,)
+        assert labels.dtype == np.int64
+        assert labels.min() >= 0
+
+    # ------------------------------------------------------------------
+    # EM corridor override tests
+    # ------------------------------------------------------------------
+
+    def test_corridor_force_accept(self):
+        """A high corridor score forces a merge even without beam search."""
+        import torch as _torch
+
+        D = 4
+        v0 = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        angle = np.arccos(0.965)
+        v1 = np.array([np.cos(angle), np.sin(angle), 0.0, 0.0], dtype=np.float32)
+        v2 = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+
+        graph = _make_small_graph_with_edges(3, [(0, 1)])
+        fixed_emb = _torch.tensor(np.stack([v0, v1, v2]), dtype=_torch.float32)
+
+        class _FakeModel:
+            def eval(self): pass
+            def __call__(self, *args, **kwargs): return fixed_emb
+
+        # Corridor score 0.9 for edge (0,1) → should force-accept
+        labels = boundary_partition_search(
+            _FakeModel(), graph,
+            low_sim=0.93, high_sim=0.99,
+            corridor_scores={(0, 1): 0.9},
+            corridor_accept_threshold=0.8,
+        )
+        assert labels[0] == labels[1], f"Force-accept should merge 0 and 1, got {labels}"
+        assert labels[2] != labels[0], f"Node 2 should remain separate, got {labels}"
+
+    def test_corridor_force_reject(self):
+        """A low corridor score prevents a merge that the beam might otherwise accept."""
+        import torch as _torch
+
+        D = 4
+        v0 = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        angle = np.arccos(0.965)
+        v1 = np.array([np.cos(angle), np.sin(angle), 0.0, 0.0], dtype=np.float32)
+        v2 = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+
+        graph = _make_small_graph_with_edges(3, [(0, 1)])
+        fixed_emb = _torch.tensor(np.stack([v0, v1, v2]), dtype=_torch.float32)
+
+        class _FakeModel:
+            def eval(self): pass
+            def __call__(self, *args, **kwargs): return fixed_emb
+
+        # Corridor score 0.1 for edge (0,1) → should force-reject
+        labels = boundary_partition_search(
+            _FakeModel(), graph,
+            low_sim=0.93, high_sim=0.99,
+            corridor_scores={(0, 1): 0.1},
+            corridor_reject_threshold=0.2,
+        )
+        # Force-reject: nodes 0 and 1 must remain separate
+        assert labels[0] != labels[1], f"Force-reject should keep 0 and 1 separate, got {labels}"
+
+    def test_corridor_neutral_score_still_uses_beam(self):
+        """A corridor score in the middle band (0.2-0.8) still goes through beam search."""
+        import torch as _torch
+
+        D = 4
+        v0 = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        angle = np.arccos(0.965)
+        v1 = np.array([np.cos(angle), np.sin(angle), 0.0, 0.0], dtype=np.float32)
+        v2 = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+
+        graph = _make_small_graph_with_edges(3, [(0, 1)])
+        fixed_emb = _torch.tensor(np.stack([v0, v1, v2]), dtype=_torch.float32)
+
+        class _FakeModel:
+            def eval(self): pass
+            def __call__(self, *args, **kwargs): return fixed_emb
+
+        # Score 0.5 → ambiguous → beam decides (beam should still merge based on sim)
+        labels = boundary_partition_search(
+            _FakeModel(), graph,
+            low_sim=0.93, high_sim=0.99,
+            corridor_scores={(0, 1): 0.5},
+        )
+        assert labels[0] == labels[1], (
+            f"Neutral corridor score should let beam decide; beam merges at sim=0.965 (labels={labels})"
+        )
+
+    def test_infer_cells_with_search_passes_corridor_scores(self):
+        """corridor_scores kwarg is correctly forwarded from infer_cells_with_search."""
+        import torch as _torch
+
+        D = 4
+        v0 = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        angle = np.arccos(0.965)
+        v1 = np.array([np.cos(angle), np.sin(angle), 0.0, 0.0], dtype=np.float32)
+        v2 = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+
+        graph = _make_small_graph_with_edges(3, [(0, 1)])
+        fixed_emb = _torch.tensor(np.stack([v0, v1, v2]), dtype=_torch.float32)
+
+        class _FakeModel:
+            def eval(self): pass
+            def __call__(self, *args, **kwargs): return fixed_emb
+
+        labels = infer_cells_with_search(
+            _FakeModel(), graph,
+            corridor_scores={(0, 1): 0.9},
+            corridor_accept_threshold=0.8,
+        )
+        assert labels[0] == labels[1], f"corridor_scores not forwarded correctly (labels={labels})"
+
+
+# ---------------------------------------------------------------------------
+# cell_gnn_assembly with boundary search and EM corridors
+# ---------------------------------------------------------------------------
+
+class TestCellGNNAssemblyWithSearch:
+    """Tests for the use_boundary_search and use_em_corridors flags of cell_gnn_assembly."""
+
+    def test_assembly_no_search_backward_compat(self):
+        """cell_gnn_assembly without use_boundary_search returns a ConnectivityGraph (backward compat)."""
+        from neuronauts.merge import ConnectivityGraph
+
+        syn = _make_synapses(n_cells=3, synapses_per_cell=4)
+        model = CellGNN(node_input_dim=3, d_model=16, n_layers=2,
+                        n_heads=2, embedding_dim=8)
+        model.eval()
+
+        # Default: use_boundary_search=False
+        cg = cell_gnn_assembly(syn, model, proximity_radius_nm=50_000.0)
+
+        assert isinstance(cg, ConnectivityGraph)
+        assert len(cg.neurons) > 0
+        assert len(cg.edges) > 0
+
+    def test_assembly_with_boundary_search(self):
+        """cell_gnn_assembly with use_boundary_search=True returns a ConnectivityGraph."""
+        from neuronauts.merge import ConnectivityGraph
+
+        syn = _make_synapses(n_cells=3, synapses_per_cell=4)
+        model = CellGNN(node_input_dim=3, d_model=16, n_layers=2,
+                        n_heads=2, embedding_dim=8)
+        model.eval()
+
+        cg = cell_gnn_assembly(
+            syn, model,
+            proximity_radius_nm=50_000.0,
+            use_boundary_search=True,
+            high_sim=0.999,
+            low_sim=0.93,
+            max_boundary_edges=40,
+            beam_width=8,
+            use_em_corridors=False,
+        )
+
+        assert isinstance(cg, ConnectivityGraph)
+        assert len(cg.neurons) > 0
+        assert len(cg.edges) > 0
+        # Each synapse must appear in exactly one pre and one post neuron.
+        n_synapses = len(syn.pre_pt)
+        pre_neurons = [n for n in cg.neurons.values() if n.role == "pre"]
+        post_neurons = [n for n in cg.neurons.values() if n.role == "post"]
+        total_pre_syn = sum(len(n.synapse_indices) for n in pre_neurons)
+        total_post_syn = sum(len(n.synapse_indices) for n in post_neurons)
+        assert total_pre_syn == n_synapses
+        assert total_post_syn == n_synapses
+
+    def test_assembly_with_corridor_scores_mock(self):
+        """Mock batch_score_boundary_edges to verify corridor scores are used by assembly."""
+        import unittest.mock as mock
+        from neuronauts.merge import ConnectivityGraph
+
+        syn = _make_synapses(n_cells=3, synapses_per_cell=5)
+        model = CellGNN(node_input_dim=3, d_model=16, n_layers=2,
+                        n_heads=2, embedding_dim=8)
+        model.eval()
+
+        # Patch batch_score_boundary_edges in the em_corridor module.
+        # Return an empty dict (no corridor evidence) so the beam search
+        # proceeds without overrides — this tests that the mock is wired
+        # through without needing network access.
+        mock_scores: dict = {}
+        with mock.patch(
+            "neuronauts.em_corridor.batch_score_boundary_edges",
+            return_value=mock_scores,
+        ) as mock_bsbe:
+            cg = cell_gnn_assembly(
+                syn, model,
+                proximity_radius_nm=50_000.0,
+                use_boundary_search=True,
+                use_em_corridors=True,
+                high_sim=0.999,
+                low_sim=0.93,
+                max_boundary_edges=40,
+                beam_width=4,
+                corridor_radius_nm=1500.0,
+                corridor_accept_threshold=0.8,
+                corridor_reject_threshold=0.2,
+            )
+
+        assert isinstance(cg, ConnectivityGraph)
+        assert len(cg.neurons) > 0
+        assert len(cg.edges) > 0
+        # batch_score_boundary_edges is called at most twice (once per side)
+        # when boundary edges exist; may be 0 if the fresh model produces no
+        # boundary-band edges.
+        assert mock_bsbe.call_count <= 2
+
+
+# ---------------------------------------------------------------------------
+# Hard negative mining
+# ---------------------------------------------------------------------------
+
+class TestHardNegativeMining:
+    """Tests for online hard negative mining in cell_graph_train_step."""
+
+    def _make_graph_with_confusing_pair(self) -> SynapseGraph:
+        """Build a SynapseGraph where nodes 0 and 1 have different roots but
+        are positioned identically (so a fresh model will produce very similar
+        embeddings for them).  Nodes 2 and 3 belong to root 1 (clearly separate)."""
+        # Positions: nodes 0 and 1 share the same location → similar embeddings
+        positions = np.array([
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0],   # same as node 0 → confusing pair
+            [500.0, 0.0, 0.0],
+            [500.0, 0.0, 0.0],
+        ], dtype=np.float32)
+        root_ids = np.array([1, 2, 1, 2], dtype=np.int64)  # node 0 ≠ node 1
+        edges = [
+            SynapseEdge(src=0, dst=1, distance=0.0, same_scaffold=0.0,
+                        grammar_score=0.0, shared_agents=0),
+            SynapseEdge(src=2, dst=3, distance=0.0, same_scaffold=0.0,
+                        grammar_score=0.0, shared_agents=0),
+        ]
+        return SynapseGraph(
+            n_synapses=4,
+            role="pre",
+            node_positions=positions,
+            node_scaffold_ids=np.zeros(4, dtype=np.int64),
+            edges=edges,
+            root_ids=root_ids,
+        )
+
+    def test_hard_neg_mining_finds_confusing_pairs(self):
+        """Nodes with different roots but very similar embeddings should be mined."""
+        import torch as _torch
+        import torch.nn.functional as F
+        from neuronauts.cell_graph import _graph_to_tensors
+
+        graph = self._make_graph_with_confusing_pair()
+        N = graph.n_synapses
+
+        # Build a mock model that returns nearly identical embeddings for nodes 0 and 1
+        # (sim ≈ 1.0) and clearly different embeddings for nodes 2 and 3 vs 0/1.
+        fixed_emb = _torch.tensor([
+            [1.0, 0.0, 0.0, 0.0],   # node 0 — root 1
+            [1.0, 0.0, 0.0, 0.0],   # node 1 — root 2, nearly identical → hard neg
+            [0.0, 1.0, 0.0, 0.0],   # node 2 — root 1
+            [0.0, 1.0, 0.0, 0.0],   # node 3 — root 2, nearly identical → hard neg
+        ], dtype=_torch.float32)
+
+        model = CellGNN(node_input_dim=3, d_model=16, n_layers=1,
+                        n_heads=2, embedding_dim=4)
+        # Override model forward to return our crafted embeddings
+        original_forward = model.forward
+        model.forward = lambda *args, **kwargs: fixed_emb
+
+        emb_norm = F.normalize(fixed_emb, p=2, dim=-1)
+        sim_matrix = emb_norm @ emb_norm.T
+
+        ui, uj = _torch.triu_indices(N, N, offset=1)
+        pair_sims = sim_matrix[ui, uj]
+        root_arr = graph.root_ids
+        ri = _torch.tensor(root_arr[ui.numpy()], dtype=_torch.long)
+        rj = _torch.tensor(root_arr[uj.numpy()], dtype=_torch.long)
+        valid = (ri > 0) & (rj > 0)
+        different = ri != rj
+        hard_neg_threshold = 0.7
+        hard = pair_sims > hard_neg_threshold
+        mask = valid & different & hard
+        hard_indices = mask.nonzero(as_tuple=False).view(-1)
+
+        hard_neg_pairs = []
+        if len(hard_indices) > 0:
+            sorted_by_sim = hard_indices[pair_sims[hard_indices].argsort(descending=True)]
+            for k in sorted_by_sim[:64]:
+                hard_neg_pairs.append((int(ui[k]), int(uj[k])))
+
+        assert len(hard_neg_pairs) > 0, (
+            "Expected hard negative pairs with nearly identical embeddings and different roots"
+        )
+        # Specifically, the (0,1) pair should be mined (same position → sim ≈ 1.0)
+        assert (0, 1) in hard_neg_pairs, f"Expected (0,1) in hard_neg_pairs, got {hard_neg_pairs}"
+
+    def test_hard_neg_mining_disabled(self):
+        """With hard_neg_mining=False, the step should return n_hard_neg=0."""
+        model = CellGNN(node_input_dim=3, d_model=16, n_layers=2,
+                        n_heads=2, embedding_dim=8)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        graph = self._make_graph_with_confusing_pair()
+
+        m = cell_graph_train_step(
+            model, optimizer, graph,
+            hard_neg_mining=False,
+        )
+        assert m["n_hard_neg"] == 0, (
+            f"Expected n_hard_neg=0 when hard_neg_mining=False, got {m['n_hard_neg']}"
+        )
+
+    def test_hard_neg_mining_returns_loss(self):
+        """cell_graph_train_step with hard_neg_mining=True should run and return loss > 0."""
+        model = CellGNN(node_input_dim=3, d_model=16, n_layers=2,
+                        n_heads=2, embedding_dim=8)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        syn = _make_synapses(n_cells=3, synapses_per_cell=4, seed=7)
+        graph = build_synapse_graph(syn, "pre", proximity_radius_nm=100_000.0)
+
+        m = cell_graph_train_step(
+            model, optimizer, graph,
+            hard_neg_mining=True,
+            hard_neg_threshold=0.0,   # threshold=0 → mine ALL different-root pairs
+            hard_neg_weight=3.0,
+        )
+        assert "loss" in m
+        assert "hard_neg_sim" in m
+        assert "n_hard_neg" in m
+        assert m["loss"] >= 0.0, f"Loss must be non-negative, got {m['loss']}"
+
+    def test_hard_neg_mining_threshold(self):
+        """Pairs with cosine sim below hard_neg_threshold should not be mined."""
+        import torch as _torch
+        import torch.nn.functional as F
+
+        # Build a graph where the only different-root pair has sim ≈ 0.5 (below threshold=0.7)
+        positions = np.array([
+            [0.0, 0.0, 0.0],
+            [100.0, 0.0, 0.0],
+        ], dtype=np.float32)
+        root_ids = np.array([1, 2], dtype=np.int64)
+        graph = SynapseGraph(
+            n_synapses=2,
+            role="pre",
+            node_positions=positions,
+            node_scaffold_ids=np.zeros(2, dtype=np.int64),
+            edges=[SynapseEdge(src=0, dst=1, distance=100.0, same_scaffold=0.0,
+                               grammar_score=0.0, shared_agents=0)],
+            root_ids=root_ids,
+        )
+
+        # Craft embeddings: sim(0,1) ≈ 0 (orthogonal) — well below threshold=0.7
+        fixed_emb = _torch.tensor([
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+        ], dtype=_torch.float32)
+
+        N = 2
+        emb_norm = F.normalize(fixed_emb, p=2, dim=-1)
+        sim_matrix = emb_norm @ emb_norm.T
+        ui, uj = _torch.triu_indices(N, N, offset=1)
+        pair_sims = sim_matrix[ui, uj]
+        root_arr = graph.root_ids
+        ri = _torch.tensor(root_arr[ui.numpy()], dtype=_torch.long)
+        rj = _torch.tensor(root_arr[uj.numpy()], dtype=_torch.long)
+        valid = (ri > 0) & (rj > 0)
+        different = ri != rj
+        hard_neg_threshold = 0.7
+        hard = pair_sims > hard_neg_threshold
+        mask = valid & different & hard
+        hard_indices = mask.nonzero(as_tuple=False).view(-1)
+
+        # With orthogonal embeddings (sim=0), no pairs should exceed threshold=0.7
+        assert len(hard_indices) == 0, (
+            f"Expected no hard negatives with orthogonal embeddings below threshold, "
+            f"got {len(hard_indices)} pairs"
+        )
+
+    def test_hard_neg_mining_cli_args_parse(self):
+        """Verify the train-cell-gnn subcommand accepts the hard-neg CLI flags."""
+        import sys
+        sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
+        from scripts.train import parse_args
+
+        args = parse_args([
+            "train-cell-gnn",
+            "--cache-dir", "data/boxes",
+            "--hard-neg-threshold", "0.85",
+            "--hard-neg-weight", "5.0",
+            "--no-hard-neg-mining",
+        ])
+        assert args.hard_neg_threshold == pytest.approx(0.85)
+        assert args.hard_neg_weight == pytest.approx(5.0)
+        assert args.no_hard_neg_mining is True

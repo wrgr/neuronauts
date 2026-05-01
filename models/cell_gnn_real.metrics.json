@@ -1,0 +1,15 @@
+{
+  "val_f1": 0.1556,
+  "test_f1_mean": 0.2638,
+  "test_f1_median": 0.2353,
+  "calibrated_threshold": 0.99,
+  "training_boxes": 37,
+  "epochs": 50,
+  "d_model": 64,
+  "n_layers": 3,
+  "n_heads": 4,
+  "embedding_dim": 32,
+  "pos_sim_final": 0.957,
+  "neg_sim_final": 0.066,
+  "note": "Trained on 37 real CAVE boxes (no-EM, synapse-seeded), version 1412. Baseline (scaffold-only) F1=0.00."
+}

@@ -1068,6 +1068,7 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
     """Train CellGNN on a cached dataset with tangledness-aware sampling."""
     torch = _require_torch()
 
+    from neuronauts import cell_graph as _cg
     from neuronauts.dataset_builder import BoxCache, load_dataset
     from neuronauts.cell_graph import (
         CellGNN,
@@ -1080,8 +1081,17 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
         infer_cells,
         build_synapse_graph,
         connectivity_graph_from_cell_labels,
+        EDGE_FEATURE_NAMES,
     )
     from neuronauts.line_graph import evaluate as lg_evaluate
+
+    if getattr(args, "ablate_feature", None) is not None:
+        idx = int(args.ablate_feature)
+        if not (0 <= idx < len(EDGE_FEATURE_NAMES)):
+            print(f"--ablate-feature must be in [0, {len(EDGE_FEATURE_NAMES) - 1}]")
+            return 1
+        _cg._ABLATE_FEATURE_IDX = idx
+        print(f"Ablating edge feature [{idx}] = {EDGE_FEATURE_NAMES[idx]} (zeroed in all graphs)")
 
     cache = BoxCache(args.cache_dir)
     records = cache.all_records()
@@ -1144,6 +1154,9 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
         ]
 
     # --- Model ---
+    use_edge_scoring = getattr(args, "edge_scoring", False)
+    edge_threshold = getattr(args, "edge_threshold", 0.5)
+
     cfg = CellGNNConfig(
         d_model=args.d_model,
         n_layers=args.n_layers,
@@ -1153,10 +1166,18 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
         learning_rate=args.lr,
         margin=args.margin,
         max_pairs_per_box=args.max_pairs_per_box,
+        max_synapses_per_box=getattr(args, "max_synapses_per_box", 2000),
         proximity_radius_nm=args.proximity_radius_nm,
         partition_threshold=args.partition_threshold,
+        edge_scoring=use_edge_scoring,
+        edge_threshold=edge_threshold,
         seed=args.seed,
     )
+
+    path_emb_dim = getattr(args, "path_emb_dim", 0) or 0
+    path_input_dim = getattr(args, "path_input_dim", 6) or 6
+    pretrained_path_emb_dim = getattr(args, "pretrained_path_emb_dim", 0) or 0
+    pretrained_path_ckpt = getattr(args, "path_encoder_checkpoint", None)
 
     if args.resume and Path(args.cell_gnn_output).exists():
         print(f"Resuming from {args.cell_gnn_output}")
@@ -1167,9 +1188,24 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
             n_layers=cfg.n_layers,
             n_heads=cfg.n_heads,
             embedding_dim=cfg.embedding_dim,
+            path_emb_dim=path_emb_dim,
+            path_input_dim=path_input_dim,
+            edge_scoring=use_edge_scoring,
+            pretrained_path_emb_dim=pretrained_path_emb_dim,
         )
 
-    print(f"CellGNN: d={cfg.d_model} layers={cfg.n_layers} heads={cfg.n_heads} emb={cfg.embedding_dim}")
+    # Load and attach pre-trained PathEdgeEncoder if provided
+    if pretrained_path_ckpt and Path(pretrained_path_ckpt).exists():
+        from neuronauts.path_dataset import load_path_encoder
+        pretrained_enc, _ = load_path_encoder(pretrained_path_ckpt)
+        model.attach_pretrained_path_encoder(pretrained_enc)
+        print(f"Attached pre-trained path encoder from {pretrained_path_ckpt} "
+              f"(output_dim={pretrained_enc.output_dim})")
+
+    edge_str = "  [edge-scoring]" if use_edge_scoring else ""
+    path_str = f"  path_emb_dim={path_emb_dim}" if path_emb_dim > 0 else ""
+    penc_str = f"  pretrained_path={pretrained_path_emb_dim}D" if pretrained_path_emb_dim > 0 else ""
+    print(f"CellGNN: d={cfg.d_model} layers={cfg.n_layers} heads={cfg.n_heads} emb={cfg.embedding_dim}{path_str}{penc_str}{edge_str}")
     print(f"Training: epochs={cfg.epochs} lr={cfg.learning_rate} margin={cfg.margin}")
 
     # --- Optional edit-history pairs ---
@@ -1194,6 +1230,33 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
                 ))
         print(f"Loaded {len(edit_pairs)} edit-history pairs from {edit_pairs_tsv}")
 
+    # --- Optional seg score cache ---
+    seg_score_cache = None
+    seg_scores_path = getattr(args, "seg_scores_cache", None)
+    if seg_scores_path:
+        if Path(seg_scores_path).exists():
+            from neuronauts.cell_graph import load_seg_score_cache
+            seg_score_cache = load_seg_score_cache(seg_scores_path)
+            print(f"Loaded seg scores for {len(seg_score_cache)} boxes from {seg_scores_path}")
+        else:
+            print(f"[WARNING] --seg-scores-cache path not found: {seg_scores_path}")
+
+    # --- Optional skeleton path cache (Option 2: PathEdgeEncoder) ---
+    skeleton_path_cache = None
+    skeleton_paths_path = getattr(args, "skeleton_paths_cache", None)
+    if skeleton_paths_path:
+        if Path(skeleton_paths_path).exists():
+            from neuronauts.cell_graph import load_skeleton_path_cache
+            skeleton_path_cache = load_skeleton_path_cache(skeleton_paths_path)
+            n_boxes_with_paths = sum(
+                1 for v in skeleton_path_cache.values()
+                if any(v.get(s) for s in ("pre", "post"))
+            )
+            print(f"Loaded skeleton paths for {len(skeleton_path_cache)} boxes "
+                  f"({n_boxes_with_paths} with non-empty paths) from {skeleton_paths_path}")
+        else:
+            print(f"[WARNING] --skeleton-paths-cache path not found: {skeleton_paths_path}")
+
     # --- Train ---
     t0 = time.time()
     history = train_cell_gnn(
@@ -1203,6 +1266,16 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
         val_cache=val_cache,
         edit_pairs=edit_pairs,
         edit_weight=getattr(args, "edit_weight", 2.0),
+        hard_neg_mining=not getattr(args, "no_hard_neg_mining", False),
+        hard_neg_threshold=getattr(args, "hard_neg_threshold", 0.7),
+        hard_neg_weight=getattr(args, "hard_neg_weight", 3.0),
+        seg_score_cache=seg_score_cache,
+        skeleton_path_cache=skeleton_path_cache,
+        checkpoint_every=getattr(args, "checkpoint_every", 0) or 0,
+        checkpoint_path_template=(
+            str(Path(args.cell_gnn_output).with_suffix("")) + "_ep{epoch}.pt"
+            if getattr(args, "checkpoint_every", 0) else None
+        ),
         verbose=True,
     )
     elapsed = time.time() - t0
@@ -1261,6 +1334,133 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Subcommand: precompute-seg-scores
+# ---------------------------------------------------------------------------
+
+def cmd_precompute_seg_scores(args: argparse.Namespace) -> int:
+    """Pre-compute EM segmentation scores for all edges in a BoxCache (fast point-query)."""
+    from neuronauts.dataset_builder import BoxCache
+    from neuronauts.cell_graph import (
+        precompute_seg_scores_fast,
+        save_seg_score_cache,
+    )
+
+    cache = BoxCache(args.cache_dir)
+    records = list(cache.iter_records())
+    if not records:
+        print(f"No cached boxes in {args.cache_dir}")
+        return 1
+
+    print(f"Pre-computing seg scores for {len(records)} boxes (fast point-query) …")
+    print(f"  proximity_radius_nm={args.proximity_radius_nm}  mip={args.mip}  margin_nm={args.margin_nm}")
+
+    seg_cache = precompute_seg_scores_fast(
+        cache,
+        records=records,
+        proximity_radius_nm=args.proximity_radius_nm,
+        mip=args.mip,
+        margin_nm=args.margin_nm,
+        verbose=True,
+    )
+
+    save_seg_score_cache(seg_cache, args.output)
+
+    n_signal = sum(
+        sum(1 for v in side.values() if float(v) != 0.5)
+        for box in seg_cache.values()
+        for side in box.values()
+    )
+    print(f"\nDone: {len(seg_cache)} boxes  {n_signal} edges with signal (≠0.5)")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: precompute-self-skeletons
+# ---------------------------------------------------------------------------
+
+def cmd_precompute_self_skeletons(args: argparse.Namespace) -> int:
+    """Self-skeletonize the BossDB seg volume per box using kimimaro."""
+    from neuronauts.dataset_builder import BoxCache
+    from neuronauts.cell_graph import precompute_self_skeletons_for_cache
+
+    cache = BoxCache(args.cache_dir)
+    records = list(cache.iter_records())
+    if not records:
+        print(f"No cached boxes in {args.cache_dir}")
+        return 1
+
+    print(f"Self-skeletonizing {len(records)} boxes via kimimaro …")
+    print(f"  output_dir={args.output_dir}  mip={args.mip}  margin_nm={args.margin_nm}")
+
+    manifest = precompute_self_skeletons_for_cache(
+        cache,
+        output_dir=args.output_dir,
+        records=records,
+        mip=args.mip,
+        margin_nm=args.margin_nm,
+        teasar_const=args.teasar_const,
+        teasar_scale=args.teasar_scale,
+        min_vertices=args.min_vertices,
+        verbose=True,
+    )
+    print(f"\nDone: skeletonized {len(manifest)} boxes -> {args.output_dir}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: precompute-skeleton-paths
+# ---------------------------------------------------------------------------
+
+def cmd_precompute_skeleton_paths(args: argparse.Namespace) -> int:
+    """Pre-compute skeleton paths between proximity-graph synapse pairs."""
+    from neuronauts.dataset_builder import BoxCache
+    from neuronauts.cell_graph import (
+        precompute_skeleton_paths_for_cache,
+        save_skeleton_path_cache,
+    )
+
+    cache = BoxCache(args.cache_dir)
+    records = list(cache.iter_records())
+    if not records:
+        print(f"No cached boxes in {args.cache_dir}")
+        return 1
+
+    print(f"Pre-computing skeleton paths for {len(records)} boxes …")
+    print(f"  proximity_radius_nm={args.proximity_radius_nm}  max_path_nm={args.max_path_nm}")
+    print(f"  skeleton_dir={args.skeleton_dir}")
+
+    paths = precompute_skeleton_paths_for_cache(
+        cache,
+        skeleton_dir=args.skeleton_dir,
+        records=records,
+        proximity_radius_nm=args.proximity_radius_nm,
+        max_path_nm=args.max_path_nm,
+        skeleton_service_version=args.skeleton_service_version,
+        verbose=True,
+    )
+
+    save_skeleton_path_cache(paths, args.output)
+
+    n_total = 0
+    n_traced = 0
+    n_same_root = 0
+    for box in paths.values():
+        for side in box.values():
+            for d in side.values():
+                n_total += 1
+                if d["same_root"]:
+                    n_same_root += 1
+                if len(d["path"]) > 0:
+                    n_traced += 1
+    print(
+        f"\nDone: {len(paths)} boxes  "
+        f"{n_total} edges  {n_same_root} same-root  {n_traced} traced "
+        f"({100*n_traced/max(n_total,1):.1f}%)"
+    )
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Subcommand: evaluate (CellGNN vs beam-search baseline)
 # ---------------------------------------------------------------------------
 
@@ -1273,6 +1473,7 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
         CellGNN,
         CellGNNConfig,
         build_synapse_graph,
+        cell_gnn_assembly,
         connectivity_graph_from_cell_labels,
         infer_cells,
         load_cell_gnn,
@@ -1347,23 +1548,72 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
             continue
 
         # CellGNN evaluation
-        pre_graph = build_synapse_graph(
-            synapses, "pre",
-            proximity_radius_nm=args.proximity_radius_nm,
-        )
-        post_graph = build_synapse_graph(
-            synapses, "post",
-            proximity_radius_nm=args.proximity_radius_nm,
-        )
-        pre_labels = infer_cells(
-            model, pre_graph,
-            threshold=args.partition_threshold,
-        )
-        post_labels = infer_cells(
-            model, post_graph,
-            threshold=args.partition_threshold,
-        )
-        cg = connectivity_graph_from_cell_labels(pre_labels, post_labels, synapses)
+        use_bs = getattr(args, "use_boundary_search", False)
+        if use_bs:
+            cg = cell_gnn_assembly(
+                synapses, model,
+                proximity_radius_nm=args.proximity_radius_nm,
+                partition_threshold=args.partition_threshold,
+                use_boundary_search=True,
+                high_sim=getattr(args, "high_sim", 0.999),
+                low_sim=getattr(args, "low_sim", 0.93),
+                max_boundary_edges=getattr(args, "max_boundary_edges", 40),
+                use_em_corridors=getattr(args, "use_em_corridors", False),
+                corridor_accept_threshold=getattr(args, "corridor_accept", 0.8),
+                corridor_reject_threshold=getattr(args, "corridor_reject", 0.2),
+                verbose=False,
+            )
+            pre_graph = build_synapse_graph(
+                synapses, "pre",
+                proximity_radius_nm=args.proximity_radius_nm,
+            )
+            post_graph = build_synapse_graph(
+                synapses, "post",
+                proximity_radius_nm=args.proximity_radius_nm,
+            )
+            # Reconstruct labels for quality scoring (re-use assembly's graphs)
+            from neuronauts.cell_graph import infer_cells_with_search
+            pre_labels = infer_cells_with_search(
+                model, pre_graph,
+                high_threshold=getattr(args, "high_sim", 0.999),
+                low_sim=getattr(args, "low_sim", 0.93),
+                max_boundary_edges=getattr(args, "max_boundary_edges", 40),
+            )
+            post_labels = infer_cells_with_search(
+                model, post_graph,
+                high_threshold=getattr(args, "high_sim", 0.999),
+                low_sim=getattr(args, "low_sim", 0.93),
+                max_boundary_edges=getattr(args, "max_boundary_edges", 40),
+            )
+        else:
+            pre_graph = build_synapse_graph(
+                synapses, "pre",
+                proximity_radius_nm=args.proximity_radius_nm,
+            )
+            post_graph = build_synapse_graph(
+                synapses, "post",
+                proximity_radius_nm=args.proximity_radius_nm,
+            )
+            if getattr(args, "two_pass", False):
+                from neuronauts.cell_graph import infer_cells_two_pass
+                pre_labels = infer_cells_two_pass(
+                    model, pre_graph,
+                    threshold=args.partition_threshold,
+                )
+                post_labels = infer_cells_two_pass(
+                    model, post_graph,
+                    threshold=args.partition_threshold,
+                )
+            else:
+                pre_labels = infer_cells(
+                    model, pre_graph,
+                    threshold=args.partition_threshold,
+                )
+                post_labels = infer_cells(
+                    model, post_graph,
+                    threshold=args.partition_threshold,
+                )
+            cg = connectivity_graph_from_cell_labels(pre_labels, post_labels, synapses)
         m = lg_evaluate(cg, synapses.pre_root_id, synapses.post_root_id)
         gnn_f1s.append(m.f1)
         gnn_precs.append(m.precision)
@@ -2242,6 +2492,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     p_cell.add_argument("--margin", type=float, default=0.5,
                         help="Contrastive loss margin (cosine sim gap).")
     p_cell.add_argument("--max-pairs-per-box", type=int, default=2048)
+    p_cell.add_argument("--max-synapses-per-box", type=int, default=2000,
+                        help="Randomly subsample boxes above this synapse count to cap memory (default: 2000).")
     p_cell.add_argument("--proximity-radius-nm", type=float, default=5000.0)
     p_cell.add_argument("--partition-threshold", type=float, default=0.5)
     p_cell.add_argument("--min-tangledness", type=float, default=0.0,
@@ -2258,7 +2510,104 @@ def parse_args(argv=None) -> argparse.Namespace:
                         help="TSV of edit-history pairs (from neuronauts.edit_history build-pairs).")
     p_cell.add_argument("--edit-weight", type=float, default=2.0,
                         help="Loss multiplier for edit-derived contrastive pairs.")
+    p_cell.add_argument("--hard-neg-threshold", type=float, default=0.7,
+                        help="Mine different-root pairs with cosine sim above this as hard negatives.")
+    p_cell.add_argument("--hard-neg-weight", type=float, default=3.0,
+                        help="Loss multiplier for hard-negative mined pairs.")
+    p_cell.add_argument("--no-hard-neg-mining", action="store_true",
+                        help="Disable online hard negative mining.")
+    p_cell.add_argument("--seg-scores-cache", default=None,
+                        help="Path to pre-computed seg connectivity scores JSON "
+                             "(from precompute-seg-scores subcommand).  When set, "
+                             "injects seg_connectivity edge features into training graphs.")
+    p_cell.add_argument("--ablate-feature", type=int, default=None,
+                        help="Zero out edge feature column with this index in all training "
+                             "graphs (0..5). Used for per-feature ablation studies. "
+                             "Indices: 0=distance, 1=same_scaffold, 2=grammar_score, "
+                             "3=shared_agents, 4=shared_partners, 5=seg_connectivity.")
+    p_cell.add_argument("--checkpoint-every", type=int, default=0,
+                        help="Save a model snapshot every N epochs to "
+                             "<output>_ep{epoch}.pt (0 = disabled).")
+    p_cell.add_argument("--skeleton-paths-cache", default=None,
+                        help="Path to pre-computed skeleton-path cache (.pkl, from "
+                             "precompute-skeleton-paths subcommand).  When set, loads "
+                             "per-step path features and feeds them to PathEdgeEncoder.")
+    p_cell.add_argument("--path-emb-dim", type=int, default=0,
+                        help="PathEdgeEncoder output dimension. 0 = disabled (default). "
+                             "Set to 16 to enable the Option-2 path embedding.")
+    p_cell.add_argument("--path-input-dim", type=int, default=6,
+                        help="Dimensionality of per-step path features fed to PathEdgeEncoder "
+                             "(default 6: raw_delta3 + skeleton descriptors).")
+    p_cell.add_argument("--edge-scoring", action="store_true",
+                        help="Train with edge classification (BCE) instead of contrastive "
+                             "clustering loss.  The model learns P(same_cell) per proximity "
+                             "edge; inference uses union-find on high-confidence edges.")
+    p_cell.add_argument("--edge-threshold", type=float, default=0.5,
+                        help="Sigmoid threshold for same-cell edge at inference (default 0.5).")
+    p_cell.add_argument(
+        "--path-encoder-checkpoint", default=None,
+        help="Pre-trained PathEdgeEncoder checkpoint (from train-path-encoder).  "
+             "When set, the encoder's output is concatenated to the edge head's "
+             "input features.  Requires --pretrained-path-emb-dim to match the "
+             "checkpoint's output_dim.",
+    )
+    p_cell.add_argument(
+        "--pretrained-path-emb-dim", type=int, default=0,
+        help="Output dimension of the pre-trained PathEdgeEncoder (default 0 = disabled). "
+             "Must match the checkpoint saved by train-path-encoder.",
+    )
     p_cell.set_defaults(func=cmd_train_cell_gnn)
+
+    # ---------------------------------------------------------------------------
+    # precompute-seg-scores
+    # ---------------------------------------------------------------------------
+    p_seg = sub.add_parser(
+        "precompute-seg-scores",
+        help="Pre-compute EM seg scores for all boxes (fast single-fetch per box).",
+    )
+    p_seg.add_argument("--cache-dir", default="data/boxes")
+    p_seg.add_argument("--output", default="data/seg_scores.json",
+                       help="Output JSON file path.")
+    p_seg.add_argument("--proximity-radius-nm", type=float, default=5000.0)
+    p_seg.add_argument("--mip", type=int, default=3,
+                       help="CloudVolume MIP level for seg fetch (default 3 = ~64×64×80 nm/vox).")
+    p_seg.add_argument("--margin-nm", type=float, default=200.0,
+                       help="Padding around synapse bounding box when fetching seg volume.")
+    p_seg.set_defaults(func=cmd_precompute_seg_scores)
+
+    # ---------------------------------------------------------------------------
+    # precompute-skeleton-paths
+    # ---------------------------------------------------------------------------
+    p_skel = sub.add_parser(
+        "precompute-skeleton-paths",
+        help="Trace skeleton paths between proximity-graph synapse pairs.",
+    )
+    p_skel.add_argument("--cache-dir", default="data/boxes")
+    p_skel.add_argument("--skeleton-dir", default="data/skeletons",
+                        help="Directory with cached CAVE skeletons (per scripts/fetch_skeletons.py).")
+    p_skel.add_argument("--output", default="data/skeleton_paths.pkl")
+    p_skel.add_argument("--proximity-radius-nm", type=float, default=5000.0)
+    p_skel.add_argument("--max-path-nm", type=float, default=50_000.0,
+                        help="Skeleton paths longer than this are dropped (no-path).")
+    p_skel.add_argument("--skeleton-service-version", type=int, default=4)
+    p_skel.set_defaults(func=cmd_precompute_skeleton_paths)
+
+    # ---------------------------------------------------------------------------
+    # precompute-self-skeletons
+    # ---------------------------------------------------------------------------
+    p_self = sub.add_parser(
+        "precompute-self-skeletons",
+        help="Self-skeletonize BossDB seg volumes via kimimaro (per box).",
+    )
+    p_self.add_argument("--cache-dir", default="data/boxes")
+    p_self.add_argument("--output-dir", default="data/skeletons_self")
+    p_self.add_argument("--mip", type=int, default=3,
+                        help="CloudVolume MIP for the seg fetch (default 3).")
+    p_self.add_argument("--margin-nm", type=float, default=200.0)
+    p_self.add_argument("--teasar-scale", type=float, default=1.5)
+    p_self.add_argument("--teasar-const", type=float, default=5.0)
+    p_self.add_argument("--min-vertices", type=int, default=5)
+    p_self.set_defaults(func=cmd_precompute_self_skeletons)
 
     # evaluate
     p_eval = sub.add_parser(
@@ -2280,6 +2629,22 @@ def parse_args(argv=None) -> argparse.Namespace:
     p_eval.add_argument("--split", default="test", choices=["val", "test"],
                         help="Which split to evaluate on (default: test).")
     p_eval.add_argument("--log-dir", default="run_logs")
+    p_eval.add_argument("--use-boundary-search", action="store_true",
+                        help="Use boundary-edge beam search instead of plain infer_cells.")
+    p_eval.add_argument("--high-sim", type=float, default=0.999,
+                        help="Upper similarity bound for boundary search (default: 0.999).")
+    p_eval.add_argument("--low-sim", type=float, default=0.93,
+                        help="Lower similarity bound for boundary search (default: 0.93).")
+    p_eval.add_argument("--max-boundary-edges", type=int, default=40,
+                        help="Max boundary edges per graph in beam search (default: 40).")
+    p_eval.add_argument("--use-em-corridors", action="store_true",
+                        help="Fetch EM corridors for boundary edges (requires network).")
+    p_eval.add_argument("--corridor-accept", type=float, default=0.8,
+                        help="EM score above which a merge is force-accepted (default: 0.8).")
+    p_eval.add_argument("--corridor-reject", type=float, default=0.2,
+                        help="EM score below which a merge is force-rejected (default: 0.2).")
+    p_eval.add_argument("--two-pass", action="store_true",
+                        help="Use two-pass inference: scalar first pass, then rebuild chain paths from first-pass labels.")
     p_eval.set_defaults(func=cmd_evaluate)
 
     # sweep
@@ -2322,7 +2687,354 @@ def parse_args(argv=None) -> argparse.Namespace:
     p_scale.add_argument("--log-dir", default="run_logs")
     p_scale.set_defaults(func=cmd_scale_test)
 
+    # ---------------------------------------------------------------------------
+    # train-path-encoder
+    # ---------------------------------------------------------------------------
+    p_path = sub.add_parser(
+        "train-path-encoder",
+        help="Pre-train PathEdgeEncoder on path discrimination (valid vs spliced paths).",
+    )
+    p_path.add_argument("--cache-dir", default="data/boxes_30um",
+                        help="Box cache directory to extract cell chains from.")
+    p_path.add_argument("--role", default="pre", choices=["pre", "post"],
+                        help="Which synapse side to build chains for.")
+    p_path.add_argument("--min-synapses-per-cell", type=int, default=5,
+                        help="Minimum cross-box synapse count to include a cell chain.")
+    p_path.add_argument("--window-size", type=int, default=8,
+                        help="Number of synapses per path window (positive example length).")
+    p_path.add_argument("--neg-per-pos", type=int, default=4,
+                        help="Number of negative examples per positive.")
+    p_path.add_argument("--hard-neg-fraction", type=float, default=0.65,
+                        help="Fraction of negatives that are hard (default 0.65).")
+    p_path.add_argument("--insert-delete-fraction", type=float, default=0.3,
+                        help="Within hard negatives: fraction that are insert/delete "
+                             "(single-synapse edits). Remainder split between parallel-cell "
+                             "and KD-tree splices.")
+    p_path.add_argument("--parallel-cell-fraction", type=float, default=0.15,
+                        help="Within hard negatives: fraction that are parallel-cell splices "
+                             "(same direction at junction — hardest type).")
+    p_path.add_argument("--d-model", type=int, default=32)
+    p_path.add_argument("--n-heads", type=int, default=2)
+    p_path.add_argument("--n-layers", type=int, default=3)
+    p_path.add_argument("--output-dim", type=int, default=16,
+                        help="PathEdgeEncoder output embedding dimension.")
+    p_path.add_argument("--epochs", type=int, default=30)
+    p_path.add_argument("--lr", type=float, default=1e-3)
+    p_path.add_argument("--batch-size", type=int, default=512)
+    p_path.add_argument("--checkpoint-every", type=int, default=5)
+    p_path.add_argument("--max-examples-per-epoch", type=int, default=None,
+                        help="Cap examples per epoch (useful on CPU to keep epochs short). "
+                             "Spatial index is still built once and reused every epoch.")
+    p_path.add_argument("--pool-mode", default="cls",
+                        choices=["cls", "cls_max", "cls_rawmax"],
+                        help="Pooling strategy: 'cls' = CLS token only (v5/v6); "
+                             "'cls_max' = CLS + max-pool over transformer outputs (v7); "
+                             "'cls_rawmax' = CLS + max-pool over raw input projections (v8).")
+    p_path.add_argument("--output", default="models/path_encoder.pt",
+                        help="Output checkpoint path.")
+    p_path.add_argument("--seed", type=int, default=42)
+    p_path.add_argument("--edit-pairs-tsv", default=None,
+                        help="TSV of CAVE edit pairs (from fetch-cave-edits) to augment training.")
+    p_path.add_argument("--edit-chains-npz", default=None,
+                        help="NPZ of CAVE edit chains (from fetch-cave-edits) to merge with cache chains.")
+    p_path.set_defaults(func=cmd_train_path_encoder)
+
+    # fetch-cave-edits
+    # ---------------------------------------------------------------------------
+    p_cave = sub.add_parser(
+        "fetch-cave-edits",
+        help="Fetch CAVE proofreading lineage pairs and build edit-history TSV for path encoder training.",
+    )
+    p_cave.add_argument("--token", default=None,
+                        help="CAVE auth token.  Defaults to ~/.cloudvolume/secrets/cave-secret.json.")
+    p_cave.add_argument("--datastack", default="minnie65_phase3_v1",
+                        help="CAVE datastack name.")
+    p_cave.add_argument("--past-timestamp", default="2021-06-11",
+                        help="ISO date of the raw/early version (v117 ≈ 2021-06-11).")
+    p_cave.add_argument("--n-sample", type=int, default=10000,
+                        help="Number of delta roots to probe for false merges.")
+    p_cave.add_argument("--max-false-merges", type=int, default=500,
+                        help="Maximum false-merge events to return (each yields ≥1 pair).")
+    p_cave.add_argument("--min-synapses-per-root", type=int, default=8,
+                        help="Drop v117 roots with fewer than this many synapses before svid lookup.")
+    p_cave.add_argument("--output-tsv", default="data/cave_edit_pairs.tsv",
+                        help="Output TSV path for edit pairs.")
+    p_cave.add_argument("--output-chains", default="data/cave_edit_chains.npz",
+                        help="Output NPZ path for the fetched false-merge half-chains.")
+    p_cave.add_argument("--seed", type=int, default=0)
+    p_cave.set_defaults(func=cmd_fetch_cave_edits)
+
+    # fetch-cave-edits-from-cache — preferred approach using local box cache
+    p_cave2 = sub.add_parser(
+        "fetch-cave-edits-from-cache",
+        help=(
+            "Build merge+split training pairs from box cache supervoxel IDs. "
+            "Preferred over fetch-cave-edits: spatially stratified, no 500K row cap."
+        ),
+    )
+    p_cave2.add_argument("--token", default=None,
+                         help="CAVE auth token (default: ~/.cloudvolume/secrets/cave-secret.json).")
+    p_cave2.add_argument("--datastack", default="minnie65_phase3_v1")
+    p_cave2.add_argument("--cache-dir", default="data/boxes_30um",
+                         help="Box cache directory containing *.npz files.")
+    p_cave2.add_argument("--past-timestamp", default="2021-06-11",
+                         help="ISO date of the raw CV state (v117 default).")
+    p_cave2.add_argument("--svid-batch-size", type=int, default=2000)
+    p_cave2.add_argument("--min-synapses-per-root", type=int, default=8)
+    p_cave2.add_argument("--role", default="pre", choices=["pre", "post", "both"])
+    p_cave2.add_argument("--output-tsv", default="data/cave_edit_pairs_cache.tsv")
+    p_cave2.add_argument("--output-chains", default="data/cave_edit_chains_cache.npz")
+    p_cave2.add_argument("--seed", type=int, default=0)
+    p_cave2.set_defaults(func=cmd_fetch_cave_edits_from_cache)
+
+    # fetch-cave-edits-stratified — spatially stratified via bounding-box queries
+    p_strat = sub.add_parser(
+        "fetch-cave-edits-stratified",
+        help="Spatially stratified CAVE edit pairs: divide volume into bins, sample roots per bin.",
+    )
+    p_strat.add_argument("--token", default=None)
+    p_strat.add_argument("--datastack", default="minnie65_phase3_v1")
+    p_strat.add_argument("--past-timestamp", default="2021-06-11")
+    p_strat.add_argument("--bins", default="4,4,2",
+                         help="Spatial bin grid as nx,ny,nz (default: 4,4,2 = 32 bins).")
+    p_strat.add_argument("--roots-per-bin", type=int, default=300,
+                         help="Delta roots to sample per spatial bin.")
+    p_strat.add_argument("--svid-batch-size", type=int, default=2000)
+    p_strat.add_argument("--min-synapses-per-root", type=int, default=8)
+    p_strat.add_argument("--output-tsv", default="data/cave_edit_pairs_strat.tsv")
+    p_strat.add_argument("--output-chains", default="data/cave_edit_chains_strat.npz")
+    p_strat.add_argument("--seed", type=int, default=0)
+    p_strat.set_defaults(func=cmd_fetch_cave_edits_stratified)
+
     return root.parse_args(argv)
+
+
+def cmd_train_path_encoder(args: argparse.Namespace) -> int:
+    """Pre-train PathEdgeEncoder on path discrimination across all cached boxes."""
+    from neuronauts.dataset_builder import BoxCache
+    from neuronauts.path_dataset import extract_cell_chains, train_path_encoder
+
+    import os
+    os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
+
+    cache = BoxCache(args.cache_dir)
+    records = cache.all_records()
+    if not records:
+        print(f"No cached boxes in {args.cache_dir}")
+        return 1
+
+    print(f"Extracting chains from {len(records)} boxes (role={args.role}, "
+          f"min_synapses_per_cell={args.min_synapses_per_cell})…")
+    chains = extract_cell_chains(
+        cache,
+        role=args.role,
+        min_synapses_per_cell=args.min_synapses_per_cell,
+    )
+    if not chains:
+        print("No chains extracted — increase --cache-dir or lower --min-synapses-per-cell")
+        return 1
+
+    print(f"Extracted {len(chains)} cell chains.")
+
+    # Load optional CAVE edit chains (from fetch-cave-edits)
+    edit_chains = None
+    edit_chains_npz = getattr(args, "edit_chains_npz", None)
+    if edit_chains_npz and os.path.exists(edit_chains_npz):
+        import numpy as np
+        data = np.load(edit_chains_npz, allow_pickle=True)
+        edit_chains = {int(k): data[k] for k in data.files}
+        print(f"Loaded {len(edit_chains)} CAVE edit chains from {edit_chains_npz}")
+
+    train_path_encoder(
+        chains,
+        d_model=args.d_model,
+        n_heads=args.n_heads,
+        n_layers=args.n_layers,
+        output_dim=args.output_dim,
+        window_size=args.window_size,
+        epochs=args.epochs,
+        lr=args.lr,
+        batch_size=args.batch_size,
+        neg_per_pos=args.neg_per_pos,
+        hard_neg_fraction=args.hard_neg_fraction,
+        insert_delete_fraction=getattr(args, "insert_delete_fraction", 0.3),
+        parallel_cell_fraction=getattr(args, "parallel_cell_fraction", 0.15),
+        checkpoint_path=args.output,
+        checkpoint_every=args.checkpoint_every,
+        rng_seed=args.seed,
+        max_examples_per_epoch=getattr(args, "max_examples_per_epoch", None),
+        edit_pairs_tsv=getattr(args, "edit_pairs_tsv", None),
+        edit_chains=edit_chains,
+        pool_mode=getattr(args, "pool_mode", "cls"),
+    )
+    return 0
+
+
+def cmd_fetch_cave_edits_stratified(args: argparse.Namespace) -> int:
+    """Spatially stratified CAVE edit pair fetch."""
+    import json, os, numpy as np
+    from neuronauts.path_dataset import fetch_cave_edits_spatially_stratified, save_edit_pairs_tsv
+
+    token = args.token
+    if token is None:
+        secret_path = os.path.expanduser("~/.cloudvolume/secrets/cave-secret.json")
+        if os.path.exists(secret_path):
+            with open(secret_path) as fh:
+                token = json.load(fh).get("token")
+    if not token:
+        print("No CAVE token found.")
+        return 1
+
+    bins = tuple(int(x) for x in args.bins.split(","))
+    if len(bins) != 3:
+        print("--bins must be nx,ny,nz e.g. 4,4,2")
+        return 1
+
+    chains, pairs = fetch_cave_edits_spatially_stratified(
+        cave_token=token,
+        datastack=args.datastack,
+        past_timestamp=args.past_timestamp,
+        spatial_bins=bins,
+        roots_per_bin=args.roots_per_bin,
+        svid_batch_size=args.svid_batch_size,
+        min_synapses_per_root=args.min_synapses_per_root,
+        rng_seed=args.seed,
+    )
+
+    if not pairs:
+        print("No edit pairs found.")
+        return 1
+
+    save_edit_pairs_tsv(pairs, args.output_tsv)
+    print(f"Saved {len(pairs)} pairs -> {args.output_tsv}")
+
+    os.makedirs(os.path.dirname(os.path.abspath(args.output_chains)), exist_ok=True)
+    np.savez_compressed(
+        args.output_chains,
+        **{str(sid): arr for sid, arr in chains.items()},
+    )
+    print(f"Saved {len(chains)} chains -> {args.output_chains}")
+    return 0
+
+
+def cmd_fetch_cave_edits_from_cache(args: argparse.Namespace) -> int:
+    """Build merge+split training pairs from box cache supervoxel IDs.
+
+    Preferred over fetch-cave-edits. The box cache already contains
+    pre_seg_id (supervoxel IDs) and is spatially stratified across the volume,
+    so no CAVE materialization query is needed. The only network call is a
+    batched get_roots(svids, timestamp=past_timestamp) to resolve supervoxels
+    backward to their pre-proofreading roots.
+
+    Starting from current (proofread) roots avoids the 500K-row query cap that
+    limits fetch-cave-edits to ~5K roots per call. The full box cache yields
+    ~50K–100K unique roots.
+    """
+    import json, os, numpy as np
+    from neuronauts.path_dataset import fetch_cave_edit_pairs_from_cache, save_edit_pairs_tsv
+
+    token = args.token
+    if token is None:
+        secret_path = os.path.expanduser("~/.cloudvolume/secrets/cave-secret.json")
+        if os.path.exists(secret_path):
+            with open(secret_path) as fh:
+                token = json.load(fh).get("token")
+    if not token:
+        print("No CAVE token found.  Pass --token or set ~/.cloudvolume/secrets/cave-secret.json")
+        return 1
+
+    chains, pairs = fetch_cave_edit_pairs_from_cache(
+        cave_token=token,
+        cache_dir=args.cache_dir,
+        datastack=args.datastack,
+        past_timestamp=args.past_timestamp,
+        svid_batch_size=args.svid_batch_size,
+        min_synapses_per_root=args.min_synapses_per_root,
+        role=args.role,
+        rng_seed=args.seed,
+    )
+
+    if not pairs:
+        print("No edit pairs found.")
+        return 1
+
+    save_edit_pairs_tsv(pairs, args.output_tsv)
+    print(f"Saved {len(pairs)} pairs -> {args.output_tsv}")
+
+    os.makedirs(os.path.dirname(os.path.abspath(args.output_chains)), exist_ok=True)
+    np.savez_compressed(
+        args.output_chains,
+        **{str(sid): arr for sid, arr in chains.items()},
+    )
+    print(f"Saved {len(chains)} chains -> {args.output_chains}")
+    return 0
+
+
+def cmd_fetch_cave_edits(args: argparse.Namespace) -> int:
+    """Fetch real CV-error training pairs from CAVE and save for path encoder training.
+
+    Implements the pre/post proofreading approach: compares the CV output state
+    (--past-timestamp, ideally the latest timestamp before manual proofreading
+    began) against the current proofread ground truth.
+
+    A single supervoxel → current-root pass yields both error types:
+
+    False merges (hard negatives, label=0):
+        One past root → 2+ current roots.  CV merged two cells; proofreaders
+        split them.  Junction between the half-chains is a real cell boundary.
+        Single-synapse isolates are included (real "insert" patterns).
+
+    False splits (hard positives, label=1):
+        2+ past roots → same current root.  CV split one cell; proofreaders
+        merged them.  Junction between their chains IS valid — same cell.
+
+    Both types are required for correct calibration: merge-only training makes
+    the model distrust all junctions; split positives force it to use actual
+    path features (trajectory, curvature) rather than junction presence alone.
+
+    Complex edit histories (interleaved merge+split sequences) are handled
+    correctly: all labels are conditioned on the final ground-truth state.
+
+    Outputs:
+      --output-tsv   : pairs TSV consumed by add_edit_history_examples
+      --output-chains: NPZ of chain position arrays (synthetic negative IDs)
+    """
+    import json, os, numpy as np
+    from neuronauts.path_dataset import fetch_cave_false_merge_chains, save_edit_pairs_tsv
+
+    token = args.token
+    if token is None:
+        secret_path = os.path.expanduser("~/.cloudvolume/secrets/cave-secret.json")
+        if os.path.exists(secret_path):
+            with open(secret_path) as fh:
+                token = json.load(fh).get("token")
+    if not token:
+        print("No CAVE token found.  Pass --token or set ~/.cloudvolume/secrets/cave-secret.json")
+        return 1
+
+    chains, pairs = fetch_cave_false_merge_chains(
+        cave_token=token,
+        datastack=args.datastack,
+        past_timestamp=args.past_timestamp,
+        n_sample_old_roots=args.n_sample,
+        max_false_merges=args.max_false_merges,
+        min_synapses_per_root=args.min_synapses_per_root,
+        rng_seed=args.seed,
+    )
+
+    if not pairs:
+        print("No false-merge pairs found.")
+        return 1
+
+    save_edit_pairs_tsv(pairs, args.output_tsv)
+
+    os.makedirs(os.path.dirname(os.path.abspath(args.output_chains)), exist_ok=True)
+    np.savez_compressed(
+        args.output_chains,
+        **{str(sid): arr for sid, arr in chains.items()},
+    )
+    print(f"Saved {len(chains)} half-chains -> {args.output_chains}")
+    return 0
 
 
 def main(argv=None) -> int:
