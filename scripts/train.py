@@ -2787,6 +2787,25 @@ def parse_args(argv=None) -> argparse.Namespace:
     p_cave2.add_argument("--seed", type=int, default=0)
     p_cave2.set_defaults(func=cmd_fetch_cave_edits_from_cache)
 
+    # fetch-cave-edits-stratified — spatially stratified via bounding-box queries
+    p_strat = sub.add_parser(
+        "fetch-cave-edits-stratified",
+        help="Spatially stratified CAVE edit pairs: divide volume into bins, sample roots per bin.",
+    )
+    p_strat.add_argument("--token", default=None)
+    p_strat.add_argument("--datastack", default="minnie65_phase3_v1")
+    p_strat.add_argument("--past-timestamp", default="2021-06-11")
+    p_strat.add_argument("--bins", default="4,4,2",
+                         help="Spatial bin grid as nx,ny,nz (default: 4,4,2 = 32 bins).")
+    p_strat.add_argument("--roots-per-bin", type=int, default=300,
+                         help="Delta roots to sample per spatial bin.")
+    p_strat.add_argument("--svid-batch-size", type=int, default=2000)
+    p_strat.add_argument("--min-synapses-per-root", type=int, default=8)
+    p_strat.add_argument("--output-tsv", default="data/cave_edit_pairs_strat.tsv")
+    p_strat.add_argument("--output-chains", default="data/cave_edit_chains_strat.npz")
+    p_strat.add_argument("--seed", type=int, default=0)
+    p_strat.set_defaults(func=cmd_fetch_cave_edits_stratified)
+
     return root.parse_args(argv)
 
 
@@ -2848,6 +2867,53 @@ def cmd_train_path_encoder(args: argparse.Namespace) -> int:
         edit_chains=edit_chains,
         pool_mode=getattr(args, "pool_mode", "cls"),
     )
+    return 0
+
+
+def cmd_fetch_cave_edits_stratified(args: argparse.Namespace) -> int:
+    """Spatially stratified CAVE edit pair fetch."""
+    import json, os, numpy as np
+    from neuronauts.path_dataset import fetch_cave_edits_spatially_stratified, save_edit_pairs_tsv
+
+    token = args.token
+    if token is None:
+        secret_path = os.path.expanduser("~/.cloudvolume/secrets/cave-secret.json")
+        if os.path.exists(secret_path):
+            with open(secret_path) as fh:
+                token = json.load(fh).get("token")
+    if not token:
+        print("No CAVE token found.")
+        return 1
+
+    bins = tuple(int(x) for x in args.bins.split(","))
+    if len(bins) != 3:
+        print("--bins must be nx,ny,nz e.g. 4,4,2")
+        return 1
+
+    chains, pairs = fetch_cave_edits_spatially_stratified(
+        cave_token=token,
+        datastack=args.datastack,
+        past_timestamp=args.past_timestamp,
+        spatial_bins=bins,
+        roots_per_bin=args.roots_per_bin,
+        svid_batch_size=args.svid_batch_size,
+        min_synapses_per_root=args.min_synapses_per_root,
+        rng_seed=args.seed,
+    )
+
+    if not pairs:
+        print("No edit pairs found.")
+        return 1
+
+    save_edit_pairs_tsv(pairs, args.output_tsv)
+    print(f"Saved {len(pairs)} pairs -> {args.output_tsv}")
+
+    os.makedirs(os.path.dirname(os.path.abspath(args.output_chains)), exist_ok=True)
+    np.savez_compressed(
+        args.output_chains,
+        **{str(sid): arr for sid, arr in chains.items()},
+    )
+    print(f"Saved {len(chains)} chains -> {args.output_chains}")
     return 0
 
 

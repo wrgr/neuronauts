@@ -1204,6 +1204,202 @@ def fetch_cave_false_merge_chains(
     return chains, all_pairs
 
 
+def fetch_cave_edits_spatially_stratified(
+    cave_token: str,
+    datastack: str = "minnie65_phase3_v1",
+    *,
+    past_timestamp: str = "2021-06-11",
+    volume_bounds_vox: "tuple[list[int], list[int]] | None" = None,
+    spatial_bins: "tuple[int, int, int]" = (4, 4, 2),
+    roots_per_bin: int = 300,
+    svid_batch_size: int = 2000,
+    min_synapses_per_root: int = 8,
+    rng_seed: int = 0,
+) -> "tuple[dict[int, np.ndarray], list[tuple[int, int, str]]]":
+    """Spatially stratified CAVE edit pair fetch.
+
+    Divides the EM volume into a ``spatial_bins`` grid and samples
+    ``roots_per_bin`` delta roots from each cell, guaranteeing even coverage
+    across the volume.  This is critical for deployment: a model trained on
+    spatially biased edits will have uneven performance across the volume.
+
+    Within each spatial bin the same false-merge / false-split logic as
+    :func:`fetch_cave_false_merge_chains` applies — supervoxels are resolved
+    backward in time to their pre-proofreading root IDs to identify both error
+    types in a single pass.
+
+    Parameters
+    ----------
+    volume_bounds_vox : ``([xmin, ymin, zmin], [xmax, ymax, zmax])`` in MIP-0
+        voxels (8×8×40 nm for Minnie65).  Defaults to the Minnie65 extent.
+    spatial_bins : grid dimensions (nx, ny, nz).
+    roots_per_bin : delta roots to probe per spatial bin.
+    svid_batch_size, min_synapses_per_root, rng_seed : same as
+        :func:`fetch_cave_false_merge_chains`.
+
+    Returns
+    -------
+    chains, pairs : same format as :func:`fetch_cave_false_merge_chains`.
+    """
+    try:
+        import caveclient
+        import datetime
+    except ImportError as exc:
+        raise ImportError("caveclient is required: pip install caveclient") from exc
+
+    from collections import defaultdict
+
+    # Minnie65 MIP-0 extent (voxels at 8×8×40 nm)
+    _DEFAULT_BOUNDS = ([17000, 17000, 0], [300000, 200000, 26000])
+    lo, hi = volume_bounds_vox or _DEFAULT_BOUNDS
+
+    past_dt = datetime.datetime.fromisoformat(past_timestamp).replace(
+        tzinfo=datetime.timezone.utc
+    )
+    rng = np.random.default_rng(rng_seed)
+    client = caveclient.CAVEclient(datastack, auth_token=cave_token)
+    _vox = np.array([8.0, 8.0, 40.0], dtype=np.float32)
+
+    nx, ny, nz = spatial_bins
+    xs = np.linspace(lo[0], hi[0], nx + 1, dtype=int)
+    ys = np.linspace(lo[1], hi[1], ny + 1, dtype=int)
+    zs = np.linspace(lo[2], hi[2], nz + 1, dtype=int)
+    n_bins = nx * ny * nz
+    print(
+        f"[strat-edit] {n_bins} spatial bins ({nx}×{ny}×{nz}), "
+        f"{roots_per_bin} roots/bin → up to {n_bins * roots_per_bin:,} roots",
+        flush=True,
+    )
+
+    # Accumulate across all bins
+    root_to_entries: dict[int, list] = defaultdict(list)
+
+    for ix in range(nx):
+        for iy in range(ny):
+            for iz in range(nz):
+                bin_lo = [int(xs[ix]), int(ys[iy]), int(zs[iz])]
+                bin_hi = [int(xs[ix + 1]), int(ys[iy + 1]), int(zs[iz + 1])]
+                bin_label = f"bin({ix},{iy},{iz})"
+                try:
+                    df = client.materialize.query_table(
+                        "synapses_pni_2",
+                        filter_spatial_dict={
+                            "pre_pt_position": [bin_lo, bin_hi]
+                        },
+                        select_columns=[
+                            "pre_pt_root_id",
+                            "pre_pt_supervoxel_id",
+                            "pre_pt_position",
+                        ],
+                        materialization_version=117,
+                    )
+                except Exception as exc:
+                    print(f"[strat-edit] {bin_label} query failed: {exc}", flush=True)
+                    continue
+
+                if len(df) == 0:
+                    continue
+
+                # Sample roots_per_bin unique roots from this bin
+                unique_roots = df["pre_pt_root_id"].unique().tolist()
+                sample = rng.choice(
+                    unique_roots,
+                    min(roots_per_bin, len(unique_roots)),
+                    replace=False,
+                ).tolist()
+                sample_set = set(sample)
+
+                for row in df.itertuples(index=False):
+                    rid = int(row.pre_pt_root_id)
+                    if rid not in sample_set:
+                        continue
+                    pos_vox = np.asarray(row.pre_pt_position, dtype=np.float32)
+                    svid = int(row.pre_pt_supervoxel_id)
+                    root_to_entries[rid].append((svid, pos_vox * _vox))
+
+                print(
+                    f"[strat-edit] {bin_label}: {len(df):,} synapses, "
+                    f"{len(unique_roots)} roots, sampled {len(sample)}",
+                    flush=True,
+                )
+
+    # Filter short roots
+    root_to_entries = {
+        r: entries
+        for r, entries in root_to_entries.items()
+        if len(entries) >= min_synapses_per_root
+    }
+    all_svids = [e[0] for entries in root_to_entries.values() for e in entries]
+    print(
+        f"[strat-edit] {len(root_to_entries):,} roots with "
+        f">={min_synapses_per_root} synapses ({len(all_svids):,} svids to resolve)",
+        flush=True,
+    )
+
+    if not all_svids:
+        return {}, []
+
+    # Batch resolve svids → past root IDs
+    print(
+        f"[strat-edit] resolving {len(all_svids):,} svids in batches of {svid_batch_size} ...",
+        flush=True,
+    )
+    all_cur_roots: list[int] = []
+    for i in range(0, len(all_svids), svid_batch_size):
+        batch = all_svids[i : i + svid_batch_size]
+        all_cur_roots.extend(int(r) for r in client.chunkedgraph.get_roots(batch))
+        if (i // svid_batch_size) % 100 == 0 and i > 0:
+            print(f"  {i:,}/{len(all_svids):,} resolved", flush=True)
+    svid_to_cur = dict(zip(all_svids, all_cur_roots))
+    print("[strat-edit] svid lookup complete", flush=True)
+
+    # Classify error types (same logic as fetch_cave_false_merge_chains)
+    chains: dict[int, np.ndarray] = {}
+    pairs: list[tuple[int, int, str]] = []
+    split_pairs: list[tuple[int, int, str]] = []
+    synthetic_id = -1
+    cur_root_to_sids: dict[int, list[int]] = defaultdict(list)
+
+    for v117_root, entries in root_to_entries.items():
+        cur_root_to_pos: dict[int, list] = defaultdict(list)
+        for svid, pos in entries:
+            cur_root_to_pos[svid_to_cur[svid]].append(pos)
+
+        half_ids: list[int] = []
+        for cur_root, pos_list in cur_root_to_pos.items():
+            pos_arr = np.stack(pos_list).astype(np.float32)
+            chain = _build_chain_from_positions(pos_arr) or pos_arr
+            sid = synthetic_id
+            synthetic_id -= 1
+            chains[sid] = chain
+            half_ids.append(sid)
+            cur_root_to_sids[cur_root].append(sid)
+
+        if len(half_ids) >= 2:
+            for i in range(len(half_ids)):
+                for j in range(i + 1, len(half_ids)):
+                    pairs.append((half_ids[i], half_ids[j], "merge"))
+
+    for cur_root, sids in cur_root_to_sids.items():
+        if len(sids) < 2:
+            continue
+        for i in range(len(sids)):
+            for j in range(i + 1, len(sids)):
+                split_pairs.append((sids[i], sids[j], "split"))
+
+    all_pairs = pairs + split_pairs
+    rng.shuffle(all_pairs)
+
+    n_merge = len(pairs)
+    n_split = len(split_pairs)
+    print(
+        f"[strat-edit] done: {len(chains):,} chains, "
+        f"{n_merge:,} merge pairs (hard-neg), {n_split:,} split pairs (hard-pos)",
+        flush=True,
+    )
+    return chains, all_pairs
+
+
 def fetch_cave_edit_pairs_from_cache(
     cave_token: str,
     cache_dir: str,
