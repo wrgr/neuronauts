@@ -55,6 +55,9 @@
     .cell-fail { background: rgba(239,68,68,0.5); }
     .cell-missing { background: rgba(136,146,164,0.1); }
     .heatmap-label { font-size: 0.65rem; color: var(--muted); text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
+    .stepper-btn { min-width: 2rem; border-color: var(--border); color: var(--text); }
+    .stepper-btn:hover { background: var(--surface2); color: var(--text); }
+    .stepper-chip { font-size: 0.68rem; border: 1px solid var(--border); border-radius: 999px; padding: 0.2rem 0.5rem; color: var(--muted); }
   </style>
 </head>
 <body>
@@ -168,6 +171,46 @@
         <div class="card-header">Latest Pipeline Run — Step Status</div>
         <div class="card-body">
           <div class="row g-2" id="step-status-grid"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pipeline Step Explorer -->
+  <div class="row g-3 mb-3">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span>Pipeline Step Explorer</span>
+          <span class="text-secondary" style="font-size:0.7rem;text-transform:none;letter-spacing:0">step through data + learning evolution</span>
+        </div>
+        <div class="card-body">
+          <div class="d-flex align-items-center gap-2 mb-3">
+            <button class="btn btn-sm btn-outline-secondary stepper-btn" onclick="stepExplorerMove(-1)">◀</button>
+            <input id="step-explorer-range" type="range" min="0" max="6" value="0" class="form-range" style="margin:0" oninput="setExplorerStep(parseInt(this.value, 10))" />
+            <button class="btn btn-sm btn-outline-secondary stepper-btn" onclick="stepExplorerMove(1)">▶</button>
+          </div>
+          <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+            <div id="step-explorer-title" class="fw-semibold">—</div>
+            <div class="d-flex align-items-center gap-2">
+              <span id="step-explorer-index" class="stepper-chip">—</span>
+              <span id="step-explorer-status" class="stepper-chip">—</span>
+            </div>
+          </div>
+          <div class="row g-3">
+            <div class="col-12 col-lg-5">
+              <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:0.75rem;height:100%">
+                <div style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:0.5rem">What this step does</div>
+                <div id="step-explorer-description" style="font-size:0.83rem;line-height:1.45;color:var(--text)"></div>
+              </div>
+            </div>
+            <div class="col-12 col-lg-7">
+              <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:0.75rem;height:100%">
+                <div style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:0.5rem">Data & Learning at this step</div>
+                <div id="step-explorer-metrics" style="font-size:0.8rem;line-height:1.5;color:var(--text)"></div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -363,6 +406,18 @@ const STEP_LABELS = {
 let charts = {};
 let countdownVal = 15;
 let countdownTimer = null;
+let latestApiData = null;
+let currentExplorerStep = 0;
+
+const STEP_EXPLAINERS = {
+  export_merge: 'Builds pairwise path examples for merge/non-merge supervision. This is where raw geometry becomes binary learning targets.',
+  export_topology: 'Builds branch-level topology examples (atomic vs non-atomic). This augments merge supervision with structural context.',
+  train_shared: 'Fits the shared grammar model and reports merge/atomicity accuracy plus component losses.',
+  export_assembly: 'Builds assembly hypotheses for reranking and records distributional properties like mean/max F1.',
+  train_reranker: 'Trains reranker to predict hypothesis quality and tracks correlation + MSE against true F1.',
+  validate_selection: 'Evaluates selection-time behavior (precision/recall/F1, TP/FP/FN) before final holdout reporting.',
+  validate_holdout: 'Computes holdout/generalization metrics to determine whether a run should be kept or reverted.'
+};
 
 // ── Chart defaults ──────────────────────────────────────────────────────────
 Chart.defaults.color = '#8892a4';
@@ -420,6 +475,7 @@ function resetCountdown() {
 // ── Render ───────────────────────────────────────────────────────────────────
 function render(data) {
   const { ledger, models, latest_cycle, step_timeline, dataset_stats, training_losses, is_running } = data;
+  latestApiData = data;
 
   // Running badge
   const badge = document.getElementById('running-badge');
@@ -444,7 +500,59 @@ function render(data) {
   renderDecisionChart(ledger);
   renderRerankerChart(training_losses || []);
   renderLedgerTable(ledger);
+  renderStepExplorer();
   refreshStaticPlots();
+}
+
+function stepExplorerMove(delta) {
+  const next = Math.max(0, Math.min(PIPELINE_STEPS.length - 1, currentExplorerStep + delta));
+  setExplorerStep(next);
+}
+
+function setExplorerStep(i) {
+  currentExplorerStep = i;
+  const range = document.getElementById('step-explorer-range');
+  if (range) range.value = i;
+  renderStepExplorer();
+}
+
+function renderStepExplorer() {
+  if (!latestApiData) return;
+  const step = PIPELINE_STEPS[currentExplorerStep];
+  const title = STEP_LABELS[step] || step;
+  const info = latestApiData.latest_cycle?.steps?.[step] || null;
+  const rc = info?.returncode;
+  const status = rc === 0 ? '✓ success' : (rc === null || rc === undefined ? '○ missing' : `✗ failed (rc=${rc})`);
+
+  document.getElementById('step-explorer-title').textContent = title;
+  document.getElementById('step-explorer-index').textContent = `Step ${currentExplorerStep + 1}/${PIPELINE_STEPS.length}`;
+  document.getElementById('step-explorer-status').textContent = status;
+  document.getElementById('step-explorer-description').textContent = STEP_EXPLAINERS[step] || 'No description available.';
+
+  const ds = latestApiData.dataset_stats || {};
+  const losses = latestApiData.training_losses || [];
+  const latestLoss = losses.length ? losses[losses.length - 1] : null;
+  const latestLedger = (latestApiData.ledger || []).at(-1) || {};
+
+  let metrics = [];
+  if (step === 'export_merge') {
+    const m = ds.merge || {};
+    metrics = [`<strong>Merge dataset:</strong> n=${m.n ?? '—'}, positive=${m.pos_rate !== undefined ? (m.pos_rate * 100).toFixed(1) + '%' : '—'}`, `shape=${m.shape ? '[' + m.shape.join('×') + ']' : '—'} seq_len=${m.seq_len ?? '—'} feat_dim=${m.feat_dim ?? '—'}`];
+  } else if (step === 'export_topology') {
+    const t = ds.topology || {};
+    metrics = [`<strong>Topology dataset:</strong> n=${t.n ?? '—'}, positive=${t.pos_rate !== undefined ? (t.pos_rate * 100).toFixed(1) + '%' : '—'}`, `shape=${t.shape ? '[' + t.shape.join('×') + ']' : '—'}`];
+  } else if (step === 'train_shared') {
+    metrics = [`<strong>Shared training:</strong> total loss=${fmt(latestLoss?.loss)}, merge loss=${fmt(latestLoss?.merge_loss)}, atomicity loss=${fmt(latestLoss?.atomicity_loss)}`, `merge acc=${fmt(latestLedger.merge_accuracy, 3)} atomicity acc=${fmt(latestLedger.atomicity_accuracy, 3)}`];
+  } else if (step === 'export_assembly') {
+    const a = ds.assembly || {};
+    metrics = [`<strong>Assembly dataset:</strong> n=${a.n ?? '—'}, mean F1=${a.mean_f1 !== undefined ? a.mean_f1.toFixed(3) : '—'}, max F1=${a.max_f1 !== undefined ? a.max_f1.toFixed(3) : '—'}`];
+  } else if (step === 'train_reranker') {
+    metrics = [`<strong>Reranker:</strong> corr ρ=${fmt(latestLoss?.reranker_corr, 5)}, mse=${latestLoss?.reranker_mse !== undefined && latestLoss?.reranker_mse !== null ? Number(latestLoss.reranker_mse).toExponential(3) : '—'}`];
+  } else if (step === 'validate_selection' || step === 'validate_holdout') {
+    metrics = [`<strong>Validation:</strong> val_f1=${fmt(latestLedger.val_f1)}, holdout_f1=${fmt(latestLedger.holdout_f1)}`, `precision=${fmt(latestLedger.precision, 3)} recall=${fmt(latestLedger.recall, 3)} tp/fp/fn=${latestLedger.tp ?? '—'}/${latestLedger.fp ?? '—'}/${latestLedger.fn ?? '—'}`];
+  }
+  if (info?.stdout_log) metrics.push(`log: <code>${info.stdout_log}</code>`);
+  document.getElementById('step-explorer-metrics').innerHTML = metrics.map(m => `<div>• ${m}</div>`).join('');
 }
 
 function fmt(v, digits = 4) {
