@@ -1204,6 +1204,198 @@ def fetch_cave_false_merge_chains(
     return chains, all_pairs
 
 
+def fetch_cave_edit_pairs_from_cache(
+    cave_token: str,
+    cache_dir: str,
+    datastack: str = "minnie65_phase3_v1",
+    *,
+    past_timestamp: str = "2021-06-11",
+    svid_batch_size: int = 2000,
+    min_synapses_per_root: int = 8,
+    role: str = "pre",
+    rng_seed: int = 0,
+) -> "tuple[dict[int, np.ndarray], list[tuple[int, int, str]]]":
+    """Build real CV-error training pairs from the box cache supervoxel IDs.
+
+    This is the preferred approach over :func:`fetch_cave_false_merge_chains`
+    because the box cache is already spatially stratified across the volume and
+    already contains supervoxel IDs (``pre_seg_id`` / ``post_seg_id``), so no
+    CAVE materialization query is needed.  The only network call is a batched
+    ``get_roots(svids, timestamp=past_timestamp)`` to resolve each supervoxel
+    backward to its pre-proofreading root.
+
+    Starting from the **current** proofread roots avoids the 500K-row query cap
+    that limits :func:`fetch_cave_false_merge_chains` to ~5K roots per call.
+    The full box cache (~50K–100K unique roots across 252 boxes) is used.
+
+    Both error types emerge from a single pass:
+
+    **False split** (hard positive, label=1):
+        One current root whose supervoxels span 2+ past roots.  The CV split one
+        biological cell; proofreaders merged it.  The junction across the two
+        sub-chains is a valid same-cell path — model must NOT flag it.
+
+    **False merge** (hard negative, label=0):
+        The same past root appears in 2+ current roots.  The CV merged two cells;
+        proofreaders split them.  The junction between their chains is a real
+        boundary — model must flag it.
+
+    Parameters
+    ----------
+    cave_token : CAVE auth token.
+    cache_dir : path to box cache directory (contains ``*.npz`` files with
+        ``pre_seg_id``, ``pre_root_id``, ``pre_pt`` arrays).
+    past_timestamp : ISO date of the raw CV state (v117 ≈ 2021-06-11).
+    svid_batch_size : supervoxels per ``get_roots`` call.
+    min_synapses_per_root : drop current roots with fewer synapses (too short
+        to form useful training windows).
+    role : ``'pre'``, ``'post'``, or ``'both'`` — which synapse side to use.
+    rng_seed : RNG seed for shuffling output pairs.
+
+    Returns
+    -------
+    chains : dict[int → np.ndarray [N, 3] float32]
+        Synthetic root_id → nm positions sorted along PCA axis.
+        Negative IDs for false-merge half-chains; positive current root IDs
+        for false-split sub-chains (partitioned by their past root group).
+    pairs : list of (chain_id_a, chain_id_b, operation)
+        ``operation`` is ``'merge'`` (hard negative) or ``'split'``
+        (hard positive).
+    """
+    try:
+        import caveclient
+        import datetime
+    except ImportError as exc:
+        raise ImportError("caveclient is required: pip install caveclient") from exc
+
+    import os
+    from collections import defaultdict
+
+    past_dt = datetime.datetime.fromisoformat(past_timestamp).replace(
+        tzinfo=datetime.timezone.utc
+    )
+    rng = np.random.default_rng(rng_seed)
+    client = caveclient.CAVEclient(datastack, auth_token=cave_token)
+
+    _vox = np.array([8.0, 8.0, 40.0], dtype=np.float32)  # Minnie65 MIP0 voxel nm
+
+    # ---- Step 1: load supervoxel IDs + positions from box cache ----
+    roles = ["pre", "post"] if role == "both" else [role]
+    root_to_entries: dict[int, list] = defaultdict(list)
+
+    npz_files = sorted(f for f in os.listdir(cache_dir) if f.endswith(".npz"))
+    print(
+        f"[cache-edit] loading {len(npz_files)} boxes from {cache_dir} (role={role}) ...",
+        flush=True,
+    )
+    for fname in npz_files:
+        d = np.load(os.path.join(cache_dir, fname), allow_pickle=True)
+        for r in roles:
+            seg_key = f"{r}_seg_id"
+            root_key = f"{r}_root_id"
+            pt_key = f"{r}_pt"
+            if seg_key not in d or root_key not in d or pt_key not in d:
+                continue
+            for svid, root_id, pt_vox in zip(
+                d[seg_key].tolist(), d[root_key].tolist(), d[pt_key].tolist()
+            ):
+                pos_nm = np.asarray(pt_vox, dtype=np.float32) * _vox
+                root_to_entries[int(root_id)].append((int(svid), pos_nm))
+
+    # Filter short roots before the svid lookup
+    root_to_entries = {
+        r: entries
+        for r, entries in root_to_entries.items()
+        if len(entries) >= min_synapses_per_root
+    }
+    all_svids = [e[0] for entries in root_to_entries.values() for e in entries]
+    print(
+        f"[cache-edit] {len(root_to_entries):,} current roots with "
+        f">={min_synapses_per_root} synapses ({len(all_svids):,} svids to resolve)",
+        flush=True,
+    )
+
+    # ---- Step 2: batch resolve all svids → past root IDs ----
+    print(
+        f"[cache-edit] resolving {len(all_svids):,} svids to v117 roots "
+        f"(batches of {svid_batch_size}) ...",
+        flush=True,
+    )
+    all_past_roots: list[int] = []
+    for i in range(0, len(all_svids), svid_batch_size):
+        batch = all_svids[i : i + svid_batch_size]
+        all_past_roots.extend(
+            int(r) for r in client.chunkedgraph.get_roots(batch, timestamp=past_dt)
+        )
+        if (i // svid_batch_size) % 100 == 0 and i > 0:
+            print(f"  {i:,}/{len(all_svids):,} svids resolved", flush=True)
+    svid_to_past = dict(zip(all_svids, all_past_roots))
+    print("[cache-edit] svid lookup complete", flush=True)
+
+    # ---- Step 3: classify both error types ----
+    # false split : cur_root has 2+ past roots → positives at their junction
+    # false merge : same past root in 2+ cur roots → negatives at their junction
+    chains: dict[int, np.ndarray] = {}
+    merge_pairs: list[tuple[int, int, str]] = []
+    split_pairs: list[tuple[int, int, str]] = []
+    synthetic_id = -1
+
+    # Track which chains came from each past root (for merge detection)
+    past_root_to_chain_ids: dict[int, list[int]] = defaultdict(list)
+
+    n_splits = 0
+    for cur_root, entries in root_to_entries.items():
+        svids = [e[0] for e in entries]
+        positions = [e[1] for e in entries]
+        past_roots = [svid_to_past[s] for s in svids]
+
+        # Group positions by past root
+        past_root_to_pos: dict[int, list] = defaultdict(list)
+        for past_root, pos in zip(past_roots, positions):
+            past_root_to_pos[past_root].append(pos)
+
+        # Build one chain per (cur_root, past_root) group
+        group_chain_ids: list[int] = []
+        for past_root, pos_list in past_root_to_pos.items():
+            pos_arr = np.stack(pos_list).astype(np.float32)
+            chain = _build_chain_from_positions(pos_arr)
+            if chain is None:
+                chain = pos_arr
+            sid = synthetic_id
+            synthetic_id -= 1
+            chains[sid] = chain
+            group_chain_ids.append(sid)
+            past_root_to_chain_ids[past_root].append(sid)
+
+        # False split: this current root descended from 2+ past roots
+        if len(group_chain_ids) >= 2:
+            for i in range(len(group_chain_ids)):
+                for j in range(i + 1, len(group_chain_ids)):
+                    split_pairs.append((group_chain_ids[i], group_chain_ids[j], "split"))
+            n_splits += 1
+
+    # False merge: same past root contributed to 2+ current roots
+    for past_root, chain_ids in past_root_to_chain_ids.items():
+        if len(chain_ids) < 2:
+            continue
+        for i in range(len(chain_ids)):
+            for j in range(i + 1, len(chain_ids)):
+                merge_pairs.append((chain_ids[i], chain_ids[j], "merge"))
+
+    all_pairs = merge_pairs + split_pairs
+    rng.shuffle(all_pairs)
+
+    n_merge = len(merge_pairs)
+    n_split = len(split_pairs)
+    print(
+        f"[cache-edit] done: {len(chains):,} chains, "
+        f"{n_merge:,} merge pairs (hard-neg), {n_split:,} split pairs (hard-pos) "
+        f"from {len(root_to_entries):,} current roots ({n_splits} had false splits)",
+        flush=True,
+    )
+    return chains, all_pairs
+
+
 def fetch_cave_lineage_pairs(
     cave_token: str,
     current_root_ids: "list[int]",

@@ -2764,6 +2764,29 @@ def parse_args(argv=None) -> argparse.Namespace:
     p_cave.add_argument("--seed", type=int, default=0)
     p_cave.set_defaults(func=cmd_fetch_cave_edits)
 
+    # fetch-cave-edits-from-cache — preferred approach using local box cache
+    p_cave2 = sub.add_parser(
+        "fetch-cave-edits-from-cache",
+        help=(
+            "Build merge+split training pairs from box cache supervoxel IDs. "
+            "Preferred over fetch-cave-edits: spatially stratified, no 500K row cap."
+        ),
+    )
+    p_cave2.add_argument("--token", default=None,
+                         help="CAVE auth token (default: ~/.cloudvolume/secrets/cave-secret.json).")
+    p_cave2.add_argument("--datastack", default="minnie65_phase3_v1")
+    p_cave2.add_argument("--cache-dir", default="data/boxes_30um",
+                         help="Box cache directory containing *.npz files.")
+    p_cave2.add_argument("--past-timestamp", default="2021-06-11",
+                         help="ISO date of the raw CV state (v117 default).")
+    p_cave2.add_argument("--svid-batch-size", type=int, default=2000)
+    p_cave2.add_argument("--min-synapses-per-root", type=int, default=8)
+    p_cave2.add_argument("--role", default="pre", choices=["pre", "post", "both"])
+    p_cave2.add_argument("--output-tsv", default="data/cave_edit_pairs_cache.tsv")
+    p_cave2.add_argument("--output-chains", default="data/cave_edit_chains_cache.npz")
+    p_cave2.add_argument("--seed", type=int, default=0)
+    p_cave2.set_defaults(func=cmd_fetch_cave_edits_from_cache)
+
     return root.parse_args(argv)
 
 
@@ -2825,6 +2848,59 @@ def cmd_train_path_encoder(args: argparse.Namespace) -> int:
         edit_chains=edit_chains,
         pool_mode=getattr(args, "pool_mode", "cls"),
     )
+    return 0
+
+
+def cmd_fetch_cave_edits_from_cache(args: argparse.Namespace) -> int:
+    """Build merge+split training pairs from box cache supervoxel IDs.
+
+    Preferred over fetch-cave-edits. The box cache already contains
+    pre_seg_id (supervoxel IDs) and is spatially stratified across the volume,
+    so no CAVE materialization query is needed. The only network call is a
+    batched get_roots(svids, timestamp=past_timestamp) to resolve supervoxels
+    backward to their pre-proofreading roots.
+
+    Starting from current (proofread) roots avoids the 500K-row query cap that
+    limits fetch-cave-edits to ~5K roots per call. The full box cache yields
+    ~50K–100K unique roots.
+    """
+    import json, os, numpy as np
+    from neuronauts.path_dataset import fetch_cave_edit_pairs_from_cache, save_edit_pairs_tsv
+
+    token = args.token
+    if token is None:
+        secret_path = os.path.expanduser("~/.cloudvolume/secrets/cave-secret.json")
+        if os.path.exists(secret_path):
+            with open(secret_path) as fh:
+                token = json.load(fh).get("token")
+    if not token:
+        print("No CAVE token found.  Pass --token or set ~/.cloudvolume/secrets/cave-secret.json")
+        return 1
+
+    chains, pairs = fetch_cave_edit_pairs_from_cache(
+        cave_token=token,
+        cache_dir=args.cache_dir,
+        datastack=args.datastack,
+        past_timestamp=args.past_timestamp,
+        svid_batch_size=args.svid_batch_size,
+        min_synapses_per_root=args.min_synapses_per_root,
+        role=args.role,
+        rng_seed=args.seed,
+    )
+
+    if not pairs:
+        print("No edit pairs found.")
+        return 1
+
+    save_edit_pairs_tsv(pairs, args.output_tsv)
+    print(f"Saved {len(pairs)} pairs -> {args.output_tsv}")
+
+    os.makedirs(os.path.dirname(os.path.abspath(args.output_chains)), exist_ok=True)
+    np.savez_compressed(
+        args.output_chains,
+        **{str(sid): arr for sid, arr in chains.items()},
+    )
+    print(f"Saved {len(chains)} chains -> {args.output_chains}")
     return 0
 
 
