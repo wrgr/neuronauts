@@ -183,6 +183,16 @@ def build_synapse_graph(
         seg_ids = getattr(synapses, "post_seg_id", None)
 
     n = len(positions)
+    if n < 2:
+        return SynapseGraph(
+            n_synapses=n,
+            role=role,
+            node_positions=positions * PATH_ISO[np.newaxis, :] if n else positions,
+            node_scaffold_ids=np.full(n, -1, dtype=np.int64),
+            edges=[],
+            root_ids=root_ids,
+        )
+
     # Apply isotropic scaling
     iso_positions = positions * PATH_ISO[np.newaxis, :]
 
@@ -1845,7 +1855,13 @@ def train_cell_gnn(
 
                 for graph in graphs_to_train:
                     # Augment with synapse-chain paths built from ground-truth root IDs.
-                    if getattr(model, "path_emb_dim", 0) > 0:
+                    # Used by both the in-model PathEdgeEncoder (path_emb_dim > 0) and
+                    # the frozen pre-trained encoder (pretrained_path_emb_dim > 0).
+                    _needs_paths = (
+                        getattr(model, "path_emb_dim", 0) > 0
+                        or getattr(model, "pretrained_path_emb_dim", 0) > 0
+                    )
+                    if _needs_paths:
                         chain = build_synapse_chain_paths(graph, mode=path_feature_mode)
                         if chain:
                             merged = dict(chain)
@@ -1923,9 +1939,17 @@ def train_cell_gnn(
                     for graph in val_subgraphs:
                         if graph.n_synapses < 2:
                             continue
+                        _val_needs_paths = (
+                            getattr(model, "path_emb_dim", 0) > 0
+                            or getattr(model, "pretrained_path_emb_dim", 0) > 0
+                        )
+                        if _val_needs_paths and not graph.edge_path_features:
+                            chain = build_synapse_chain_paths(graph, mode=path_feature_mode)
+                            if chain:
+                                graph.edge_path_features = chain
                         model.eval()
                         with torch.no_grad():
-                            if getattr(model, "path_emb_dim", 0) > 0:
+                            if _val_needs_paths:
                                 nf, es, ed, ef, ps, pm, hp = _graph_to_tensors(graph, return_paths=True)
                                 emb = F.normalize(
                                     model(nf, es, ed, ef, path_seq=ps, path_mask=pm, has_path=hp),
@@ -2577,7 +2601,25 @@ def load_cell_gnn(path):
     torch, _ = _require_torch()
     ckpt = torch.load(path, map_location="cpu", weights_only=False)
     model = CellGNN(**ckpt.get("init_kwargs", {}))
-    model.load_state_dict(ckpt["state_dict"])
+    # If the checkpoint includes a frozen pretrained path encoder, reconstruct
+    # it from the saved weights before calling load_state_dict.
+    state = ckpt["state_dict"]
+    if any(k.startswith("_pretrained_path_enc.") for k in state):
+        from .path_edge_encoder import PathEdgeEncoder
+        enc_keys = [k for k in state if k.startswith("_pretrained_path_enc.")]
+        out_dim = state["_pretrained_path_enc.output_proj.weight"].shape[0]
+        in_dim = state["_pretrained_path_enc.input_proj.weight"].shape[1]
+        d_model = state["_pretrained_path_enc.input_proj.weight"].shape[0]
+        n_layers = max(
+            int(k.split(".")[3]) + 1
+            for k in enc_keys
+            if k.startswith("_pretrained_path_enc.transformer.layers.")
+        )
+        enc = PathEdgeEncoder(
+            input_dim=in_dim, d_model=d_model, n_layers=n_layers, output_dim=out_dim
+        )
+        model.attach_pretrained_path_encoder(enc)
+    model.load_state_dict(state)
     model.eval()
     return model
 

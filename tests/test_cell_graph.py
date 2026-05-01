@@ -807,7 +807,7 @@ class TestEndToEndTraining:
         class _MockCache:
             def iter_records(self, shuffle=False, rng=None):
                 return [_MockRecord()]
-            def load(self, record):
+            def load(self, record, **kwargs):
                 return None, syn
 
         class _MockRecord:
@@ -861,7 +861,7 @@ class TestEndToEndTraining:
         class _MockCache:
             def iter_records(self, shuffle=False, rng=None):
                 return [_MockRecord()]
-            def load(self, record):
+            def load(self, record, **kwargs):
                 return None, syn
 
         class _MockRecord:

@@ -384,6 +384,7 @@ class MultitaskConvergenceTest(unittest.TestCase):
         if merge_batch is None:
             self.skipTest("not enough examples")
 
+        torch.manual_seed(42)
         model = SharedGrammarModel(embedding_dim=32)
         optimizer = torch.optim.Adam(model.parameters(), lr=5e-3)
 
@@ -412,6 +413,7 @@ class MultitaskConvergenceTest(unittest.TestCase):
         if merge_batch is None:
             self.skipTest("not enough examples")
 
+        torch.manual_seed(42)
         model = SharedGrammarModel(embedding_dim=32)
         optimizer = torch.optim.Adam(model.parameters(), lr=5e-3)
 

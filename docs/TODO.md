@@ -68,12 +68,12 @@ The wiring is in place; ``CellGNN(path_emb_dim=H)`` consumes
 ``(path_seq, path_mask, has_path)`` in addition to the existing
 6 scalar edge features.  Remaining work:
 
-- [ ] Thread ``--skeleton-paths-cache`` flag through
-      ``cmd_train_cell_gnn`` so the path cache is loaded into
-      ``SynapseGraph.edge_path_features`` per box during training
-- [ ] Convert raw vertex sequences in `data/skeleton_paths.pkl`
+- ✅ Thread ``--skeleton-paths-cache`` flag through
+      ``cmd_train_cell_gnn`` (done; `cell_graph.py:1808`,
+      featurized via `_featurize_path_lookup`)
+- ✅ Convert raw vertex sequences in `data/skeleton_paths.pkl`
       to per-step features via `featurize_path_points` at load
-      time (or precompute and re-cache)
+      time (done; `cell_graph.py:1280`)
 - [ ] Train one model with ``path_emb_dim=16`` (Option 2 +
       original 6 scalars), one with ``path_emb_dim=16`` and the
       grammar feature ablated (the 6→5+pathemb test) — to confirm

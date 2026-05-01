@@ -660,6 +660,9 @@ def train_path_encoder(
         else:
             print(f"[warn] edit_pairs_tsv not found: {edit_pairs_tsv}")
 
+    best_acc = 0.0
+    best_epoch = 0
+
     for epoch in range(1, epochs + 1):
         t0 = time.monotonic()
 
@@ -735,8 +738,13 @@ def train_path_encoder(
         if epoch % checkpoint_every == 0 or epoch == epochs:
             _save_path_encoder(encoder, head, checkpoint_path.replace(".pt", f"_ep{epoch}.pt"))
 
+        if acc > best_acc:
+            best_acc = acc
+            best_epoch = epoch
+            _save_path_encoder(encoder, head, checkpoint_path.replace(".pt", "_best.pt"))
+
     _save_path_encoder(encoder, head, checkpoint_path)
-    print(f"Saved path encoder → {checkpoint_path}")
+    print(f"Saved path encoder → {checkpoint_path}  (best acc={best_acc:.3f} @ ep{best_epoch})")
     return encoder
 
 

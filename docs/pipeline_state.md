@@ -1,22 +1,23 @@
 # Pipeline State & Reinitialization Guide
 
-Status: 2026-05-01.
+Status: 2026-05-01 (updated).
 
 ---
 
 ## What We Have
 
 ### Box Cache
-- **Location:** `data/boxes_30um/` — 252 CAVE boxes, 30 µm windows
+- **Location:** `data/boxes_30um/` — 247 CAVE boxes, 30 µm windows (fetched 2026-05-01)
 - **Root IDs:** v1412 (proofread ground truth)
 - **Synapse table:** `synapses_pni_2`, pre + post positions + supervoxel IDs
+- **Stats:** 1.68M total synapses, avg 6,814/box, 1.63M positive pairs
 
 ### CAVE Edit Pairs (training signal for path encoder)
 | File | Merge pairs | Split pairs | Notes |
 |------|------------|-------------|-------|
 | `data/cave_edit_pairs.tsv` + `cave_edit_chains.npz` | 574 | 0 | v1, early break bug |
 | `data/cave_edit_pairs_v2.tsv` + `cave_edit_chains_v2.npz` | 4007 | 0 | v2, still early break |
-| `data/cave_edit_pairs_v3.tsv` + `cave_edit_chains_v3.npz` | TBD | TBD | v3, fix in place — fetch in progress |
+| `data/cave_edit_pairs_v3.tsv` + `cave_edit_chains_v3.npz` | TBD | TBD | v3, fetching: 2002 roots, 493K svids resolving |
 
 **Why v1 and v2 have 0 split pairs:** the fetch loop broke out early once the merge cap was hit,
 so `cur_root_to_sids` only accumulated ~124/1870 roots. The split detection pass (which requires
@@ -43,8 +44,9 @@ cross-root overlap) found nothing. Fixed in commit `6316ce6`.
    `window_size//2` synapses per side, dropping all 1-synapse isolates.
    Fixed in commit `6316ce6`: now uses max(1, available) with start-padding.
 
-3. **CellGNN → GAT not chained** — `run.py:1344` returns early when CellGNN is used,
-   skipping GAT refinement entirely. Pipeline is either/or, not additive.
+3. ~~**CellGNN → GAT not chained**~~ — **fixed**: CellGNN block (`run.py:1409`) flows
+   directly into GAT (`run.py:1452`) with no early return; both run additively when
+   both checkpoints are provided.
 
 4. **No head-to-head evaluation** — no numbers comparing beam-search only vs CellGNN vs
    Grammar+CellGNN on the same test split.
