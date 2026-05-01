@@ -14,6 +14,11 @@ from pathlib import Path
 
 import numpy as np
 
+try:
+    import matplotlib  # noqa: F401
+except ImportError:
+    raise unittest.SkipTest("matplotlib not installed")
+
 from neuronauts.viz import (
     plot_bridge_proposals,
     plot_cell_labels,
