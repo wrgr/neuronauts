@@ -41,11 +41,16 @@ CAVE synapse table (MICrONS minnie65_public)
 
 | Model | Val merge acc | Test line-graph F1 |
 |-------|--------------|-------------------|
-| Grammar (ep6/10) | 84.6% | TBD — training in progress |
-| CellGNN baseline (ep2/10) | — | TBD |
+| Grammar (ep6/10, still training) | 84.6% | N/A — see note below |
+| CellGNN baseline (ep2/10) | — | ~0 (degenerate, needs ep5+) |
 | CellGNN v3 + path encoder | — | TBD — ep1 in progress |
 
-Previous best (older 40-box run): grammar 87.23% val merge acc.
+**Note on evaluation:** `scripts/train.py evaluate` reports CellGNN line-graph F1.
+The grammar model is evaluated by its per-pair **merge accuracy** (reported during
+`train`), not line-graph F1. A grammar-only line-graph F1 would require the full
+beam-search pipeline with EM volumes (not available in the current no-EM setup).
+Meaningful CellGNN line-graph F1 requires at least 5–8 trained epochs to escape
+the degenerate all-one-cluster state.
 
 ## Prerequisites
 
