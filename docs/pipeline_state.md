@@ -43,8 +43,9 @@ cross-root overlap) found nothing. Fixed in commit `6316ce6`.
    `window_size//2` synapses per side, dropping all 1-synapse isolates.
    Fixed in commit `6316ce6`: now uses max(1, available) with start-padding.
 
-3. **CellGNN → GAT not chained** — `run.py:1344` returns early when CellGNN is used,
-   skipping GAT refinement entirely. Pipeline is either/or, not additive.
+3. ~~**CellGNN → GAT not chained**~~ — **fixed**: CellGNN block (`run.py:1409`) flows
+   directly into GAT (`run.py:1452`) with no early return; both run additively when
+   both checkpoints are provided.
 
 4. **No head-to-head evaluation** — no numbers comparing beam-search only vs CellGNN vs
    Grammar+CellGNN on the same test split.

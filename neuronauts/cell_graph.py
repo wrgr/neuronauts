@@ -183,6 +183,16 @@ def build_synapse_graph(
         seg_ids = getattr(synapses, "post_seg_id", None)
 
     n = len(positions)
+    if n < 2:
+        return SynapseGraph(
+            n_synapses=n,
+            role=role,
+            node_positions=positions * PATH_ISO[np.newaxis, :] if n else positions,
+            node_scaffold_ids=np.full(n, -1, dtype=np.int64),
+            edges=[],
+            root_ids=root_ids,
+        )
+
     # Apply isotropic scaling
     iso_positions = positions * PATH_ISO[np.newaxis, :]
 
