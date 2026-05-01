@@ -191,6 +191,16 @@ pytest tests/test_cell_graph.py # CellGNN unit tests only
 | `scripts/train.py` | All training and evaluation CLI |
 | `data/boxes_30um/` | 247 cached CAVE boxes |
 
+## Package surface policy
+
+To keep the library import surface manageable, `neuronauts.__init__` now re-exports
+only the active no-EM training/evaluation pipeline APIs (CellGNN, path encoder,
+datasets, and evaluation helpers).
+
+Legacy experimental modules are still available via direct module imports
+(e.g. `from neuronauts import vectorized` is **not** supported; use
+`import neuronauts.vectorized` explicitly when needed).
+
 ## Architecture notes
 
 **What is not used in the current pipeline:**
