@@ -41,9 +41,9 @@ CAVE synapse table (MICrONS minnie65_public)
 
 | Model | Val merge acc | Test line-graph F1 |
 |-------|--------------|-------------------|
-| Grammar (ep6/10, still training) | 84.6% | N/A — see note below |
-| CellGNN baseline (ep2/10) | — | ~0 (degenerate, needs ep5+) |
-| CellGNN v3 + path encoder | — | TBD — ep1 in progress |
+| Grammar (ep10/10 ✓) | **85.6%** val merge acc | N/A — see note below |
+| CellGNN baseline (ep2/10, training) | — | TBD |
+| CellGNN v3 + path encoder (ep2/10, training) | — | TBD |
 
 **Note on evaluation:** `scripts/train.py evaluate` reports CellGNN line-graph F1.
 The grammar model is evaluated by its per-pair **merge accuracy** (reported during
@@ -174,7 +174,7 @@ pytest tests/test_cell_graph.py # CellGNN unit tests only
 |------|-------------|
 | `models/path_encoder_v3_ep8.pt` | Best path encoder (acc=0.899) |
 | `models/path_encoder_v3.pt` | Final path encoder (acc=0.896) |
-| `models/grammar_30um_v1.pt` | Grammar, best val (ep6+, 84.6% merge acc) |
+| `models/grammar_30um_v1.pt` | Grammar, best val (ep10, **85.6% merge acc**, val_bce=0.321) |
 | `models/cell_gnn_30um_v1.pt` | CellGNN baseline (ep2) |
 | `models/cell_gnn_v3.pt` | CellGNN + path encoder (training) |
 
