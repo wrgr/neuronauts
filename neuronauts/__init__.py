@@ -1,6 +1,10 @@
-"""neuronauts — end-to-end connectome inference from electron microscopy data."""
+"""Public package surface for neuronauts.
 
-from .agent import Agent, AgentConfig
+The exports below intentionally prioritize the active, no-EM training pipeline.
+Legacy/experimental modules still exist in the repository but are no longer
+re-exported here to keep top-level imports focused and maintainable.
+"""
+
 from .assembly import CandidateMerge, logit_to_probability, probability_to_log_odds
 from .cell_graph import (
     CellGNN,
@@ -28,28 +32,18 @@ from .cell_graph import (
     subdivide_synapse_graph,
     train_cell_gnn,
 )
-from .dijkstra import BridgeGraph, BridgePath
-from .helpers import UnionFind, pairwise_edges, safe_normalize
 from .line_graph import LineGraphMetrics, evaluate, evaluate_sampled
-from .merge import ConnectivityGraph, MergedNeuron, merge_agents
-from .path_edge_encoder import PathEdgeEncoder, pad_path_sequences
 from .path_dataset import (
     extract_cell_chains,
     fetch_cave_edit_history,
     generate_path_examples,
     load_path_encoder,
     save_edit_pairs_tsv,
-    train_path_encoder as train_path_encoder_fn,
+    train_path_encoder,
 )
+from .path_edge_encoder import PathEdgeEncoder, pad_path_sequences
 
 __all__ = [
-    # agents
-    "Agent",
-    "AgentConfig",
-    # graph & merge
-    "ConnectivityGraph",
-    "MergedNeuron",
-    "merge_agents",
     # CellGNN architecture & training
     "CellGNN",
     "CellGNNConfig",
@@ -67,7 +61,7 @@ __all__ = [
     "infer_cells_two_pass",
     "partition_from_embeddings",
     "train_cell_gnn",
-    # Path-edge encoder (Option 2)
+    # Path-edge encoder
     "PathEdgeEncoder",
     "pad_path_sequences",
     # Path discrimination dataset
@@ -76,8 +70,8 @@ __all__ = [
     "save_edit_pairs_tsv",
     "generate_path_examples",
     "load_path_encoder",
-    "train_path_encoder_fn",
-    # Edge-feature caches (precompute)
+    "train_path_encoder",
+    # Edge-feature caches
     "load_seg_score_cache",
     "load_self_skeleton_archive",
     "load_skeleton_path_cache",
@@ -86,19 +80,12 @@ __all__ = [
     "precompute_skeleton_paths_for_cache",
     "save_seg_score_cache",
     "save_skeleton_path_cache",
-    # bridge search
-    "BridgeGraph",
-    "BridgePath",
     # evaluation
     "LineGraphMetrics",
     "evaluate",
     "evaluate_sampled",
-    # probability
+    # probability / merge helpers
     "CandidateMerge",
     "logit_to_probability",
     "probability_to_log_odds",
-    # helpers
-    "UnionFind",
-    "safe_normalize",
-    "pairwise_edges",
 ]
