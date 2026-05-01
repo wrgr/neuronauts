@@ -1288,8 +1288,13 @@ def fetch_cave_edit_pairs_from_cache(
         f"[cache-edit] loading {len(npz_files)} boxes from {cache_dir} (role={role}) ...",
         flush=True,
     )
+    n_skipped = 0
     for fname in npz_files:
-        d = np.load(os.path.join(cache_dir, fname), allow_pickle=True)
+        try:
+            d = np.load(os.path.join(cache_dir, fname), allow_pickle=True)
+        except Exception:
+            n_skipped += 1
+            continue
         for r in roles:
             seg_key = f"{r}_seg_id"
             root_key = f"{r}_root_id"
@@ -1301,6 +1306,9 @@ def fetch_cave_edit_pairs_from_cache(
             ):
                 pos_nm = np.asarray(pt_vox, dtype=np.float32) * _vox
                 root_to_entries[int(root_id)].append((int(svid), pos_nm))
+
+    if n_skipped:
+        print(f"[cache-edit] skipped {n_skipped} corrupt NPZ files", flush=True)
 
     # Filter short roots before the svid lookup
     root_to_entries = {
