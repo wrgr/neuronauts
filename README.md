@@ -4,37 +4,30 @@
 
 The active pipeline requires **no EM volume** and **no agent simulation** — it runs entirely on synapse positions and CAVE root IDs.
 
-## Pipeline
+## Conceptual pipeline (single-line view)
+
+**Data curation → supervision mining from proofreading lineage → path-level representation learning → cell-assignment learning → graph-level evaluation.**
+
+## Pipeline stages: action, inputs, outputs
+
+| Stage | Action | Primary input(s) | Primary output(s) | CLI |
+|---|---|---|---|---|
+| 0. Box cache | Build/use spatially chunked synapse cache from CAVE. | CAVE synapse table (`minnie65_public`) | `data/boxes_30um/*.json` + `*.npz` | (pre-existing cache in repo) |
+| 1. Edit supervision mining | Derive false-merge / false-split pairs from proofreading lineage (`v117 -> v1412`). Preferred path is cache-based mining. | Box cache + CAVE lineage APIs + token | `data/cave_edit_pairs_*.tsv`, `data/cave_edit_chains_*.npz` | `fetch-cave-edits-from-cache` (preferred), `fetch-cave-edits` |
+| 2. Path encoder pretraining | Train transformer to discriminate coherent synapse-path continuations from spliced negatives. | Box cache + edit TSV/NPZ | `models/path_encoder*.pt` (+ best ckpt) | `train-path-encoder` |
+| 3A. Grammar merge scorer | Train pairwise merge classifier (`PathEdgeEncoder + MergeScorer`) using cached synapses/chains. | Box cache (optionally path features via shared components) | `models/grammar_*.pt` | `train` |
+| 3B. CellGNN | Train K-hop synapse graph model for cell membership; optionally fuse frozen pretrained path embeddings. | Box cache (+ optional path encoder ckpt) | `models/cell_gnn*.pt` | `train-cell-gnn` |
+| 4. Evaluation | Compute line-graph F1 (CellGNN route); report merge accuracy for grammar route. | Test split boxes + checkpoints | Metrics JSON/logs (`logs/*/evaluate_results.json`) | `evaluate` |
+
+## Dataflow diagram
 
 ```
-CAVE synapse table (MICrONS minnie65_public)
-        │
-        ▼
-[1] Box cache  ──── data/boxes_30um/
-    30 µm windows, v1412 root IDs, ~6800 synapses/box
-        │
-        ▼
-[2] CAVE edit pairs  ──── data/cave_edit_pairs_v3.tsv
-    False merges + false splits from v117→v1412 transfer
-    (25 444 merge pairs, 416 split pairs)
-        │
-        ▼
-[3] Path encoder  ──── models/path_encoder_v3_ep8.pt
-    Transformer over synapse-chain windows
-    Discriminates valid continuations from spliced paths
-    Best: acc=0.899 (ep8/10)
-        │
-        ├──────────────────────────────────────────────┐
-        ▼                                              ▼
-[4a] Grammar  ──── models/grammar_30um_v1.pt      [4b] CellGNN  ──── models/cell_gnn_v3.pt
-     PathEdgeEncoder + MergeScorer                     K-hop synapse GNN
-     val merge acc: 84.6% (ep6/10, still training)     Contrastive cell membership loss
-                                                        + pretrained path encoder (frozen)
-        │                                              │
-        └──────────────────┬───────────────────────────┘
-                           ▼
-                   [5] Evaluate
-                   Line-graph F1 on held-out test boxes
+CAVE synapse table
+  -> [Stage 0] Box cache (30 um windows)
+  -> [Stage 1] Edit supervision mining (v117->v1412 lineage)
+  -> [Stage 2] Path encoder pretraining (path discrimination)
+  -> [Stage 3A] Grammar merge scorer      \
+  -> [Stage 3B] CellGNN (optional path features)  ---> [Stage 4] evaluation
 ```
 
 ## Current results  *(updated 2026-05-01)*
@@ -45,12 +38,12 @@ CAVE synapse table (MICrONS minnie65_public)
 | CellGNN baseline (ep2/10, training) | — | TBD |
 | CellGNN v3 + path encoder (ep2/10, training) | — | TBD |
 
-**Note on evaluation:** `scripts/train.py evaluate` reports CellGNN line-graph F1.
-The grammar model is evaluated by its per-pair **merge accuracy** (reported during
-`train`), not line-graph F1. A grammar-only line-graph F1 would require the full
-beam-search pipeline with EM volumes (not available in the current no-EM setup).
-Meaningful CellGNN line-graph F1 requires at least 5–8 trained epochs to escape
-the degenerate all-one-cluster state.
+**Metric note:**
+- `evaluate` currently reports **line-graph F1** for CellGNN checkpoints.
+- Grammar checkpoints are currently tracked by **pairwise merge accuracy** during training.
+- A grammar-only line-graph F1 in the historical beam-search sense would require the full agent/EM route, which is not part of the current no-EM pipeline.
+
+## Reproducible runbook (stage-by-stage)
 
 ## Prerequisites
 
@@ -62,7 +55,7 @@ mkdir -p ~/.cloudvolume/secrets
 echo '{"token": "YOUR_TOKEN"}' > ~/.cloudvolume/secrets/cave-secret.json
 ```
 
-## Step 0 — Check the box cache
+### Stage 0 — Check the box cache
 
 247 boxes are already cached at `data/boxes_30um/`.
 
@@ -70,9 +63,19 @@ echo '{"token": "YOUR_TOKEN"}' > ~/.cloudvolume/secrets/cave-secret.json
 ls data/boxes_30um/ | wc -l   # should be ~494 (json + npz per box)
 ```
 
-## Step 1 — Fetch CAVE edit pairs
+### Stage 1 — Fetch CAVE edit pairs (preferred: from cache)
 
-Samples delta roots (v117 → v1412), yields false-merge and false-split chains.
+Preferred command (spatially stratified over local cache; avoids row-cap limitations):
+
+```bash
+python scripts/train.py fetch-cave-edits-from-cache \
+  --cache-dir data/boxes_30um \
+  --min-synapses-per-root 8 \
+  --output-tsv data/cave_edit_pairs_v3.tsv \
+  --output-chains data/cave_edit_chains_v3.npz
+```
+
+Legacy direct-sampling command:
 
 ```bash
 python scripts/train.py fetch-cave-edits \
@@ -83,9 +86,7 @@ python scripts/train.py fetch-cave-edits \
   --output-chains data/cave_edit_chains_v3.npz
 ```
 
-Expected: ~25 000 merge pairs + ~400 split pairs, ~10 min.
-
-## Step 2 — Train path encoder
+### Stage 2 — Train path encoder
 
 ```bash
 python scripts/train.py train-path-encoder \
@@ -99,10 +100,7 @@ python scripts/train.py train-path-encoder \
   --seed 42
 ```
 
-Expected: best acc ~0.90 (around ep8), ~10 min/epoch.
-Best checkpoint saved as `models/path_encoder_v3_best.pt` (future runs).
-
-## Step 3 — Train grammar
+### Stage 3A — Train grammar
 
 ```bash
 python scripts/train.py train \
@@ -111,10 +109,7 @@ python scripts/train.py train \
   --grammar-output models/grammar_30um_v1.pt
 ```
 
-Resumes automatically from existing checkpoint if present.
-Expected: val merge acc ~87% by ep10, ~30–45 min/epoch.
-
-## Step 4 — Train CellGNN
+### Stage 3B — Train CellGNN
 
 **Baseline** (no path encoder):
 
@@ -142,30 +137,40 @@ python scripts/train.py train-cell-gnn \
   --seed 42
 ```
 
-Expected: val_loss converging over 10 epochs, ~75–100 min/epoch on CPU.
-
-## Step 5 — Evaluate
+### Stage 4 — Evaluate
 
 ```bash
-# Grammar only
-python scripts/train.py evaluate \
-  --cache-dir data/boxes_30um \
-  --cell-gnn-checkpoint models/cell_gnn_30um_v1.pt \
-  --grammar-checkpoint models/grammar_30um_v1.pt \
-  --split test
-
-# CellGNN + path encoder only
+# CellGNN (+ optional grammar baseline branch when provided)
 python scripts/train.py evaluate \
   --cache-dir data/boxes_30um \
   --cell-gnn-checkpoint models/cell_gnn_v3.pt \
   --split test
 ```
 
+## How this maps to literature (RoboEM / Neurd style framing)
+
+This section is a **conceptual mapping**, not a claim of architectural equivalence.
+
+- **RoboEM-style systems** generally emphasize EM-image-driven tracing / policy execution over voxel fields.
+  - `neuronauts` currently **does not** use that online tracing loop in its active pipeline.
+  - Instead, it shifts supervision to **proofreading lineage edits** plus synapse geometry, then learns merge/cell assignment in graph space.
+
+- **Neurd-style workflows** (broadly, proofreading-oriented reconstruction stacks) emphasize error discovery/correction loops and morphology-aware constraints.
+  - `neuronauts` similarly leans on **proofreading signal** (false merges/splits from version deltas).
+  - The current active path is narrower: synapse-level graph assignment + line-graph metrics, with EM/skeleton/topology modules present but not in the default training loop.
+
+### Practical takeaway for comparison studies
+
+For clean apples-to-apples experiments, treat `neuronauts` as a **synapse-graph + lineage-supervision baseline** and compare against EM-policy systems along three axes:
+1. **Input modality:** synapse table only vs dense EM volumes.
+2. **Supervision source:** proofreading lineage events vs manual traces/labels.
+3. **Output target:** synapse clustering / merge decisions vs full neurite trajectory reconstruction.
+
 ## Run tests
 
 ```bash
-pytest                          # all tests (~10 min)
-pytest tests/test_cell_graph.py # CellGNN unit tests only
+pytest
+pytest tests/test_cell_graph.py
 ```
 
 ## Saved checkpoints
@@ -201,8 +206,6 @@ pytest tests/test_cell_graph.py # CellGNN unit tests only
 - Neuroglancer inspector (`scripts/inspect_pipeline.py`)
 
 These modules are present and tested but are not part of the active training workflow.
-
-**Why no EM volumes?** The synapse positions + root IDs from CAVE are sufficient to train the grammar and CellGNN. Adding EM requires BossDB access and kimimaro skeletonization (~10s/box), which is reserved for future skeleton-path feature work.
 
 ## Data
 
