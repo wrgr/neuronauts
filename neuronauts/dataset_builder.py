@@ -528,7 +528,7 @@ def select_boxes_from_nucleus_table(
     max_syn: int = 500,
     box_side_um: float = 6.0,
     mip: int = 2,
-    supervoxel_vox_nm: tuple[int, int, int] = (8, 8, 40),
+    supervoxel_vox_nm: tuple[int, int, int] = (4, 4, 40),
     seed: int = 42,
 ) -> list[RealBoxSpec]:
     """Pick box centres from soma positions of high-synapse-count neurons.
@@ -540,9 +540,14 @@ def select_boxes_from_nucleus_table(
 
     Neurons with ``min_syn ≤ total_synapse_count ≤ max_syn`` are preferred.
     The nucleus table must have position columns (``pt_position_x``,
-    ``pt_position_y``, ``pt_position_z`` in supervoxel voxels at
+    ``pt_position_y``, ``pt_position_z`` in EM voxels at
     ``supervoxel_vox_nm`` resolution).  If position columns are absent the
     function raises a clear ``ValueError``.
+
+    The default ``supervoxel_vox_nm`` is ``(4, 4, 40)``: MICrONS Minnie65
+    annotation tables (``nucleus_detection_v0`` and friends) are stored at
+    MIP0 EM voxel resolution.  An older default of ``(8, 8, 40)`` (MIP1)
+    silently placed ~93% of seeded box centres outside the EM volume.
 
     Parameters
     ----------

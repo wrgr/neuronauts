@@ -1528,6 +1528,14 @@ def fetch_cave_edit_pairs_from_cache(
     )
 
     # ---- Step 2: batch resolve all svids → past root IDs ----
+    # Socket-level cap so a dropped connection cannot stall the whole step.
+    # Without this, get_roots inherits urllib3's default (no timeout) and a
+    # CLOSE_WAIT TCP socket hangs the resolution loop indefinitely.
+    import socket as _socket
+    import time as _time
+
+    _socket.setdefaulttimeout(180)
+
     print(
         f"[cache-edit] resolving {len(all_svids):,} svids to v117 roots "
         f"(batches of {svid_batch_size}) ...",
@@ -1536,9 +1544,26 @@ def fetch_cave_edit_pairs_from_cache(
     all_past_roots: list[int] = []
     for i in range(0, len(all_svids), svid_batch_size):
         batch = all_svids[i : i + svid_batch_size]
-        all_past_roots.extend(
-            int(r) for r in client.chunkedgraph.get_roots(batch, timestamp=past_dt)
-        )
+        last_exc: Exception | None = None
+        for attempt in range(5):
+            try:
+                all_past_roots.extend(
+                    int(r) for r in client.chunkedgraph.get_roots(batch, timestamp=past_dt)
+                )
+                last_exc = None
+                break
+            except Exception as exc:
+                last_exc = exc
+                wait = 2 ** attempt
+                print(
+                    f"  [retry] batch starting at {i} failed "
+                    f"({type(exc).__name__}: {exc}); sleeping {wait}s "
+                    f"(attempt {attempt + 1}/5)",
+                    flush=True,
+                )
+                _time.sleep(wait)
+        if last_exc is not None:
+            raise last_exc
         if (i // svid_batch_size) % 100 == 0 and i > 0:
             print(f"  {i:,}/{len(all_svids):,} svids resolved", flush=True)
     svid_to_past = dict(zip(all_svids, all_past_roots))

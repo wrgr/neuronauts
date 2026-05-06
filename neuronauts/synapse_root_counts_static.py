@@ -8,6 +8,9 @@ import requests
 
 
 DEFAULT_STATIC_BASE = "https://storage.googleapis.com/mat_dbs/public/minnie65_phase3_v1"
+# Fallback nucleus source (v117-era root IDs). Used only if the version-matched
+# GCS file is unavailable; root IDs will not join cleanly with counts at later
+# materializations.
 STATIC_NUCLEUS_URL = (
     "https://bossdb-open-data.s3.amazonaws.com/"
     "iarpa_microns/minnie/minnie65/nucleus_detection/nucleus_detection_v0.csv"
@@ -59,10 +62,16 @@ def ensure_static_files(
     nucleus_csv = os.path.join(base_dir, "nucleus_detection_v0.csv")
 
     syn_url = (
-        f"{DEFAULT_STATIC_BASE}/{version}/synapses_pni_2_v1_filtered_view.csv.gz"
+        f"{DEFAULT_STATIC_BASE}/v{version}/synapses_pni_2_v1_filtered_view.csv.gz"
     )
     header_url = (
-        f"{DEFAULT_STATIC_BASE}/{version}/synapses_pni_2_v1_filtered_view_header.csv"
+        f"{DEFAULT_STATIC_BASE}/v{version}/synapses_pni_2_v1_filtered_view_header.csv"
+    )
+    nucleus_data_url = (
+        f"{DEFAULT_STATIC_BASE}/v{version}/nucleus_detection_v0_merged.csv.gz"
+    )
+    nucleus_header_url = (
+        f"{DEFAULT_STATIC_BASE}/v{version}/nucleus_detection_v0_merged_header.csv"
     )
 
     if not os.path.exists(syn_csv):
@@ -76,7 +85,32 @@ def ensure_static_files(
         print(f"Found existing synapse header CSV: {header_csv}")
 
     if not os.path.exists(nucleus_csv):
-        download_file(STATIC_NUCLEUS_URL, nucleus_csv)
+        # Try the version-matched GCS source first (root IDs join with counts).
+        # The GCS file is gzipped + header-less, so combine the header CSV with
+        # the decompressed data into a single uncompressed CSV with a header
+        # row, matching the format `select_boxes_from_nucleus_table` expects.
+        try:
+            os.makedirs(base_dir, exist_ok=True)
+            tmp_data_gz = os.path.join(base_dir, "_nucleus_data.csv.gz")
+            tmp_header = os.path.join(base_dir, "_nucleus_header.csv")
+            download_file(nucleus_data_url, tmp_data_gz)
+            download_file(nucleus_header_url, tmp_header)
+            header_df = pd.read_csv(tmp_header, header=None, names=["column", "type"])
+            cols = header_df["column"].tolist()
+            import gzip
+            with gzip.open(tmp_data_gz, "rt") as src, open(nucleus_csv, "w") as dst:
+                dst.write(",".join(cols) + "\n")
+                for line in src:
+                    dst.write(line)
+            os.remove(tmp_data_gz)
+            os.remove(tmp_header)
+            print(f"Materialised version-matched nucleus CSV at v{version}: {nucleus_csv}")
+        except requests.HTTPError as exc:
+            print(
+                f"Version-matched nucleus CSV not found on GCS for v{version} ({exc}). "
+                "Falling back to BossDB v117-era nucleus."
+            )
+            download_file(STATIC_NUCLEUS_URL, nucleus_csv)
     else:
         print(f"Found existing nucleus CSV: {nucleus_csv}")
 
