@@ -9,6 +9,28 @@ from .helpers import pairwise_edges
 from .merge import ConnectivityGraph
 
 
+def _clutter_keep_indices(
+    pre_root_ids: np.ndarray,
+    post_root_ids: np.ndarray,
+    min_root_synapses: int,
+) -> np.ndarray:
+    """Indices of synapses to keep after dropping small-fragment / 0-degree roots.
+
+    Mirrors ``SynapseTable.filter_clutter``: count root occurrences across both
+    pre- and post-side columns, drop synapses where either endpoint root has
+    fewer than ``min_root_synapses`` total occurrences.
+    """
+    if min_root_synapses <= 1 or len(pre_root_ids) == 0:
+        return np.arange(len(pre_root_ids))
+
+    roots = np.concatenate([pre_root_ids, post_root_ids])
+    unique, counts = np.unique(roots, return_counts=True)
+    keep_roots = unique[counts >= min_root_synapses]
+    pre_ok = np.isin(pre_root_ids, keep_roots)
+    post_ok = np.isin(post_root_ids, keep_roots)
+    return np.where(pre_ok & post_ok)[0]
+
+
 @dataclass
 class LineGraphMetrics:
     tp: int
@@ -91,10 +113,19 @@ def evaluate(
     graph: ConnectivityGraph,
     pre_root_ids: np.ndarray,
     post_root_ids: np.ndarray,
+    *,
+    min_root_synapses: int = 0,
 ) -> LineGraphMetrics:
     n = len(pre_root_ids)
     true_edges = build_true_line_graph(pre_root_ids, post_root_ids)
     est_edges = build_estimated_line_graph(graph, n)
+    if min_root_synapses > 1:
+        keep = set(
+            _clutter_keep_indices(pre_root_ids, post_root_ids, min_root_synapses).tolist()
+        )
+        true_edges = {(i, j) for (i, j) in true_edges if i in keep and j in keep}
+        est_edges = {(i, j) for (i, j) in est_edges if i in keep and j in keep}
+        n = len(keep)
     return compute_line_graph_f1(true_edges, est_edges, n)
 
 
@@ -103,10 +134,22 @@ def evaluate_from_root_ids(
     estimated_post_root_ids: np.ndarray,
     true_pre_root_ids: np.ndarray,
     true_post_root_ids: np.ndarray,
+    *,
+    min_root_synapses: int = 0,
 ) -> LineGraphMetrics:
     true_edges = build_true_line_graph(true_pre_root_ids, true_post_root_ids)
     est_edges = build_true_line_graph(estimated_pre_root_ids, estimated_post_root_ids)
-    return compute_line_graph_f1(true_edges, est_edges, len(true_pre_root_ids))
+    n = len(true_pre_root_ids)
+    if min_root_synapses > 1:
+        keep = set(
+            _clutter_keep_indices(
+                true_pre_root_ids, true_post_root_ids, min_root_synapses
+            ).tolist()
+        )
+        true_edges = {(i, j) for (i, j) in true_edges if i in keep and j in keep}
+        est_edges = {(i, j) for (i, j) in est_edges if i in keep and j in keep}
+        n = len(keep)
+    return compute_line_graph_f1(true_edges, est_edges, n)
 
 
 def sample_synapse_pairs(
@@ -160,11 +203,19 @@ def evaluate_sampled(
     *,
     max_pairs: int = 10000,
     seed: int = 42,
+    min_root_synapses: int = 0,
 ) -> LineGraphMetrics:
     """Evaluate sampled-pair line-graph F1 as a cheaper diagnostic metric."""
     n = len(pre_root_ids)
     true_edges = build_true_line_graph(pre_root_ids, post_root_ids)
     est_edges = build_estimated_line_graph(graph, n)
+    if min_root_synapses > 1:
+        keep = set(
+            _clutter_keep_indices(pre_root_ids, post_root_ids, min_root_synapses).tolist()
+        )
+        true_edges = {(i, j) for (i, j) in true_edges if i in keep and j in keep}
+        est_edges = {(i, j) for (i, j) in est_edges if i in keep and j in keep}
+        n = len(keep)
     return compute_sampled_line_graph_f1(
         true_edges,
         est_edges,

@@ -663,6 +663,7 @@ def build_dataset(
     min_synapses: int = 10,
     max_synapses: int = 300,
     min_positive_pairs: int = 0,
+    min_root_synapses: int = 5,
     no_em: bool = False,
     token: str | None = None,
     cave_version: int | None = None,
@@ -686,6 +687,12 @@ def build_dataset(
         this threshold contain almost no positive training examples and should
         be discarded.  Recommended: 5 for 30 µm boxes, 2 for 15 µm boxes.
         Default 0 keeps all boxes (backward-compatible).
+    min_root_synapses:
+        Drop synapses whose pre- or post-root has fewer than this many
+        occurrences in the box.  Removes 0-degree roots and small
+        reconstruction fragments that contribute no real connectome edges.
+        Applied before all other synapse-count filters.  Pass ``<= 1`` to
+        disable.  Default 5.
     no_em:
         If True, skip the EM volume fetch and store only the synapse table.
         Grammar training requires only synapse geometry and root IDs, so this
@@ -705,6 +712,7 @@ def build_dataset(
     n_skip_cached = 0
     n_skip_synapse = 0
     n_skip_pairs = 0
+    n_skip_clutter = 0
     n_fetched = 0
 
     for i, spec in enumerate(specs):
@@ -736,12 +744,21 @@ def build_dataset(
                 token=token,
                 version=cave_version,
             )
+
+            n_raw = int(len(synapses.pre_pt))
+            if min_root_synapses > 1:
+                synapses = synapses.filter_clutter(min_root_synapses=min_root_synapses)
             n_syn = int(len(synapses.pre_pt))
+            n_dropped = n_raw - n_syn
 
             if n_syn < min_synapses or n_syn > max_synapses:
                 if verbose:
-                    print(f"skip (n_synapses={n_syn})")
-                n_skip_synapse += 1
+                    extra = f", dropped_clutter={n_dropped}" if n_dropped else ""
+                    print(f"skip (n_synapses={n_syn}{extra})")
+                if n_syn == 0 and n_dropped > 0:
+                    n_skip_clutter += 1
+                else:
+                    n_skip_synapse += 1
                 continue
 
             n_pos = count_positive_pairs(synapses)
@@ -785,7 +802,8 @@ def build_dataset(
             f"\nDataset build complete: {n_fetched} new, "
             f"{n_skip_cached} already cached, "
             f"{n_skip_synapse} skipped (synapse count), "
-            f"{n_skip_pairs} skipped (too few positive pairs). "
+            f"{n_skip_pairs} skipped (too few positive pairs), "
+            f"{n_skip_clutter} skipped (all clutter). "
             f"Total usable records: {len(records)}"
         )
     return records

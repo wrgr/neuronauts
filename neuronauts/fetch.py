@@ -99,6 +99,27 @@ class SynapseTable:
             post_seg_id=self.post_seg_id[indices] if self.post_seg_id is not None else None,
         )
 
+    def filter_clutter(self, *, min_root_synapses: int = 5) -> "SynapseTable":
+        """Drop synapses whose pre- or post-root has < ``min_root_synapses`` occurrences.
+
+        Each root's "occurrences" are counted across both the pre- and post-side
+        columns combined (a single root counts on either side it appears on).
+        Roots below the threshold are almost always reconstruction fragments
+        that contribute no real connectome edges; truly 0-degree roots — those
+        appearing as a single isolated synapse — are removed as a special case.
+        Pass ``min_root_synapses <= 1`` to disable filtering.
+        """
+        if min_root_synapses <= 1 or self.n_synapses == 0:
+            return self.subset(np.arange(self.n_synapses))
+
+        roots = np.concatenate([self.pre_root_id, self.post_root_id])
+        unique, counts = np.unique(roots, return_counts=True)
+        keep_roots = unique[counts >= min_root_synapses]
+        pre_ok = np.isin(self.pre_root_id, keep_roots)
+        post_ok = np.isin(self.post_root_id, keep_roots)
+        keep = pre_ok & post_ok
+        return self.subset(np.where(keep)[0])
+
 
 @dataclass(frozen=True)
 class SkeletonData:
