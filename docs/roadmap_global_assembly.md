@@ -220,10 +220,13 @@ colliding. **No behavior change** — this is pure restructuring + docs.
       **(1) ✅** split `merge.py` — `merge_agents` → `agent_merge.py`, freeing
       `agent.py` from the active surface; **(2) ✅** relocate `run.py` →
       `legacy/run.py` (it had no active helpers — wholly v1) behind a deprecated
-      shim so importers are unaffected; **(3)** decouple `fields.py` consumers;
-      **(4)** move the remaining sim cluster (`vectorized`, `fields`, `agent`,
-      `agent_merge`, `topology_*`), migrate importers off the `run` shim, then
-      mark legacy tests `@pytest.mark.legacy` and drop from default CI.
+      shim so importers are unaffected; **(3+4) ✅** moved the sim cluster
+      `agent`, `agent_merge`, `vectorized`, `fields` into `legacy/` and
+      re-pointed their importers cleanly (no shims). *Remaining cleanup:*
+      `topology_*` stays for now (active `cell_graph` references `topology_model`);
+      migrate importers off the `run` shim then delete it; register/apply a
+      `legacy` pytest marker. Active surface verified at exactly 8 modules
+      throughout.
 - [ ] **Split the two monoliths along stage boundaries.**
       `cell_graph.py` → `assemble/graph.py` (build), `assemble/gnn.py` (CellGNN),
       `assemble/partition.py` (clustering/beam), `assemble/skeleton.py`

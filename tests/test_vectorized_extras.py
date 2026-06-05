@@ -107,7 +107,7 @@ class RunAgentsVectorizedTest(unittest.TestCase):
 
     def _make_inputs(self, shape=(20, 20, 20), n_agents=10, n_synapses=0):
         from neuronauts.run import AGENT_CONFIG
-        from neuronauts.fields import compute_membrane_field, compute_membrane_vectors
+        from neuronauts.legacy.fields import compute_membrane_field, compute_membrane_vectors
         from dataclasses import replace
 
         rng = np.random.default_rng(0)
@@ -137,7 +137,7 @@ class RunAgentsVectorizedTest(unittest.TestCase):
 
     def test_zero_synapses_returns_correct_shapes(self):
         """S=0 path: synapse_hits must be shape (N, 0), no crash."""
-        from neuronauts.vectorized import run_agents_vectorized
+        from neuronauts.legacy.vectorized import run_agents_vectorized
         args = self._make_inputs(n_agents=8, n_synapses=0)
         path_arr, synapse_hits, alive = run_agents_vectorized(
             *args, synapse_fraction=0.25, verbose=False
@@ -149,7 +149,7 @@ class RunAgentsVectorizedTest(unittest.TestCase):
         self.assertEqual(alive.shape, (N,))
 
     def test_zero_synapses_synapse_hits_all_false(self):
-        from neuronauts.vectorized import run_agents_vectorized
+        from neuronauts.legacy.vectorized import run_agents_vectorized
         args = self._make_inputs(n_agents=6, n_synapses=0)
         _, synapse_hits, _ = run_agents_vectorized(
             *args, synapse_fraction=0.25, verbose=False
@@ -157,7 +157,7 @@ class RunAgentsVectorizedTest(unittest.TestCase):
         self.assertEqual(synapse_hits.size, 0)
 
     def test_with_synapses_returns_hit_boolean_array(self):
-        from neuronauts.vectorized import run_agents_vectorized
+        from neuronauts.legacy.vectorized import run_agents_vectorized
         args = self._make_inputs(n_agents=10, n_synapses=4)
         _, synapse_hits, _ = run_agents_vectorized(
             *args, synapse_fraction=0.25, verbose=False
@@ -168,8 +168,8 @@ class RunAgentsVectorizedTest(unittest.TestCase):
     def test_verbose_does_not_raise(self):
         """Verbose path (step % 200 == 0 printing) must not crash."""
         from neuronauts.run import AGENT_CONFIG
-        from neuronauts.fields import compute_membrane_field, compute_membrane_vectors
-        from neuronauts.vectorized import run_agents_vectorized
+        from neuronauts.legacy.fields import compute_membrane_field, compute_membrane_vectors
+        from neuronauts.legacy.vectorized import run_agents_vectorized
         from dataclasses import replace
 
         shape = (15, 15, 15)
@@ -188,7 +188,7 @@ class RunAgentsVectorizedTest(unittest.TestCase):
 
     def test_path_arr_first_step_matches_initial_positions(self):
         """The 0-th step in path_arr should match the spawn positions."""
-        from neuronauts.vectorized import run_agents_vectorized
+        from neuronauts.legacy.vectorized import run_agents_vectorized
         args = self._make_inputs(n_agents=4, n_synapses=0)
         path_arr, _, _ = run_agents_vectorized(
             *args, synapse_fraction=0.0, verbose=False
@@ -197,14 +197,14 @@ class RunAgentsVectorizedTest(unittest.TestCase):
         self.assertTrue(np.all(np.isfinite(path_arr[:, 0, :])))
 
     def test_alive_array_is_boolean(self):
-        from neuronauts.vectorized import run_agents_vectorized
+        from neuronauts.legacy.vectorized import run_agents_vectorized
         args = self._make_inputs(n_agents=4, n_synapses=0)
         _, _, alive = run_agents_vectorized(*args, verbose=False)
         self.assertEqual(alive.dtype, bool)
 
     def test_synapse_fraction_zero_still_spawns_agents(self):
         """synapse_fraction=0 → all agents spawned at random positions."""
-        from neuronauts.vectorized import run_agents_vectorized
+        from neuronauts.legacy.vectorized import run_agents_vectorized
         args = list(self._make_inputs(n_agents=6, n_synapses=3))
         path_arr, _, _ = run_agents_vectorized(
             *args, synapse_fraction=0.0, verbose=False

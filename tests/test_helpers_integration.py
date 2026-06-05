@@ -98,8 +98,8 @@ class MergeAgentsUsesUnionFindTest(unittest.TestCase):
     """Smoke test that merge_agents still works after refactoring."""
 
     def test_merge_nearby_agents(self):
-        from neuronauts.agent import Agent
-        from neuronauts.agent_merge import merge_agents
+        from neuronauts.legacy.agent import Agent
+        from neuronauts.legacy.agent_merge import merge_agents
 
         agents = [
             Agent(agent_id=0, path=[np.array([0, 0, 0]), np.array([1, 0, 0]),
@@ -117,7 +117,7 @@ class MergeAgentsUsesUnionFindTest(unittest.TestCase):
         self.assertEqual(len(neurons), 2)
 
     def test_empty_agents_returns_empty(self):
-        from neuronauts.agent_merge import merge_agents
+        from neuronauts.legacy.agent_merge import merge_agents
         self.assertEqual(merge_agents([]), {})
 
 
@@ -165,7 +165,7 @@ class FieldsNormalizationTest(unittest.TestCase):
     """Verify compute_membrane_vectors still produces unit vectors after refactor."""
 
     def test_unit_vectors(self):
-        from neuronauts.fields import compute_membrane_vectors
+        from neuronauts.legacy.fields import compute_membrane_vectors
 
         rng = np.random.default_rng(42)
         mf = rng.random((8, 8, 8)).astype(np.float32)
@@ -174,7 +174,7 @@ class FieldsNormalizationTest(unittest.TestCase):
         np.testing.assert_allclose(norms, 1.0, atol=1e-5)
 
     def test_all_finite(self):
-        from neuronauts.fields import compute_membrane_vectors
+        from neuronauts.legacy.fields import compute_membrane_vectors
 
         mf = np.zeros((4, 4, 4), dtype=np.float32)
         mv = compute_membrane_vectors(mf)

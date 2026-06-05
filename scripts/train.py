@@ -800,7 +800,7 @@ def _run_gat_training_step(
     gat_optimizer, device, args, gat_f1_acc: list,
 ):
     """Run graph construction → gat_train_step on one box."""
-    from neuronauts.fields import compute_membrane_field
+    from neuronauts.legacy.fields import compute_membrane_field
     from neuronauts.run import HeuristicConfig, _build_graph, simulate_paths_and_hits
     from neuronauts.skeleton_graph import build_skeleton_connectivity_graph
     from neuronauts.shared_grammar_model import gat_train_step
@@ -940,7 +940,7 @@ def _validate_box(record, cache, grammar_model, gat_model, args, device):
     contains diagnostic counters useful for debugging F1 stagnation.
     """
     import torch
-    from neuronauts.fields import compute_membrane_field
+    from neuronauts.legacy.fields import compute_membrane_field
     from neuronauts.run import HeuristicConfig, _build_graph, simulate_paths_and_hits
     from neuronauts.line_graph import evaluate, evaluate_sampled
 
@@ -1637,7 +1637,7 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
             try:
                 score_fn = _make_live_merge_score_fn(grammar_model)
                 from neuronauts.run import HeuristicConfig, _build_graph, simulate_paths_and_hits
-                from neuronauts.fields import compute_membrane_field
+                from neuronauts.legacy.fields import compute_membrane_field
 
                 if getattr(volume_chunk, "data", None) is not None and volume_chunk.data.size > 0:
                     mf = compute_membrane_field(volume_chunk.data)

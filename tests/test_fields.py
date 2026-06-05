@@ -9,7 +9,7 @@ import unittest
 
 import numpy as np
 
-from neuronauts.fields import (
+from neuronauts.legacy.fields import (
     compute_exploration_field,
     compute_membrane_field,
     compute_membrane_vectors,

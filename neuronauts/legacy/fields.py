@@ -12,7 +12,7 @@ do not have a cached learned membrane volume.
 
 import numpy as np
 
-from ._scipy_compat import gaussian_filter, sobel
+from .._scipy_compat import gaussian_filter, sobel
 
 
 def compute_membrane_field(
@@ -47,7 +47,7 @@ def compute_membrane_vectors(
     gy = sobel(smooth, axis=1)
     gz = sobel(smooth, axis=2)
 
-    from .helpers import safe_normalize
+    from ..helpers import safe_normalize
 
     vectors = np.stack([-gx, -gy, -gz], axis=-1)
     return safe_normalize(vectors, axis=-1).astype(np.float32)

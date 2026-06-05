@@ -8,10 +8,10 @@ from functools import lru_cache
 
 import numpy as np
 
-from ..agent import AgentConfig
+from .agent import AgentConfig
 from ..assembly import CandidateMerge, beam_search_merge_groups, gat_refine_connectivity, logit_to_probability, repartition_low_atomicity_group
 from ..dijkstra import BridgeGraph
-from ..fields import compute_exploration_field, compute_membrane_field, compute_membrane_vectors
+from .fields import compute_exploration_field, compute_membrane_field, compute_membrane_vectors
 from ..fetch import (
     RealBoxSpec,
     SyntheticBenchmarkConfig,
@@ -25,7 +25,7 @@ from ..helpers import UnionFind
 from ..line_graph import LineGraphMetrics, evaluate
 from .._scipy_compat import cKDTree
 from ..merge import ConnectivityGraph, MergedNeuron
-from ..vectorized import run_agents_vectorized
+from .vectorized import run_agents_vectorized
 
 # Lazy imports for CellGNN (only needed when --cell-gnn-checkpoint is set)
 CELL_GNN_CHECKPOINT = None

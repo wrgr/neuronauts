@@ -15,10 +15,10 @@ from typing import Dict, List
 
 import numpy as np
 
-from ._scipy_compat import cKDTree
+from .._scipy_compat import cKDTree
 from .agent import Agent
-from .helpers import UnionFind
-from .merge import MergedNeuron
+from ..helpers import UnionFind
+from ..merge import MergedNeuron
 
 
 def merge_agents(

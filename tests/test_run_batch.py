@@ -131,8 +131,8 @@ class BuildGraphHypothesesTest(unittest.TestCase):
 
     def _make_data(self, n_agents=20, n_syn=5, steps=8):
         from neuronauts.run import SyntheticBenchmarkConfig, make_test_volume, AGENT_CONFIG
-        from neuronauts.fields import compute_membrane_field, compute_membrane_vectors
-        from neuronauts.vectorized import run_agents_vectorized
+        from neuronauts.legacy.fields import compute_membrane_field, compute_membrane_vectors
+        from neuronauts.legacy.vectorized import run_agents_vectorized
         from dataclasses import replace
 
         cfg = SyntheticBenchmarkConfig(shape=(25, 25, 25), n_synapses=n_syn,
