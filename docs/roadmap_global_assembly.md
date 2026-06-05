@@ -210,21 +210,25 @@ colliding. **No behavior change** — this is pure restructuring + docs.
 - [ ] **Reconcile the docs.** One canonical narrative (Section 2 one-liner).
       Mark `README.md` / `program.md` / `pipeline_state.md` as historical where
       they describe the dead regimes; point to this roadmap.
-- [ ] **Introduce `neuronauts/schemas.py`** (Section 3.1). Nothing depends on it
-      yet; it's the target interface.
-- [ ] **Quarantine v1 → `neuronauts/legacy/`.** Move `vectorized.py`,
-      `fields.py`, `membrane_unet.py`, `agent.py`, `em_corridor.py`, and the
-      agent-simulation half of `run.py`. **Care required:** `run.py` (1,884 lines)
-      couples agent sim *and* the CellGNN/GAT orchestration — extract the
-      non-agent orchestration into `assemble/` first, then move the rest.
-      Update `__init__.py`; mark legacy tests `@pytest.mark.legacy` and drop
-      from default CI.
+- [x] **Introduce `neuronauts/schemas.py`** (Section 3.1) + `tests/test_schemas.py`.
+      Nothing depends on it yet; it's the target interface. *(done)*
+- [ ] **Quarantine v1 → `neuronauts/legacy/`.** This is **not** a clean file
+      move yet: verified 2026-06-05, `membrane_unet.py` is already deleted, and
+      `agent.py`/`fields.py`/`vectorized.py`/`run.py` are each imported by active
+      code, so moving them naively breaks imports. `em_corridor.py` is **active**
+      (seg-connectivity in `cell_graph.py`) and stays. The untangling sequence
+      that must land first — split `merge.py`, extract active helpers out of
+      `run.py`, decouple `fields.py` consumers, then move + re-point — is
+      specified in [`stage_ownership.md`](stage_ownership.md#legacy-quarantine-plan).
+      Each step is its own behavior-preserving PR; mark legacy tests
+      `@pytest.mark.legacy` and drop from default CI at the end.
 - [ ] **Split the two monoliths along stage boundaries.**
       `cell_graph.py` → `assemble/graph.py` (build), `assemble/gnn.py` (CellGNN),
       `assemble/partition.py` (clustering/beam), `assemble/skeleton.py`
       (skeletonization/paths — moves to `data/`/`represent/` in Phase 1).
       `scripts/train.py` → a thin `cli/` with one module per stage command.
-- [ ] **`CONTRIBUTING.md` + stage-ownership map + one smoke test per stage.**
+- [x] **`CONTRIBUTING.md` + stage-ownership map** (`docs/stage_ownership.md`) +
+      first per-stage smoke test (`tests/test_schemas.py`). *(done)*
 
 **Success:** `pytest` green; import surface in `__init__.py` reflects the five
 stages; a new contributor can run one smoke test per stage from a fresh clone.
