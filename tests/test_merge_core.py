@@ -1,9 +1,9 @@
-"""Tests for neuronauts/merge.py — the cKDTree fallback and merge_agents.
+"""Tests for the cKDTree fallback (merge.py) and merge_agents (agent_merge.py).
 
-merge.py is at 15% coverage despite being on the critical path:
-every agent simulation result passes through merge_agents before any
-downstream graph construction or evaluation.  Bugs here silently
-produce the wrong number of neurons or wrong synapse assignments.
+``merge_agents`` is the v1 agent-trace union-find step (now in
+``neuronauts/agent_merge.py``); ``merge.py`` holds the active graph datatypes.
+Bugs in the merge step silently produce the wrong number of neurons or wrong
+synapse assignments, so the union-find paths are covered here directly.
 """
 
 from __future__ import annotations
@@ -182,19 +182,20 @@ class MergeAgentsTest(unittest.TestCase):
     """Tests for merge.merge_agents — the union-find merge step."""
 
     def test_empty_agents_returns_empty_dict(self):
-        from neuronauts.merge import merge_agents
+        from neuronauts.agent_merge import merge_agents
         result = merge_agents([], merge_radius=5.0)
         self.assertEqual(result, {})
 
     def test_agents_shorter_than_min_path_filtered_out(self):
         """Agents with fewer than min_path_length steps must be ignored."""
-        from neuronauts.merge import merge_agents
+        from neuronauts.agent_merge import merge_agents
         a = _make_agent(0, [(0, 0, 0), (1, 0, 0)], [])  # length 2
         result = merge_agents([a], merge_radius=5.0, min_path_length=5)
         self.assertEqual(result, {})
 
     def test_single_valid_agent_creates_one_neuron(self):
-        from neuronauts.merge import merge_agents, MergedNeuron
+        from neuronauts.agent_merge import merge_agents
+        from neuronauts.merge import MergedNeuron
         path = [(float(i), 0.0, 0.0) for i in range(10)]
         a = _make_agent(0, path, [3, 7])
         neurons = merge_agents([a], merge_radius=1.0, min_path_length=5)
@@ -206,7 +207,7 @@ class MergeAgentsTest(unittest.TestCase):
 
     def test_two_close_agents_merge_into_one_neuron(self):
         """Two agents whose paths overlap within merge_radius → same neuron."""
-        from neuronauts.merge import merge_agents
+        from neuronauts.agent_merge import merge_agents
         path_a = [(float(i), 0.0, 0.0) for i in range(10)]
         path_b = [(float(i), 0.5, 0.0) for i in range(10)]  # only 0.5 away
         a = _make_agent(0, path_a, [1])
@@ -220,7 +221,7 @@ class MergeAgentsTest(unittest.TestCase):
 
     def test_two_far_agents_remain_separate_neurons(self):
         """Two agents with paths far apart → two distinct neurons."""
-        from neuronauts.merge import merge_agents
+        from neuronauts.agent_merge import merge_agents
         path_a = [(float(i), 0.0, 0.0) for i in range(10)]
         path_b = [(float(i) + 100, 0.0, 0.0) for i in range(10)]
         a = _make_agent(0, path_a, [])
@@ -230,7 +231,7 @@ class MergeAgentsTest(unittest.TestCase):
 
     def test_merged_neuron_path_points_contains_all_agent_paths(self):
         """After merge, path_points must include points from all member agents."""
-        from neuronauts.merge import merge_agents
+        from neuronauts.agent_merge import merge_agents
         path_a = [(float(i), 0.0, 0.0) for i in range(8)]
         path_b = [(float(i), 0.5, 0.0) for i in range(8)]  # within radius
         a = _make_agent(0, path_a, [])
@@ -243,7 +244,7 @@ class MergeAgentsTest(unittest.TestCase):
 
     def test_synapse_indices_deduplicated_across_merged_agents(self):
         """Synapse indices are deduplicated after merging."""
-        from neuronauts.merge import merge_agents
+        from neuronauts.agent_merge import merge_agents
         path_a = [(float(i), 0.0, 0.0) for i in range(8)]
         path_b = [(float(i), 0.3, 0.0) for i in range(8)]
         a = _make_agent(0, path_a, [5, 7])
@@ -255,7 +256,7 @@ class MergeAgentsTest(unittest.TestCase):
 
     def test_three_way_transitive_merge(self):
         """A-B are close, B-C are close → A, B, C all end up in one neuron."""
-        from neuronauts.merge import merge_agents
+        from neuronauts.agent_merge import merge_agents
         path_a = [(0.0, 0.0, 0.0)] * 8
         path_b = [(0.5, 0.0, 0.0)] * 8  # close to a
         path_c = [(1.0, 0.0, 0.0)] * 8  # close to b
@@ -266,7 +267,7 @@ class MergeAgentsTest(unittest.TestCase):
         self.assertEqual(len(neurons), 1)
 
     def test_neuron_ids_are_contiguous_integers(self):
-        from neuronauts.merge import merge_agents
+        from neuronauts.agent_merge import merge_agents
         agents = []
         for k in range(4):
             path = [(float(i + k * 100), 0.0, 0.0) for i in range(8)]
@@ -275,7 +276,7 @@ class MergeAgentsTest(unittest.TestCase):
         self.assertEqual(set(neurons.keys()), set(range(len(neurons))))
 
     def test_path_points_shape_is_2d(self):
-        from neuronauts.merge import merge_agents
+        from neuronauts.agent_merge import merge_agents
         path = [(float(i), 0.0, 0.0) for i in range(8)]
         a = _make_agent(0, path, [])
         neurons = merge_agents([a], merge_radius=1.0, min_path_length=5)
@@ -285,7 +286,7 @@ class MergeAgentsTest(unittest.TestCase):
 
     def test_only_agents_meeting_min_path_length_merged(self):
         """Mix of short and long agents; only long ones contribute."""
-        from neuronauts.merge import merge_agents
+        from neuronauts.agent_merge import merge_agents
         short_path = [(0.0, 0.0, 0.0)] * 3  # below min
         long_path = [(float(i), 0.0, 0.0) for i in range(8)]
         short_agent = _make_agent(0, short_path, [99])

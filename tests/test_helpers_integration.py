@@ -99,7 +99,7 @@ class MergeAgentsUsesUnionFindTest(unittest.TestCase):
 
     def test_merge_nearby_agents(self):
         from neuronauts.agent import Agent
-        from neuronauts.merge import merge_agents
+        from neuronauts.agent_merge import merge_agents
 
         agents = [
             Agent(agent_id=0, path=[np.array([0, 0, 0]), np.array([1, 0, 0]),
@@ -117,7 +117,7 @@ class MergeAgentsUsesUnionFindTest(unittest.TestCase):
         self.assertEqual(len(neurons), 2)
 
     def test_empty_agents_returns_empty(self):
-        from neuronauts.merge import merge_agents
+        from neuronauts.agent_merge import merge_agents
         self.assertEqual(merge_agents([]), {})
 
 

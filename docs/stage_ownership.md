@@ -16,7 +16,7 @@ Fill the **Owner** column with real names as the team forms.
 | `assemble/` | `NeuronHypothesis` | `cell_graph.py` (CellGNN + partition), `assembly.py`, `merge.py` (graph types), `em_corridor.py` | _TBD_ |
 | `connectome/` | `ConnectomeGraph` | `experiments/soma_graph/`, `shared_grammar_model.py` (GAT) | _TBD_ |
 | `evaluate/` | metrics | `line_graph.py` | _TBD_ |
-| `legacy/` (v1) | — | `vectorized.py`, `fields.py`, `agent.py`, agent half of `run.py`, `topology_*` | _maintainer only_ |
+| `legacy/` (v1) | — | `vectorized.py`, `fields.py`, `agent.py`, `agent_merge.py`, agent half of `run.py`, `topology_*` | _maintainer only_ |
 
 ## Contracts
 
@@ -36,7 +36,7 @@ dependency facts:
 | v1 module | Imported by (active) | Blocks move? |
 |-----------|----------------------|--------------|
 | `membrane_unet.py` | — (already deleted; `run.py:1280` is a removal stub) | n/a — only stale doc references remain |
-| `agent.py` (`Agent`, `AgentConfig`) | `merge.py:10` (active — `MergedNeuron`/`ConnectivityGraph` live here too) | **yes** |
+| `agent.py` (`Agent`, `AgentConfig`) | none (step 1 done) — now only `agent_merge.py`, `vectorized.py`, `run.py`, all v1 | **no longer** — freed from the active surface |
 | `fields.py` | `shared_grammar_model.py:688`, `topology_dataset.py:12`, `scripts/train.py` (GAT path) | **yes** |
 | `vectorized.py` | `run.py:28` (console entry point) | **yes** (via `run.py`) |
 | `run.py` | pyproject console script `neuronauts.run:main`; `scripts/train.py` (GAT path); ~9 test files; `scripts/export_*`, `inspect_pipeline.py` | **yes** |
@@ -48,10 +48,13 @@ dependency facts:
 **Sequence that must land before the move (each step is its own behavior-
 preserving PR, verified with the full suite):**
 
-1. **Split `merge.py`.** Keep `MergedNeuron` and `ConnectivityGraph` (used by
-   `cell_graph.py`, `skeleton_graph.py`, `assembly.py`) in an active module.
-   Move `merge_agents` + the `from .agent import Agent` dependency to the v1
-   side. This frees `agent.py`.
+1. **Split `merge.py`. ✅ DONE (2026-06-05).** `MergedNeuron` /
+   `ConnectivityGraph` stay in `merge.py` (now agent-free); the v1 `merge_agents`
+   + its `from .agent import Agent` dependency moved to `neuronauts/agent_merge.py`.
+   Verified: `import neuronauts` no longer transitively imports `agent.py`, and
+   242 passed / 1 pre-existing failure across the merge/agent/run + active-core
+   tests (the failure is the stale `test_core_types_importable`, unrelated).
+   `agent.py` is now imported only by v1 modules.
 2. **Extract the active helpers out of `run.py`.** The pieces that are genuinely
    active — `_scaffold_union_from_seg_ids`, `_build_graph`, `_merge_role_groups`,
    `HeuristicConfig` (imported by `train.py` and several tests) — move into
