@@ -16,7 +16,7 @@ Fill the **Owner** column with real names as the team forms.
 | `assemble/` | `NeuronHypothesis` | `cell_graph.py` (CellGNN + partition), `assembly.py`, `merge.py` (graph types), `em_corridor.py` | _TBD_ |
 | `connectome/` | `ConnectomeGraph` | `experiments/soma_graph/`, `shared_grammar_model.py` (GAT) | _TBD_ |
 | `evaluate/` | metrics | `line_graph.py` | _TBD_ |
-| `legacy/` (v1) | — | `vectorized.py`, `fields.py`, `agent.py`, `agent_merge.py`, agent half of `run.py`, `topology_*` | _maintainer only_ |
+| `legacy/` (v1) | — | `legacy/run.py` (moved; `neuronauts/run.py` is a shim), `vectorized.py`, `fields.py`, `agent.py`, `agent_merge.py`, `topology_*` | _maintainer only_ |
 
 ## Contracts
 
@@ -38,8 +38,8 @@ dependency facts:
 | `membrane_unet.py` | — (already deleted; `run.py:1280` is a removal stub) | n/a — only stale doc references remain |
 | `agent.py` (`Agent`, `AgentConfig`) | none (step 1 done) — now only `agent_merge.py`, `vectorized.py`, `run.py`, all v1 | **no longer** — freed from the active surface |
 | `fields.py` | `shared_grammar_model.py:688`, `topology_dataset.py:12`, `scripts/train.py` (GAT path) | **yes** |
-| `vectorized.py` | `run.py:28` (console entry point) | **yes** (via `run.py`) |
-| `run.py` | pyproject console script `neuronauts.run:main`; `scripts/train.py` (GAT path); ~9 test files; `scripts/export_*`, `inspect_pipeline.py` | **yes** |
+| `vectorized.py` | `legacy/run.py`, tests (`test_vectorized_extras`) — all v1 | not by the active surface |
+| `run.py` | ✅ **relocated to `legacy/run.py`** (step 2 done). `neuronauts/run.py` is now a deprecated delegating shim; importers (console script, `train.py` GAT path, `shared_grammar_model`, ~9 v1 tests) resolve through it unchanged. | no — off the active surface |
 | `topology_model.py` | `cell_graph.py:2475` (optional validator in `score_cell_quality`), `scripts/train.py:1520` | semi-active |
 
 > **Do not** "fix" this by having active modules import from `legacy/`. The
@@ -55,13 +55,26 @@ preserving PR, verified with the full suite):**
    242 passed / 1 pre-existing failure across the merge/agent/run + active-core
    tests (the failure is the stale `test_core_types_importable`, unrelated).
    `agent.py` is now imported only by v1 modules.
-2. **Extract the active helpers out of `run.py`.** The pieces that are genuinely
-   active — `_scaffold_union_from_seg_ids`, `_build_graph`, `_merge_role_groups`,
-   `HeuristicConfig` (imported by `train.py` and several tests) — move into
-   `assemble/`. The agent loop, `REAL_BOXES`, synthetic-benchmark code, and the
-   `run()` orchestrator stay behind as v1. Note the `--train-gat` path in
-   `train.py` depends on `simulate_paths_and_hits` and is itself v1-coupled;
-   decide whether GAT-from-simulation is retired or ported onto `Fragment`s.
+2. **Relocate `run.py` to `legacy/`. ✅ DONE (2026-06-05).** Investigation
+   corrected the premise of this step: the active import surface is exactly 8
+   modules — `assembly`, `cell_graph`, `grammar`, `helpers`, `line_graph`,
+   `merge`, `path_dataset`, `path_edge_encoder` (what `import neuronauts` loads)
+   — and **none of them import `run.py`**. The helpers this step once named
+   "active" (`_scaffold_union_from_seg_ids`, `_build_graph`, `_merge_role_groups`,
+   `HeuristicConfig`) are consumed only by the idle GAT/simulation path
+   (`shared_grammar_model` + `train.py::_run_gat_training_step`, gated by
+   `--train-gat`) and by v1 tests. So `run.py` is **wholly v1**; there is
+   nothing to extract into `assemble/`. It was therefore *relocated*, not
+   gutted: the 1,884-line module now lives at `neuronauts/legacy/run.py`
+   (relative imports rewritten to the parent package), and `neuronauts/run.py`
+   is a thin deprecated shim that delegates every attribute to
+   `legacy.run` via module `__getattr__`. All existing importers
+   (`from neuronauts.run import ...`, the console script, `shared_grammar_model`,
+   ~9 v1 tests) keep working unchanged. Verified: active surface still 8 modules
+   (neither `run` nor `legacy.run` eagerly loaded); 211 passed / 1 pre-existing
+   failure across every `run.py`-dependent test + active core.
+   *Remaining for a later PR:* migrate those importers off the shim to
+   `neuronauts.legacy.run`, then delete the shim.
 3. **Decouple `fields.py` consumers.** `compute_membrane_field` is used by
    `topology_dataset.py` and (lazily) `shared_grammar_model.py`. Quarantine
    `fields.py` together with the topology/simulation cluster, or keep it if the

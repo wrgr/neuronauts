@@ -212,16 +212,18 @@ colliding. **No behavior change** — this is pure restructuring + docs.
       they describe the dead regimes; point to this roadmap.
 - [x] **Introduce `neuronauts/schemas.py`** (Section 3.1) + `tests/test_schemas.py`.
       Nothing depends on it yet; it's the target interface. *(done)*
-- [ ] **Quarantine v1 → `neuronauts/legacy/`.** This is **not** a clean file
-      move yet: verified 2026-06-05, `membrane_unet.py` is already deleted, and
-      `agent.py`/`fields.py`/`vectorized.py`/`run.py` are each imported by active
-      code, so moving them naively breaks imports. `em_corridor.py` is **active**
-      (seg-connectivity in `cell_graph.py`) and stays. The untangling sequence
-      that must land first — split `merge.py`, extract active helpers out of
-      `run.py`, decouple `fields.py` consumers, then move + re-point — is
-      specified in [`stage_ownership.md`](stage_ownership.md#legacy-quarantine-plan).
-      Each step is its own behavior-preserving PR; mark legacy tests
-      `@pytest.mark.legacy` and drop from default CI at the end.
+- [~] **Quarantine v1 → `neuronauts/legacy/`** *(in progress)*. Verified
+      2026-06-05, the active import surface is 8 modules and `em_corridor.py` is
+      **active** (seg-connectivity in `cell_graph.py`) and stays. Progress, each
+      a behavior-preserving PR (full sequence + facts in
+      [`stage_ownership.md`](stage_ownership.md#legacy-quarantine-plan)):
+      **(1) ✅** split `merge.py` — `merge_agents` → `agent_merge.py`, freeing
+      `agent.py` from the active surface; **(2) ✅** relocate `run.py` →
+      `legacy/run.py` (it had no active helpers — wholly v1) behind a deprecated
+      shim so importers are unaffected; **(3)** decouple `fields.py` consumers;
+      **(4)** move the remaining sim cluster (`vectorized`, `fields`, `agent`,
+      `agent_merge`, `topology_*`), migrate importers off the `run` shim, then
+      mark legacy tests `@pytest.mark.legacy` and drop from default CI.
 - [ ] **Split the two monoliths along stage boundaries.**
       `cell_graph.py` → `assemble/graph.py` (build), `assemble/gnn.py` (CellGNN),
       `assemble/partition.py` (clustering/beam), `assemble/skeleton.py`
