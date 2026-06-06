@@ -65,18 +65,18 @@ Conventions:
 ## Legacy (v1) code
 
 The original agent/membrane simulation stack (700-walker tracing) is **not part
-of the active pipeline** and is slated to move to `neuronauts/legacy/`. It has
-**not been moved yet** because several of its modules are still imported by
-active code — moving them naively would break imports. The exact entanglement
-and the untangling sequence that must land *before* the quarantine are
-documented in [`docs/stage_ownership.md`](docs/stage_ownership.md#legacy-quarantine-plan).
+of the active pipeline** and now lives under `neuronauts/legacy/` (`run`,
+`agent`, `agent_merge`, `vectorized`, `fields`). `import neuronauts` does not
+load any of it. The quarantine history and the remaining items are in
+[`docs/stage_ownership.md`](docs/stage_ownership.md#legacy-quarantine-plan).
 
-Until then:
+Guidelines:
 
-- Don't add new dependencies on `vectorized.py`, `fields.py`, `agent.py`, or the
-  agent-simulation parts of `run.py`.
-- `em_corridor.py` is **active** (seg-connectivity scoring in `cell_graph.py`) —
-  it is *not* legacy despite living next to the simulation code.
+- Don't add dependencies from active code on `neuronauts.legacy.*`. The allowed
+  direction is `legacy → active`, never `active → legacy`.
+- Run `pytest -m 'not legacy'` to skip the v1 simulation tests.
+- `em_corridor.py` and `topology_model.py` are **not** legacy — they're still
+  referenced by the active `cell_graph.py`, so they stay at the top level.
 
 ## Pull requests
 

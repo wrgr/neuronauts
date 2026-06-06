@@ -29,7 +29,7 @@ def _make_tiny_connectivity_graph(n_synapses: int = 6, seed: int = 0):
     import numpy as np
     from neuronauts.fetch import SyntheticBenchmarkConfig, make_test_volume
     from neuronauts.legacy.fields import compute_membrane_field
-    from neuronauts.run import HeuristicConfig, _build_graph, simulate_paths_and_hits
+    from neuronauts.legacy.run import HeuristicConfig, _build_graph, simulate_paths_and_hits
 
     rng = np.random.default_rng(seed)
     config = SyntheticBenchmarkConfig(

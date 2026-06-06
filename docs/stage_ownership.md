@@ -39,7 +39,7 @@ dependency facts:
 | `agent.py` (`Agent`, `AgentConfig`) | ✅ **moved to `legacy/agent.py`** — importers re-pointed | done |
 | `fields.py` | ✅ **moved to `legacy/fields.py`** — `topology_dataset`, `shared_grammar_model`, `train.py`, v1 tests re-pointed to `legacy.fields` | done |
 | `vectorized.py` | ✅ **moved to `legacy/vectorized.py`** — importers re-pointed | done |
-| `run.py` | ✅ **relocated to `legacy/run.py`** (step 2 done). `neuronauts/run.py` is now a deprecated delegating shim; importers (console script, `train.py` GAT path, `shared_grammar_model`, ~9 v1 tests) resolve through it unchanged. | no — off the active surface |
+| `run.py` | ✅ **moved to `legacy/run.py`; shim removed.** All importers (console script → `neuronauts.legacy.run:main`, `train.py` GAT path, `shared_grammar_model`, v1 tests) point directly at `neuronauts.legacy.run`. | no — off the active surface |
 | `topology_model.py` | `cell_graph.py:2475` (optional validator in `score_cell_quality`), `scripts/train.py:1520` | semi-active |
 
 > **Do not** "fix" this by having active modules import from `legacy/`. The
@@ -73,8 +73,10 @@ preserving PR, verified with the full suite):**
    ~9 v1 tests) keep working unchanged. Verified: active surface still 8 modules
    (neither `run` nor `legacy.run` eagerly loaded); 211 passed / 1 pre-existing
    failure across every `run.py`-dependent test + active core.
-   *Remaining for a later PR:* migrate those importers off the shim to
-   `neuronauts.legacy.run`, then delete the shim.
+   *Update (2026-06-05):* the shim has since been **removed** — all importers
+   (console script, `train.py`, `shared_grammar_model`, the v1 tests) were
+   re-pointed directly at `neuronauts.legacy.run` and `neuronauts/run.py` was
+   deleted (201 passed across the run-dependent suite afterward).
 3 & 4. **Move the sim cluster + re-point. ✅ DONE (2026-06-05).** Steps 3
    (decouple `fields.py`) and 4 (move) were executed together: `agent.py`,
    `agent_merge.py`, `vectorized.py`, and `fields.py` now live in
@@ -93,10 +95,11 @@ preserving PR, verified with the full suite):**
      (active) optionally imports `topology_model` in `score_cell_quality`, so a
      move would create an active→legacy edge. Decide separately whether the
      topology validator is retired, made fully optional, or shimmed.
-   - Migrate the ~9 importers off the `neuronauts.run` shim to
-     `neuronauts.legacy.run`, then delete the shim.
-   - Register a `legacy` pytest marker and mark the v1 tests (there is no CI
-     workflow in-repo yet to drop them from, so effect is currently advisory).
+   - ✅ **Run shim removed** — importers re-pointed to `neuronauts.legacy.run`,
+     `neuronauts/run.py` deleted; no shims remain anywhere.
+   - ✅ **`legacy` pytest marker** registered (`pyproject.toml`) and applied via
+     `tests/conftest.py` to the v1 simulation modules; `pytest -m 'not legacy'`
+     skips them. (No CI workflow in-repo yet to wire this into.)
 
 **Stale references to clean up opportunistically** (they describe the deleted
 `membrane_unet.py` / dead v1 path): `program.md`, `docs/model.md`,

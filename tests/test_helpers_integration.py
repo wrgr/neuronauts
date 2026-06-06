@@ -23,21 +23,15 @@ class PublicAPIExportsTest(unittest.TestCase):
             self.assertTrue(hasattr(neuronauts, name), f"{name} not in neuronauts namespace")
 
     def test_core_types_importable(self):
-        from neuronauts import (
-            Agent,
-            AgentConfig,
-            BridgeGraph,
-            BridgePath,
-            ConnectivityGraph,
-            LineGraphMetrics,
-            MergedNeuron,
-            UnionFind,
-            evaluate,
-            evaluate_sampled,
-            merge_agents,
-            pairwise_edges,
-            safe_normalize,
-        )
+        # Package root now re-exports only the active-pipeline API:
+        from neuronauts import LineGraphMetrics, evaluate, evaluate_sampled
+        # Active datatypes / helpers live in their canonical modules:
+        from neuronauts.merge import ConnectivityGraph, MergedNeuron
+        from neuronauts.helpers import UnionFind, safe_normalize, pairwise_edges
+        from neuronauts.dijkstra import BridgeGraph, BridgePath
+        # v1 agent-simulation types now live under neuronauts.legacy:
+        from neuronauts.legacy.agent import Agent, AgentConfig
+        from neuronauts.legacy.agent_merge import merge_agents
         # Just verify they are callable / instantiable types.
         self.assertTrue(callable(UnionFind))
         self.assertTrue(callable(safe_normalize))

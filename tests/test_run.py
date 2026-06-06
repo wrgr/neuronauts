@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 
 from neuronauts.line_graph import build_estimated_line_graph
-from neuronauts.run import _build_graph, _load_shared_merge_score_fn
+from neuronauts.legacy.run import _build_graph, _load_shared_merge_score_fn
 from neuronauts.shared_grammar_model import SharedGrammarModel, save_shared_grammar_model
 
 try:

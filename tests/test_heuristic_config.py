@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from neuronauts.run import (
+from neuronauts.legacy.run import (
     HeuristicConfig,
     MERGE_RADIUS,
     MERGE_OVERLAP_THRESHOLD,
@@ -275,7 +275,7 @@ class RunAutoModeTest(unittest.TestCase):
     def test_legacy_mode_by_default(self):
         """Without any checkpoint, run() should use legacy heuristic mode."""
         from neuronauts.fetch import SyntheticBenchmarkConfig, make_test_volume
-        from neuronauts.run import run
+        from neuronauts.legacy.run import run
 
         cfg = SyntheticBenchmarkConfig(n_synapses=6, shape=(32, 32, 32))
         chunk, syn = make_test_volume(config=cfg, seed=42)
@@ -293,7 +293,7 @@ class RunAutoModeTest(unittest.TestCase):
         from pathlib import Path
         import torch
         from neuronauts.fetch import SyntheticBenchmarkConfig, make_test_volume
-        from neuronauts.run import run
+        from neuronauts.legacy.run import run
         from neuronauts.shared_grammar_model import GlobalAssemblyGAT, save_global_assembly_gat
 
         gat = GlobalAssemblyGAT(node_dim=32, gat_dim=32, n_heads=2, n_layers=1, dropout=0.0)

@@ -106,7 +106,7 @@ class CdistFallbackTest(unittest.TestCase):
 class RunAgentsVectorizedTest(unittest.TestCase):
 
     def _make_inputs(self, shape=(20, 20, 20), n_agents=10, n_synapses=0):
-        from neuronauts.run import AGENT_CONFIG
+        from neuronauts.legacy.run import AGENT_CONFIG
         from neuronauts.legacy.fields import compute_membrane_field, compute_membrane_vectors
         from dataclasses import replace
 
@@ -167,7 +167,7 @@ class RunAgentsVectorizedTest(unittest.TestCase):
 
     def test_verbose_does_not_raise(self):
         """Verbose path (step % 200 == 0 printing) must not crash."""
-        from neuronauts.run import AGENT_CONFIG
+        from neuronauts.legacy.run import AGENT_CONFIG
         from neuronauts.legacy.fields import compute_membrane_field, compute_membrane_vectors
         from neuronauts.legacy.vectorized import run_agents_vectorized
         from dataclasses import replace

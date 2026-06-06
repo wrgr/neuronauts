@@ -801,7 +801,7 @@ def _run_gat_training_step(
 ):
     """Run graph construction → gat_train_step on one box."""
     from neuronauts.legacy.fields import compute_membrane_field
-    from neuronauts.run import HeuristicConfig, _build_graph, simulate_paths_and_hits
+    from neuronauts.legacy.run import HeuristicConfig, _build_graph, simulate_paths_and_hits
     from neuronauts.skeleton_graph import build_skeleton_connectivity_graph
     from neuronauts.shared_grammar_model import gat_train_step
 
@@ -941,7 +941,7 @@ def _validate_box(record, cache, grammar_model, gat_model, args, device):
     """
     import torch
     from neuronauts.legacy.fields import compute_membrane_field
-    from neuronauts.run import HeuristicConfig, _build_graph, simulate_paths_and_hits
+    from neuronauts.legacy.run import HeuristicConfig, _build_graph, simulate_paths_and_hits
     from neuronauts.line_graph import evaluate, evaluate_sampled
 
     diag: dict = {}
@@ -1636,7 +1636,7 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
         if baseline_enabled and grammar_model is not None:
             try:
                 score_fn = _make_live_merge_score_fn(grammar_model)
-                from neuronauts.run import HeuristicConfig, _build_graph, simulate_paths_and_hits
+                from neuronauts.legacy.run import HeuristicConfig, _build_graph, simulate_paths_and_hits
                 from neuronauts.legacy.fields import compute_membrane_field
 
                 if getattr(volume_chunk, "data", None) is not None and volume_chunk.data.size > 0:

@@ -14,7 +14,7 @@ import numpy as np
 
 
 def _default_benchmark():
-    from neuronauts.run import SyntheticBenchmarkConfig
+    from neuronauts.legacy.run import SyntheticBenchmarkConfig
     return SyntheticBenchmarkConfig(
         shape=(30, 30, 30),
         n_synapses=8,
@@ -30,13 +30,13 @@ def _default_benchmark():
 class EvaluateSyntheticBatchTest(unittest.TestCase):
 
     def test_invalid_cases_raises(self):
-        from neuronauts.run import evaluate_synthetic_batch
+        from neuronauts.legacy.run import evaluate_synthetic_batch
         cfg = _default_benchmark()
         with self.assertRaises(ValueError):
             evaluate_synthetic_batch(cfg, cases=0, mode="fixed_validation")
 
     def test_fixed_validation_mode_returns_agg(self):
-        from neuronauts.run import evaluate_synthetic_batch
+        from neuronauts.legacy.run import evaluate_synthetic_batch
         from neuronauts.line_graph import LineGraphMetrics
         cfg = _default_benchmark()
         agg, summaries = evaluate_synthetic_batch(
@@ -46,7 +46,7 @@ class EvaluateSyntheticBatchTest(unittest.TestCase):
         self.assertEqual(len(summaries), 2)
 
     def test_random_mode_returns_agg(self):
-        from neuronauts.run import evaluate_synthetic_batch
+        from neuronauts.legacy.run import evaluate_synthetic_batch
         cfg = _default_benchmark()
         agg, summaries = evaluate_synthetic_batch(
             cfg, cases=2, mode="random", base_seed=99, verbose=False
@@ -54,13 +54,13 @@ class EvaluateSyntheticBatchTest(unittest.TestCase):
         self.assertEqual(len(summaries), 2)
 
     def test_unsupported_mode_raises(self):
-        from neuronauts.run import evaluate_synthetic_batch
+        from neuronauts.legacy.run import evaluate_synthetic_batch
         cfg = _default_benchmark()
         with self.assertRaises(ValueError):
             evaluate_synthetic_batch(cfg, cases=1, mode="invalid_mode")
 
     def test_summaries_contain_expected_keys(self):
-        from neuronauts.run import evaluate_synthetic_batch
+        from neuronauts.legacy.run import evaluate_synthetic_batch
         cfg = _default_benchmark()
         _, summaries = evaluate_synthetic_batch(
             cfg, cases=2, mode="fixed_validation", verbose=False
@@ -70,7 +70,7 @@ class EvaluateSyntheticBatchTest(unittest.TestCase):
                 self.assertIn(key, s, f"key '{key}' missing from summary")
 
     def test_aggregate_n_synapses_sums_cases(self):
-        from neuronauts.run import evaluate_synthetic_batch
+        from neuronauts.legacy.run import evaluate_synthetic_batch
         cfg = _default_benchmark()
         agg, _ = evaluate_synthetic_batch(
             cfg, cases=3, mode="fixed_validation", verbose=False
@@ -80,7 +80,7 @@ class EvaluateSyntheticBatchTest(unittest.TestCase):
 
     def test_aggregate_f1_is_mean_of_cases(self):
         """Aggregate F1 should be the arithmetic mean of per-case F1s."""
-        from neuronauts.run import evaluate_synthetic_batch
+        from neuronauts.legacy.run import evaluate_synthetic_batch
         cfg = _default_benchmark()
         agg, summaries = evaluate_synthetic_batch(
             cfg, cases=3, mode="fixed_validation", verbose=False
@@ -90,7 +90,7 @@ class EvaluateSyntheticBatchTest(unittest.TestCase):
 
     def test_fixed_validation_deterministic(self):
         """Same seeds → same aggregate F1."""
-        from neuronauts.run import evaluate_synthetic_batch
+        from neuronauts.legacy.run import evaluate_synthetic_batch
         cfg = _default_benchmark()
         agg1, _ = evaluate_synthetic_batch(
             cfg, cases=2, mode="fixed_validation", verbose=False
@@ -101,7 +101,7 @@ class EvaluateSyntheticBatchTest(unittest.TestCase):
         self.assertAlmostEqual(agg1.f1, agg2.f1, places=5)
 
     def test_random_mode_with_seed_is_deterministic(self):
-        from neuronauts.run import evaluate_synthetic_batch
+        from neuronauts.legacy.run import evaluate_synthetic_batch
         cfg = _default_benchmark()
         agg1, sums1 = evaluate_synthetic_batch(
             cfg, cases=2, mode="random", base_seed=7, verbose=False
@@ -113,7 +113,7 @@ class EvaluateSyntheticBatchTest(unittest.TestCase):
 
     def test_fixed_validation_seeds_are_case_index(self):
         """fixed_validation uses case_idx as both volume_seed and run_seed."""
-        from neuronauts.run import evaluate_synthetic_batch
+        from neuronauts.legacy.run import evaluate_synthetic_batch
         cfg = _default_benchmark()
         _, summaries = evaluate_synthetic_batch(
             cfg, cases=3, mode="fixed_validation", verbose=False
@@ -130,7 +130,7 @@ class EvaluateSyntheticBatchTest(unittest.TestCase):
 class BuildGraphHypothesesTest(unittest.TestCase):
 
     def _make_data(self, n_agents=20, n_syn=5, steps=8):
-        from neuronauts.run import SyntheticBenchmarkConfig, make_test_volume, AGENT_CONFIG
+        from neuronauts.legacy.run import SyntheticBenchmarkConfig, make_test_volume, AGENT_CONFIG
         from neuronauts.legacy.fields import compute_membrane_field, compute_membrane_vectors
         from neuronauts.legacy.vectorized import run_agents_vectorized
         from dataclasses import replace
@@ -153,7 +153,7 @@ class BuildGraphHypothesesTest(unittest.TestCase):
         return path_arr, path_lengths, synapse_hits, synapses.pre_pt, synapses.post_pt
 
     def test_returns_list_of_tuples(self):
-        from neuronauts.run import build_graph_hypotheses
+        from neuronauts.legacy.run import build_graph_hypotheses
         path_arr, path_lengths, synapse_hits, pre, post = self._make_data()
         hypotheses = build_graph_hypotheses(
             path_arr, path_lengths, synapse_hits, pre, post,
@@ -164,7 +164,7 @@ class BuildGraphHypothesesTest(unittest.TestCase):
         self.assertEqual(len(hypotheses), 4)
 
     def test_each_hypothesis_is_three_tuple(self):
-        from neuronauts.run import build_graph_hypotheses
+        from neuronauts.legacy.run import build_graph_hypotheses
         from neuronauts.merge import ConnectivityGraph
         path_arr, path_lengths, synapse_hits, pre, post = self._make_data()
         for threshold, beam_width, graph in build_graph_hypotheses(
@@ -177,7 +177,7 @@ class BuildGraphHypothesesTest(unittest.TestCase):
             self.assertIsInstance(graph, ConnectivityGraph)
 
     def test_single_threshold_and_beam(self):
-        from neuronauts.run import build_graph_hypotheses
+        from neuronauts.legacy.run import build_graph_hypotheses
         path_arr, path_lengths, synapse_hits, pre, post = self._make_data()
         hypotheses = build_graph_hypotheses(
             path_arr, path_lengths, synapse_hits, pre, post,

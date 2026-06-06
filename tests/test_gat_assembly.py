@@ -341,7 +341,7 @@ class GatRefineConnectivityTest(unittest.TestCase):
 class RunGATIntegrationTest(unittest.TestCase):
     def test_run_with_gat_checkpoint(self):
         from neuronauts.fetch import SyntheticBenchmarkConfig, make_test_volume
-        from neuronauts.run import run
+        from neuronauts.legacy.run import run
 
         # Default SharedGrammarModel uses embedding_dim=32; GAT node_dim must match.
         enc = SharedGrammarModel(input_dim=6, path_d_model=32, embedding_dim=32,

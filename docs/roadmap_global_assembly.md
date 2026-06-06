@@ -222,11 +222,12 @@ colliding. **No behavior change** — this is pure restructuring + docs.
       `legacy/run.py` (it had no active helpers — wholly v1) behind a deprecated
       shim so importers are unaffected; **(3+4) ✅** moved the sim cluster
       `agent`, `agent_merge`, `vectorized`, `fields` into `legacy/` and
-      re-pointed their importers cleanly (no shims). *Remaining cleanup:*
-      `topology_*` stays for now (active `cell_graph` references `topology_model`);
-      migrate importers off the `run` shim then delete it; register/apply a
-      `legacy` pytest marker. Active surface verified at exactly 8 modules
-      throughout.
+      re-pointed their importers cleanly (no shims). **(cleanup) ✅** removed the
+      `run` shim (all importers now point at `neuronauts.legacy.run`) and
+      registered a `legacy` pytest marker (`pytest -m 'not legacy'` skips the v1
+      sim tests). *Only remaining:* `topology_*` stays (active `cell_graph`
+      references `topology_model` — a separate decision). Active surface verified
+      at exactly 8 modules throughout.
 - [ ] **Split the two monoliths along stage boundaries.**
       `cell_graph.py` → `assemble/graph.py` (build), `assemble/gnn.py` (CellGNN),
       `assemble/partition.py` (clustering/beam), `assemble/skeleton.py`

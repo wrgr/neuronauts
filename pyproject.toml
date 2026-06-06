@@ -47,10 +47,13 @@ llm = [
 ]
 
 [project.scripts]
-neuronauts = "neuronauts.run:main"
+neuronauts = "neuronauts.legacy.run:main"
 
 [tool.setuptools]
 packages = ["neuronauts", "neuronauts.legacy"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "legacy: v1 agent/membrane simulation tests that exercise neuronauts.legacy; run with -m 'not legacy' to skip",
+]
