@@ -21,7 +21,9 @@ boundary in the global synapse graph.
 - [x] `neuronauts/data/fragments.py` — `skeleton_to_fragment`, `extract_fragments_for_region`
 - [x] `neuronauts/represent/dna.py` — `TreeDNAEncoder`, `featurize_fragment`, `sample_tree_paths`, `encode_fragments`, `train_dna_encoder`
 - [x] `tests/test_data_fragments.py` + `tests/test_represent_dna.py`
-- [ ] Ablation: DNA-enriched synapse features AUC vs 6-scalar CellGNN baseline
+- [x] `neuronauts/represent/enrich.py` — `build_synapse_dna_matrix`, `synapse_pair_dna_scores`, `spatial_proximity_scores`, `evaluate_dna_auc`
+- [x] `tests/test_represent_enrich.py` — 12 tests including AUC ≥ 0.9 with orthogonal DNA
+- [ ] Ablation: train encoder on real data, measure same-neuron AUC vs 6-scalar CellGNN baseline
 
 ## Phase 2 — NEXT
 Global synapse graph (no box boundary) with DNA node features → CellGNN-style
