@@ -50,6 +50,12 @@ from .represent.dna import (
     sample_tree_paths,
     train_dna_encoder,
 )
+from .represent.enrich import (
+    build_synapse_dna_matrix,
+    evaluate_dna_auc,
+    spatial_proximity_scores,
+    synapse_pair_dna_scores,
+)
 
 __all__ = [
     # CellGNN architecture & training
@@ -105,4 +111,9 @@ __all__ = [
     "featurize_fragment",
     "sample_tree_paths",
     "train_dna_encoder",
+    # Represent stage: DNA enrichment + ablation evaluation
+    "build_synapse_dna_matrix",
+    "evaluate_dna_auc",
+    "spatial_proximity_scores",
+    "synapse_pair_dna_scores",
 ]
