@@ -9,7 +9,7 @@ from typing import Sequence
 import numpy as np
 
 from .fetch import RealBoxSpec, SynapseTable, fetch_synapses, fetch_volume, load_cached_membrane
-from .fields import compute_membrane_field
+from .legacy.fields import compute_membrane_field
 from .grammar import (
     DEFAULT_PATH_FEATURE_MODE,
     LEGACY_PATH_FEATURE_MODE,

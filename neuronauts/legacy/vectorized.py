@@ -4,10 +4,10 @@ from typing import Tuple
 
 import numpy as np
 
-from ._scipy_compat import cdist
+from .._scipy_compat import cdist
 
 from .agent import AgentConfig
-from .helpers import safe_normalize
+from ..helpers import safe_normalize
 
 
 def run_agents_vectorized(

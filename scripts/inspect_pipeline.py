@@ -639,7 +639,7 @@ def main(argv=None) -> int:
     grammar_score_fn = None
     if args.grammar_path and Path(args.grammar_path).exists():
         print(f"Loading grammar from {args.grammar_path} …")
-        from neuronauts.run import _load_shared_merge_score_fn
+        from neuronauts.legacy.run import _load_shared_merge_score_fn
         grammar_score_fn = _load_shared_merge_score_fn(args.grammar_path)
 
     # Load CellGNN model

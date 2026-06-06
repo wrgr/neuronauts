@@ -286,7 +286,7 @@ class BridgeCandidateTest(unittest.TestCase):
         return neurons
 
     def test_bridge_graph_has_correct_nodes(self):
-        from neuronauts.run import _build_bridge_graph
+        from neuronauts.legacy.run import _build_bridge_graph
         neurons = self._make_neurons()
         g = _build_bridge_graph(neurons)
         # Each neuron contributes 2 endpoint nodes + 1 intra-neuron edge.
@@ -295,7 +295,7 @@ class BridgeCandidateTest(unittest.TestCase):
         self.assertIn(1, paths)  # other endpoint of neuron 0
 
     def test_propose_bridges_returns_sorted_proposals(self):
-        from neuronauts.run import _build_bridge_graph, _propose_bridges
+        from neuronauts.legacy.run import _build_bridge_graph, _propose_bridges
         neurons = self._make_neurons()
         g = _build_bridge_graph(neurons)
         proposals = _propose_bridges(neurons, g)
@@ -306,7 +306,7 @@ class BridgeCandidateTest(unittest.TestCase):
         self.assertEqual(costs, sorted(costs))
 
     def test_propose_bridges_nearest_pair_is_0_and_1(self):
-        from neuronauts.run import _build_bridge_graph, _propose_bridges
+        from neuronauts.legacy.run import _build_bridge_graph, _propose_bridges
         neurons = self._make_neurons()
         g = _build_bridge_graph(neurons)
         proposals = _propose_bridges(neurons, g, top_k=1)
@@ -314,7 +314,7 @@ class BridgeCandidateTest(unittest.TestCase):
         self.assertEqual({nid_a, nid_b}, {0, 1})
 
     def test_propose_bridges_max_cost_prunes_distant_neuron(self):
-        from neuronauts.run import _build_bridge_graph, _propose_bridges
+        from neuronauts.legacy.run import _build_bridge_graph, _propose_bridges
         neurons = self._make_neurons()
         # Neuron 2 is ~28 units away; prune anything > 10.
         g = _build_bridge_graph(neurons, max_bridge_cost=10.0)

@@ -23,21 +23,15 @@ class PublicAPIExportsTest(unittest.TestCase):
             self.assertTrue(hasattr(neuronauts, name), f"{name} not in neuronauts namespace")
 
     def test_core_types_importable(self):
-        from neuronauts import (
-            Agent,
-            AgentConfig,
-            BridgeGraph,
-            BridgePath,
-            ConnectivityGraph,
-            LineGraphMetrics,
-            MergedNeuron,
-            UnionFind,
-            evaluate,
-            evaluate_sampled,
-            merge_agents,
-            pairwise_edges,
-            safe_normalize,
-        )
+        # Package root now re-exports only the active-pipeline API:
+        from neuronauts import LineGraphMetrics, evaluate, evaluate_sampled
+        # Active datatypes / helpers live in their canonical modules:
+        from neuronauts.merge import ConnectivityGraph, MergedNeuron
+        from neuronauts.helpers import UnionFind, safe_normalize, pairwise_edges
+        from neuronauts.dijkstra import BridgeGraph, BridgePath
+        # v1 agent-simulation types now live under neuronauts.legacy:
+        from neuronauts.legacy.agent import Agent, AgentConfig
+        from neuronauts.legacy.agent_merge import merge_agents
         # Just verify they are callable / instantiable types.
         self.assertTrue(callable(UnionFind))
         self.assertTrue(callable(safe_normalize))
@@ -98,8 +92,8 @@ class MergeAgentsUsesUnionFindTest(unittest.TestCase):
     """Smoke test that merge_agents still works after refactoring."""
 
     def test_merge_nearby_agents(self):
-        from neuronauts.agent import Agent
-        from neuronauts.merge import merge_agents
+        from neuronauts.legacy.agent import Agent
+        from neuronauts.legacy.agent_merge import merge_agents
 
         agents = [
             Agent(agent_id=0, path=[np.array([0, 0, 0]), np.array([1, 0, 0]),
@@ -117,7 +111,7 @@ class MergeAgentsUsesUnionFindTest(unittest.TestCase):
         self.assertEqual(len(neurons), 2)
 
     def test_empty_agents_returns_empty(self):
-        from neuronauts.merge import merge_agents
+        from neuronauts.legacy.agent_merge import merge_agents
         self.assertEqual(merge_agents([]), {})
 
 
@@ -165,7 +159,7 @@ class FieldsNormalizationTest(unittest.TestCase):
     """Verify compute_membrane_vectors still produces unit vectors after refactor."""
 
     def test_unit_vectors(self):
-        from neuronauts.fields import compute_membrane_vectors
+        from neuronauts.legacy.fields import compute_membrane_vectors
 
         rng = np.random.default_rng(42)
         mf = rng.random((8, 8, 8)).astype(np.float32)
@@ -174,7 +168,7 @@ class FieldsNormalizationTest(unittest.TestCase):
         np.testing.assert_allclose(norms, 1.0, atol=1e-5)
 
     def test_all_finite(self):
-        from neuronauts.fields import compute_membrane_vectors
+        from neuronauts.legacy.fields import compute_membrane_vectors
 
         mf = np.zeros((4, 4, 4), dtype=np.float32)
         mv = compute_membrane_vectors(mf)

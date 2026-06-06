@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 
 from neuronauts.merge_dataset import build_merge_examples_for_box, save_merge_examples_npz
-from neuronauts.run import REAL_BOXES
+from neuronauts.legacy.run import REAL_BOXES
 
 
 def parse_args() -> argparse.Namespace:

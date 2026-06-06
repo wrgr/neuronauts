@@ -7,7 +7,7 @@ import argparse
 import json
 from pathlib import Path
 
-from neuronauts.run import REAL_BOXES
+from neuronauts.legacy.run import REAL_BOXES
 from neuronauts.topology_dataset import build_cluster_examples_for_box, save_multi_branch_npz
 
 

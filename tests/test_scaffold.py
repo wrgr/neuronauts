@@ -9,7 +9,7 @@ import numpy as np
 
 from neuronauts.fetch import SynapseTable, make_test_volume, SyntheticBenchmarkConfig
 from neuronauts.helpers import UnionFind
-from neuronauts.run import _scaffold_union_from_seg_ids
+from neuronauts.legacy.run import _scaffold_union_from_seg_ids
 
 
 # ---------------------------------------------------------------------------
@@ -134,7 +134,7 @@ class ScaffoldRoundTripTest(unittest.TestCase):
         """With a perfect scaffold, scaffold-aware merging should produce
         fewer (or equal) neurons than blind merging, because scaffold groups
         are pre-merged before geometry scoring."""
-        from neuronauts.run import _merge_role_groups
+        from neuronauts.legacy.run import _merge_role_groups
         import numpy as np
 
         rng = np.random.default_rng(7)

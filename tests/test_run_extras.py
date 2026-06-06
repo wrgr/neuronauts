@@ -24,7 +24,7 @@ class EvaluateSyntheticCaseTest(unittest.TestCase):
     def test_returns_line_graph_metrics_with_valid_f1(self):
         from neuronauts.fetch import SyntheticBenchmarkConfig
         from neuronauts.line_graph import LineGraphMetrics
-        from neuronauts.run import evaluate_synthetic_case
+        from neuronauts.legacy.run import evaluate_synthetic_case
 
         config = SyntheticBenchmarkConfig(
             shape=(32, 32, 32),
@@ -40,7 +40,7 @@ class EvaluateSyntheticCaseTest(unittest.TestCase):
 
     def test_precision_recall_non_negative(self):
         from neuronauts.fetch import SyntheticBenchmarkConfig
-        from neuronauts.run import evaluate_synthetic_case
+        from neuronauts.legacy.run import evaluate_synthetic_case
 
         config = SyntheticBenchmarkConfig(
             shape=(32, 32, 32),
@@ -58,7 +58,7 @@ class EvaluateSyntheticCaseTest(unittest.TestCase):
     def test_scaffold_vs_no_scaffold_both_return_metrics(self):
         from neuronauts.fetch import SyntheticBenchmarkConfig
         from neuronauts.line_graph import LineGraphMetrics
-        from neuronauts.run import evaluate_synthetic_case
+        from neuronauts.legacy.run import evaluate_synthetic_case
 
         config = SyntheticBenchmarkConfig(
             shape=(32, 32, 32),
@@ -78,7 +78,7 @@ class EvaluateSyntheticCaseTest(unittest.TestCase):
 
     def test_different_seeds_produce_valid_results(self):
         from neuronauts.fetch import SyntheticBenchmarkConfig
-        from neuronauts.run import evaluate_synthetic_case
+        from neuronauts.legacy.run import evaluate_synthetic_case
 
         config = SyntheticBenchmarkConfig(
             shape=(32, 32, 32),
@@ -96,7 +96,7 @@ class EvaluateSyntheticCaseTest(unittest.TestCase):
 
     def test_integer_counts_non_negative(self):
         from neuronauts.fetch import SyntheticBenchmarkConfig
-        from neuronauts.run import evaluate_synthetic_case
+        from neuronauts.legacy.run import evaluate_synthetic_case
 
         config = SyntheticBenchmarkConfig(
             shape=(32, 32, 32),
@@ -149,7 +149,7 @@ class BuildBridgeGraphWithScoreFnTest(unittest.TestCase):
                     yield u, v, cost
 
     def test_positive_logit_score_fn_gives_near_zero_cost_inter_edges(self):
-        from neuronauts.run import _build_bridge_graph
+        from neuronauts.legacy.run import _build_bridge_graph
 
         def always_positive(seq_a, seq_b):
             return 5.0  # large positive logit → prob ~0.993 → cost ~0.007
@@ -165,7 +165,7 @@ class BuildBridgeGraphWithScoreFnTest(unittest.TestCase):
                 )
 
     def test_negative_logit_score_fn_gives_positive_cost_inter_edges(self):
-        from neuronauts.run import _build_bridge_graph
+        from neuronauts.legacy.run import _build_bridge_graph
 
         def always_negative(seq_a, seq_b):
             return -3.0  # negative logit → prob ~0.047 → cost ~3.05
@@ -184,7 +184,7 @@ class BuildBridgeGraphWithScoreFnTest(unittest.TestCase):
     def test_score_fn_cost_equals_neg_log_sigmoid(self):
         """cost = -log(sigmoid(logit)) for each pair."""
         import math
-        from neuronauts.run import _build_bridge_graph
+        from neuronauts.legacy.run import _build_bridge_graph
 
         fixed_logit = -2.5
         prob = 1.0 / (1.0 + math.exp(-fixed_logit))
@@ -205,7 +205,7 @@ class BuildBridgeGraphWithScoreFnTest(unittest.TestCase):
             self.assertAlmostEqual(cost, expected_cost, places=4)
 
     def test_max_bridge_cost_prunes_high_cost_edges(self):
-        from neuronauts.run import _build_bridge_graph
+        from neuronauts.legacy.run import _build_bridge_graph
 
         def always_negative(seq_a, seq_b):
             return -100.0  # prob ≈ 0 → cost = -log(1e-7) ≈ 16.1
@@ -223,7 +223,7 @@ class BuildBridgeGraphWithScoreFnTest(unittest.TestCase):
         self.assertEqual(len(inter_costs), 0, "expected all inter edges pruned")
 
     def test_intra_neuron_edges_always_zero_cost(self):
-        from neuronauts.run import _build_bridge_graph
+        from neuronauts.legacy.run import _build_bridge_graph
 
         def always_negative(seq_a, seq_b):
             return -5.0
@@ -253,7 +253,7 @@ class LoadSharedAtomicityScoreFnTest(unittest.TestCase):
             self.skipTest("torch not installed")
 
     def test_returns_callable(self):
-        from neuronauts.run import _load_shared_atomicity_score_fn
+        from neuronauts.legacy.run import _load_shared_atomicity_score_fn
         from neuronauts.shared_grammar_model import SharedGrammarModel, save_shared_grammar_model
 
         with tempfile.TemporaryDirectory() as d:
@@ -264,7 +264,7 @@ class LoadSharedAtomicityScoreFnTest(unittest.TestCase):
             self.assertTrue(callable(score_fn))
 
     def test_returns_finite_float_on_valid_input(self):
-        from neuronauts.run import _load_shared_atomicity_score_fn
+        from neuronauts.legacy.run import _load_shared_atomicity_score_fn
         from neuronauts.shared_grammar_model import SharedGrammarModel, save_shared_grammar_model
 
         with tempfile.TemporaryDirectory() as d:
@@ -283,7 +283,7 @@ class LoadSharedAtomicityScoreFnTest(unittest.TestCase):
             self.assertFalse(np.isinf(result), "score is Inf")
 
     def test_score_fn_accepts_variable_branch_counts(self):
-        from neuronauts.run import _load_shared_atomicity_score_fn
+        from neuronauts.legacy.run import _load_shared_atomicity_score_fn
         from neuronauts.shared_grammar_model import SharedGrammarModel, save_shared_grammar_model
 
         with tempfile.TemporaryDirectory() as d:
@@ -300,7 +300,7 @@ class LoadSharedAtomicityScoreFnTest(unittest.TestCase):
 
     def test_two_calls_with_same_input_are_deterministic(self):
         """eval() mode means same input → same output."""
-        from neuronauts.run import _load_shared_atomicity_score_fn
+        from neuronauts.legacy.run import _load_shared_atomicity_score_fn
         from neuronauts.shared_grammar_model import SharedGrammarModel, save_shared_grammar_model
 
         with tempfile.TemporaryDirectory() as d:

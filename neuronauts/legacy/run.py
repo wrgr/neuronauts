@@ -9,10 +9,10 @@ from functools import lru_cache
 import numpy as np
 
 from .agent import AgentConfig
-from .assembly import CandidateMerge, beam_search_merge_groups, gat_refine_connectivity, logit_to_probability, repartition_low_atomicity_group
-from .dijkstra import BridgeGraph
+from ..assembly import CandidateMerge, beam_search_merge_groups, gat_refine_connectivity, logit_to_probability, repartition_low_atomicity_group
+from ..dijkstra import BridgeGraph
 from .fields import compute_exploration_field, compute_membrane_field, compute_membrane_vectors
-from .fetch import (
+from ..fetch import (
     RealBoxSpec,
     SyntheticBenchmarkConfig,
     fetch_synapses,
@@ -20,11 +20,11 @@ from .fetch import (
     load_cached_membrane,
     make_test_volume,
 )
-from .grammar import DEFAULT_PATH_FEATURE_MODE, PATH_ISO, featurize_path_points
-from .helpers import UnionFind
-from .line_graph import LineGraphMetrics, evaluate
-from ._scipy_compat import cKDTree
-from .merge import ConnectivityGraph, MergedNeuron
+from ..grammar import DEFAULT_PATH_FEATURE_MODE, PATH_ISO, featurize_path_points
+from ..helpers import UnionFind
+from ..line_graph import LineGraphMetrics, evaluate
+from .._scipy_compat import cKDTree
+from ..merge import ConnectivityGraph, MergedNeuron
 from .vectorized import run_agents_vectorized
 
 # Lazy imports for CellGNN (only needed when --cell-gnn-checkpoint is set)
@@ -229,7 +229,7 @@ def _path_sequence_from_points(
 
 @lru_cache(maxsize=4)
 def _load_shared_merge_score_fn(checkpoint_path: str):
-    from .shared_grammar_model import load_shared_grammar_model
+    from ..shared_grammar_model import load_shared_grammar_model
 
     import torch
 
@@ -252,8 +252,8 @@ def _load_shared_merge_score_fn(checkpoint_path: str):
 
 @lru_cache(maxsize=4)
 def _load_shared_atomicity_score_fn(checkpoint_path: str):
-    from .shared_grammar_model import load_shared_grammar_model
-    from .training_batches import pad_nested_path_sequences
+    from ..shared_grammar_model import load_shared_grammar_model
+    from ..training_batches import pad_nested_path_sequences
 
     import torch
 
@@ -1408,8 +1408,8 @@ def run(
 
     # --- CellGNN re-partition (runs after beam search, uses its groups as scaffold) ---
     if cell_gnn_checkpoint is not None:
-        from .cell_graph import cell_gnn_assembly, load_cell_gnn
-        from .fetch import SynapseTable
+        from ..cell_graph import cell_gnn_assembly, load_cell_gnn
+        from ..fetch import SynapseTable
         t_gnn = time.time()
         if verbose:
             print("CellGNN re-partition …")
@@ -1450,17 +1450,17 @@ def run(
 
     # --- PR 4: Global GAT refinement ---
     if gat_assembly_checkpoint is not None:
-        from .shared_grammar_model import load_global_assembly_gat
+        from ..shared_grammar_model import load_global_assembly_gat
         t3 = time.time()
         gat_model = load_global_assembly_gat(gat_assembly_checkpoint)
         # Reuse the path encoder from the shared grammar checkpoint when available,
         # otherwise build a minimal encoder consistent with default dimensions.
         if shared_grammar_checkpoint:
-            from .shared_grammar_model import load_shared_grammar_model
+            from ..shared_grammar_model import load_shared_grammar_model
             _sgm = load_shared_grammar_model(shared_grammar_checkpoint)
             _enc = _sgm.path_encoder
         else:
-            from .shared_grammar_model import SharedGrammarModel
+            from ..shared_grammar_model import SharedGrammarModel
             _enc = SharedGrammarModel(
                 input_dim=6,
                 path_feature_mode=DEFAULT_PATH_FEATURE_MODE,

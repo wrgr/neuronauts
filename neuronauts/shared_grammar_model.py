@@ -684,8 +684,8 @@ def _generate_gat_example(
     """
     import numpy as np
     from .fetch import SyntheticBenchmarkConfig, make_test_volume
-    from .run import HeuristicConfig, _build_graph, simulate_paths_and_hits
-    from .fields import compute_membrane_field
+    from .legacy.run import HeuristicConfig, _build_graph, simulate_paths_and_hits
+    from .legacy.fields import compute_membrane_field
 
     min_side = min(volume_shape)
     # Shrink anchor_margin so synapses fit inside small volumes.
