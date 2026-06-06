@@ -42,6 +42,14 @@ from .path_dataset import (
     train_path_encoder,
 )
 from .path_edge_encoder import PathEdgeEncoder, pad_path_sequences
+from .data.fragments import extract_fragments_for_region, skeleton_to_fragment
+from .represent.dna import (
+    TreeDNAEncoder,
+    encode_fragments,
+    featurize_fragment,
+    sample_tree_paths,
+    train_dna_encoder,
+)
 
 __all__ = [
     # CellGNN architecture & training
@@ -88,4 +96,13 @@ __all__ = [
     "CandidateMerge",
     "logit_to_probability",
     "probability_to_log_odds",
+    # Data stage: skeleton → Fragment
+    "extract_fragments_for_region",
+    "skeleton_to_fragment",
+    # Represent stage: Fragment → tree-DNA embedding
+    "TreeDNAEncoder",
+    "encode_fragments",
+    "featurize_fragment",
+    "sample_tree_paths",
+    "train_dna_encoder",
 ]

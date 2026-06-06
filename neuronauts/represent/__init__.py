@@ -1,15 +1,17 @@
-"""Representation stage: Fragment → learned DNA embedding (SkeletonGNN)."""
+"""Representation stage: Fragment → learned tree-DNA embedding."""
 
-from .skeleton_gnn import (
-    SkeletonGNN,
-    encode_fragments_gnn,
-    fragment_to_tensors,
-    train_skeleton_gnn,
+from .dna import (
+    TreeDNAEncoder,
+    encode_fragments,
+    featurize_fragment,
+    sample_tree_paths,
+    train_dna_encoder,
 )
 
 __all__ = [
-    "SkeletonGNN",
-    "encode_fragments_gnn",
-    "fragment_to_tensors",
-    "train_skeleton_gnn",
+    "TreeDNAEncoder",
+    "encode_fragments",
+    "featurize_fragment",
+    "sample_tree_paths",
+    "train_dna_encoder",
 ]
