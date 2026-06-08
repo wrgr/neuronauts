@@ -23,7 +23,9 @@ boundary in the global synapse graph.
 - [x] `tests/test_data_fragments.py` + `tests/test_represent_dna.py`
 - [x] `neuronauts/represent/enrich.py` — `build_synapse_dna_matrix`, `synapse_pair_dna_scores`, `spatial_proximity_scores`, `evaluate_dna_auc`
 - [x] `tests/test_represent_enrich.py` — 12 tests including AUC ≥ 0.9 with orthogonal DNA
-- [ ] Ablation: train encoder on real data, measure same-neuron AUC vs 6-scalar CellGNN baseline
+- [x] `scripts/ablate_dna.py` — end-to-end ablation script (`--synthetic` + `--archive` modes)
+- [~] Ablation synthetic demo: 12 neurons × 5 roots, uniform-random synapses → DNA AUC 0.685 vs spatial baseline 0.498 (✓ DNA beats proximity); pos_cos 0.93→0.96 / neg_cos 0.93→0.79 over 80 epochs
+- [ ] Ablation on real data: run `python scripts/ablate_dna.py --archive <skeleton.npz> --region <region.npz>` once CAVE/kimimaro pipeline is populated
 
 ## Phase 2 — NEXT
 Global synapse graph (no box boundary) with DNA node features → CellGNN-style

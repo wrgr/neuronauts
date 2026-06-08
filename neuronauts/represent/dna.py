@@ -388,23 +388,29 @@ def train_dna_encoder(
     optimizer = torch.optim.Adam(encoder.parameters(), lr=lr)
     triplet_loss_fn = torch.nn.TripletMarginLoss(margin=margin, p=2)
 
-    # Build index: base_root_id → list[Fragment] (clean only)
-    root_to_frags: dict[int, list[Fragment]] = {}
-    for frag_list in fragment_lists:
-        for frag in frag_list:
-            rid = frag.base_root_id
-            if root_label_map is not None:
-                labels = root_label_map.get(rid, set())
-                if len(labels) != 1:
-                    continue  # contaminated or unknown — skip
-            root_to_frags.setdefault(rid, []).append(frag)
+    # Build index.
+    # When root_label_map is provided: group fragments by label_root (same-neuron
+    # = positive).  When absent: group by base_root_id (backward-compat, requires
+    # multiple fragments per seg root).
+    group_to_frags: dict[int, list[Fragment]] = {}
+    all_frags_flat: list[Fragment] = [f for fl in fragment_lists for f in fl]
+    for frag in all_frags_flat:
+        rid = frag.base_root_id
+        if root_label_map is not None:
+            labels = root_label_map.get(rid, set())
+            if len(labels) != 1:
+                continue  # contaminated or unknown — skip
+            group_key = next(iter(labels))  # label_root: same-neuron = positive
+        else:
+            group_key = rid  # fall back to seg-root identity
+        group_to_frags.setdefault(group_key, []).append(frag)
 
-    valid_roots = [rid for rid, frags in root_to_frags.items() if len(frags) >= 2]
-    all_roots = list(root_to_frags.keys())
+    valid_groups = [gid for gid, frags in group_to_frags.items() if len(frags) >= 2]
+    all_groups = list(group_to_frags.keys())
 
-    if len(valid_roots) < 2:
+    if len(valid_groups) < 2:
         raise ValueError(
-            f"Need ≥2 roots with ≥2 clean fragments each; got {len(valid_roots)}. "
+            f"Need ≥2 neuron groups with ≥2 clean fragments each; got {len(valid_groups)}. "
             "Check root_label_map or use more regions."
         )
 
@@ -416,22 +422,22 @@ def train_dna_encoder(
         pos_cosines: list[float] = []
         neg_cosines: list[float] = []
 
-        n_triplets = max(batch_size, len(valid_roots) * 4)
+        n_triplets = max(batch_size, len(valid_groups) * 4)
         anchors: list[Fragment] = []
         positives: list[Fragment] = []
         negatives: list[Fragment] = []
 
         for _ in range(n_triplets):
-            anchor_root = valid_roots[int(rng.integers(len(valid_roots)))]
-            frags = root_to_frags[anchor_root]
+            anchor_group = valid_groups[int(rng.integers(len(valid_groups)))]
+            frags = group_to_frags[anchor_group]
             ia, ip = rng.choice(len(frags), size=2, replace=False)
             anchors.append(frags[int(ia)])
             positives.append(frags[int(ip)])
 
-            neg_root = anchor_root
-            while neg_root == anchor_root:
-                neg_root = all_roots[int(rng.integers(len(all_roots)))]
-            neg_frags = root_to_frags[neg_root]
+            neg_group = anchor_group
+            while neg_group == anchor_group:
+                neg_group = all_groups[int(rng.integers(len(all_groups)))]
+            neg_frags = group_to_frags[neg_group]
             negatives.append(neg_frags[int(rng.integers(len(neg_frags)))])
 
         for start in range(0, n_triplets, batch_size):
