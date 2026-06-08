@@ -17,14 +17,15 @@ cache, and test your stage in isolation.
 |-------|-------------------|-----------------|---------------|
 | `data/` | `Region` | `fetch.py`, `dataset_builder.py`, `fetch_skeletons.py`, `data/fragments.py` | see [`docs/stage_ownership.md`](docs/stage_ownership.md) |
 | `represent/` | `Fragment` (tree-DNA) | `represent/dna.py`, `represent/enrich.py`, `grammar.py` | ″ |
-| `assemble/` | `NeuronHypothesis` | `cell_graph.py`, `assembly.py`, `merge.py` | ″ |
+| `assemble/` | `NeuronHypothesis` | `assemble/global_synapse_graph.py`, `assemble/synapse_gnn.py`, `cell_graph.py` (CellGNN backbone + legacy box-local) | ″ |
 | `connectome/` | `ConnectomeGraph` | `experiments/soma_graph/`, `shared_grammar_model.py` (GAT) | ″ |
 | `evaluate/` | metrics | `line_graph.py` | ″ |
 
-The `data/` and `represent/` package directories are live. The `assemble/`
-package is the Phase 2 target; code still lives in `cell_graph.py` until that
-split lands. Keep new code on the correct stage side even before the monolith
-splits.
+The `data/`, `represent/`, and `assemble/` package directories are all live.
+`assemble/global_synapse_graph.py` and `assemble/synapse_gnn.py` implement the
+Phase 2 global pipeline. `cell_graph.py` remains the source for `CellGNN` and
+`partition_from_embeddings`, which `assemble/` imports directly. Keep new
+assembly code in `assemble/` rather than adding to `cell_graph.py`.
 
 ## Architecture overview
 
@@ -32,9 +33,11 @@ See [`docs/architecture.md`](docs/architecture.md) for a detailed walkthrough of
 - Why the box-local CellGNN has a hard F1 ceiling (~0.27) and what causes it
 - How tree-DNA (learned skeleton morphology embeddings) breaks that ceiling
 - The three-stage pipeline: data → represent → assemble
+- Each stage's typed artifact contract (input/output schema)
 - The DNA encoder design (path sampling, Transformer, triplet loss)
 - The global synapse graph design (k-NN, DNA node features, message passing)
-- Ablation results validating the approach
+- Ablation results validating the approach (Phase 1 and Phase 2)
+- Phase 2 open questions and what comes next
 
 ## Golden rule: respect the contracts
 
@@ -78,6 +81,7 @@ pytest tests/test_schemas.py -q
 pytest tests/test_data_fragments.py -q
 pytest tests/test_represent_dna.py -q
 pytest tests/test_represent_enrich.py -q
+pytest tests/test_assemble_global.py -q
 ```
 
 The `pytest -m "not legacy"` pattern is the default for day-to-day development.
@@ -107,10 +111,10 @@ python scripts/ablate_dna.py --synthetic
 python scripts/half_split_ablation.py --n-neurons 40
 ```
 
-**Phase 2 — Global GNN:**
+**Phase 2 — Global GNN (implemented):**
 
 ```bash
-# Synthetic global GNN ablation
+# Synthetic global GNN ablation (no network required)
 python scripts/global_gnn_ablation.py --synthetic
 
 # Real-data global GNN ablation (requires CAVE auth token)
@@ -121,6 +125,11 @@ Expected Phase 1 results on the hard-split ablation (40 real minnie65 neurons):
 - Spatial baseline AUC: ~0.466 (chance)
 - DNA AUC random init: ~0.728
 - DNA AUC trained (80 epochs): ~0.897 (+0.169)
+
+Expected Phase 2 results on the synthetic ablation:
+- DNA AUC random init: ~0.787
+- DNA AUC trained: ~0.863
+- GNN AUC (DNA → GNN): ~0.914 (+0.051 over DNA alone)
 
 ## Stage ownership
 
