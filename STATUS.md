@@ -38,6 +38,29 @@ boundary in the global synapse graph.
   - Training signal: pos_cos 0.95→0.87, neg_cos 0.95→0.64 — encoder learns to align same-neuron halves
   - **Interpretation**: the encoder learns genuine morphological identity from partial skeleton views, directly validating the Phase 2 multi-root matching use case
 
+## Within-type evaluation — IN PROGRESS
+
+The honest precision test: all negative pairs are same-cell-type neurons.
+Scripts: `scripts/within_type_ablation.py`, `scripts/half_split_ablation.py` (`--n-chunks N`)
+Cell type table: `aibs_metamodel_celltypes_v661_merged.csv.gz` (19,735 L2/3 pyramidals at v1412)
+
+### Results so far
+
+**4-chunk within-type (30 × 23P, quarter-skeletons):**
+  - Random init AUC: **0.599** (harder start than cross-type — same-type neurons look alike)
+  - Trained AUC: **0.687** (+0.089) — below 0.75 threshold; below individual-identity bar
+  - Spatial baseline: 0.488 (chance)
+  - neg_cos barely separates (0.908 → 0.822 at ep 80, noisy) — limited signal in quarter-skeletons
+  - **Interpretation**: quarter-skeletons are too small for reliable individual discrimination with
+    current 6-scalar features. Richer features (multi-scale, spine density) likely needed.
+
+**Bisection within-type (40 × 23P):** *running*
+
+### What to watch
+- **Bisection AUC ≥ 0.75** → individual morphological identity is learnable at half-skeleton scale
+- **Bisection AUC < 0.75** → features are type-discriminative only; need richer representations
+- Gap between bisection and 4-chunk reveals the fragment-size sensitivity curve
+
 ## Phase 2 — IN PROGRESS
 Branch: `claude/tree-dna-phase-1-G1DNn`
 
