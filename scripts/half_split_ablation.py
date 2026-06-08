@@ -177,6 +177,44 @@ def split_skeleton_balanced(
     return (vA, eA, rA, epA), (vB, eB, rB, epB)
 
 
+def split_skeleton_n_ways(
+    verts: np.ndarray,
+    edges: np.ndarray,
+    radii: np.ndarray,
+    n_chunks: int,
+    *,
+    min_chunk_verts: int = 15,
+) -> list[tuple]:
+    """Split a skeleton into n_chunks pieces by recursive balanced bisection.
+
+    At each step the largest remaining piece is bisected at its balance edge.
+    Returns a list of (verts, edges, radii, endpoints) tuples, one per chunk.
+    The list may be shorter than n_chunks if pieces become too small to split.
+    """
+    pieces = [split_skeleton_balanced(verts, edges, radii)]
+    # pieces is a list of (vA,eA,rA,epA),(vB,eB,rB,epB) pairs initially;
+    # flatten to list of individual pieces.
+    pieces = list(pieces[0])  # → [(vA,eA,rA,epA), (vB,eB,rB,epB)]
+
+    while len(pieces) < n_chunks:
+        # Find the largest piece that can still be split.
+        splittable = [
+            (i, p) for i, p in enumerate(pieces) if len(p[0]) >= min_chunk_verts * 2
+        ]
+        if not splittable:
+            break
+        # Pick the largest.
+        idx, piece = max(splittable, key=lambda x: len(x[1][0]))
+        halves = split_skeleton_balanced(piece[0], piece[1], piece[2])
+        # Reject if either half is below min size.
+        if len(halves[0][0]) < min_chunk_verts or len(halves[1][0]) < min_chunk_verts:
+            break
+        pieces.pop(idx)
+        pieces.extend(halves)
+
+    return pieces
+
+
 # ---------------------------------------------------------------------------
 # Build world
 # ---------------------------------------------------------------------------
@@ -188,18 +226,24 @@ def build_split_world(
     rng: np.random.Generator,
     max_verts: int = 5000,
     min_half_verts: int = 15,
+    n_chunks: int = 2,
 ) -> tuple:
-    """Fetch skeletons, bisect each, return Region + Fragments + root_label_map."""
+    """Fetch skeletons, split each into n_chunks pieces, return Region + Fragments + root_label_map.
+
+    n_chunks=2 (default) is the original bisection.  Higher values produce smaller
+    fragments, simulating more aggressively fragmented unproofread data.
+    All chunks from one neuron share the same label_root (positive training pairs).
+    """
     from neuronauts.schemas import Fragment, Region
 
-    print(f"\nFetching and bisecting skeletons (target {n_target} neurons) …")
+    chunk_word = "bisect" if n_chunks == 2 else f"{n_chunks}-way split"
+    print(f"\nFetching and {chunk_word}ing skeletons (target {n_target} neurons) …")
     fragments: list[Fragment] = []
     root_label_map: dict[int, set[int]] = {}
-    all_pre_pts: list[np.ndarray] = []
     all_roots_list: list[int] = []
     syn_idx = 0
     label_root_counter = 0
-    frag_id_counter = 10_000_000  # avoid collision with real root IDs
+    frag_id_counter = 10_000_000
 
     for root_id in root_ids:
         if label_root_counter >= n_target:
@@ -208,26 +252,28 @@ def build_split_world(
         if result is None:
             continue
         verts, edges, radii = result
-        if len(verts) < 30 or len(verts) > max_verts:
+        if len(verts) < 30 * n_chunks or len(verts) > max_verts:
             continue
 
-        halves = split_skeleton_balanced(verts, edges, radii)
-        (vA, eA, rA, epA), (vB, eB, rB, epB) = halves
-
-        if len(vA) < min_half_verts or len(vB) < min_half_verts:
+        chunks = split_skeleton_n_ways(verts, edges, radii, n_chunks,
+                                       min_chunk_verts=min_half_verts)
+        if len(chunks) < 2:
+            continue
+        if any(len(c[0]) < min_half_verts for c in chunks):
             continue
 
         label_root_counter += 1
         label_root = label_root_counter
 
-        for (sv, se, sr, sep), side in [(halves[0], "A"), (halves[1], "B")]:
-            sv, se, sr, sep = sv, se, sr, sep  # unpack
+        chunk_sizes = "/".join(str(len(c[0])) for c in chunks)
+        print(f"  [{label_root_counter:3d}] root={root_id}  V={len(verts)}"
+              f"  chunks={chunk_sizes} vertices")
+
+        for sv, se, sr, sep in chunks:
             fid = frag_id_counter; frag_id_counter += 1
             syn_indices = list(range(syn_idx, syn_idx + synapses_per_half))
             syn_idx += synapses_per_half
-            all_pre_pts.append(np.zeros((synapses_per_half, 3), dtype=np.float32))  # filled below
             all_roots_list.extend([label_root] * synapses_per_half)
-
             root_label_map[fid] = {label_root}
             frag = Fragment(
                 fragment_id=fid,
@@ -242,15 +288,12 @@ def build_split_world(
             ).validate()
             fragments.append(frag)
 
-        print(f"  [{label_root_counter:3d}] root={root_id}  V={len(verts)}"
-              f"  halves={len(vA)}/{len(vB)} vertices")
         time.sleep(0.05)
 
     if not fragments:
         raise RuntimeError("No usable skeletons fetched")
 
     n_syn = syn_idx
-    # Uniform-random synapse positions in a shared bbox
     pts = rng.uniform(0, 1_000_000, (n_syn, 3)).astype(np.float32)
     post_pts = pts + rng.normal(0, 300, (n_syn, 3)).astype(np.float32)
 
@@ -266,7 +309,7 @@ def build_split_world(
         post_root_id=np.zeros(n_syn, dtype=np.int64),
         synapse_id=np.arange(n_syn, dtype=np.int64),
     )
-    print(f"  → {len(fragments)} half-fragments ({n_syn} synapses, spatial baseline ≈ chance)")
+    print(f"  → {len(fragments)} fragments ({n_syn} synapses, spatial baseline ≈ chance)")
     return region, fragments, root_label_map
 
 
@@ -278,6 +321,8 @@ def main() -> int:
     import argparse
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--n-neurons", type=int, default=40)
+    p.add_argument("--n-chunks", type=int, default=2,
+                   help="Number of pieces to cut each skeleton into (default 2 = bisect)")
     p.add_argument("--synapses-per-half", type=int, default=10)
     p.add_argument("--epochs", type=int, default=80)
     p.add_argument("--lr", type=float, default=1e-3)
@@ -314,6 +359,7 @@ def main() -> int:
         n_target=args.n_neurons,
         synapses_per_half=args.synapses_per_half,
         rng=rng,
+        n_chunks=args.n_chunks,
     )
 
     # Run ablation via shared helper
