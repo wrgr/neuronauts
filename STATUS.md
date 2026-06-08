@@ -31,7 +31,12 @@ boundary in the global synapse graph.
   - DNA AUC trained (60 epochs): **1.000** (ceiling)
   - Training signal: pos_cos 0.88→0.74, neg_cos 0.79→0.37 — genuine discriminative learning even at AUC ceiling
   - **Interpretation**: 30 diverse real neurons are morphologically so distinct that DNA trivially separates them. Harder evaluation (same-cell-type cohorts, unproofread multi-root data) is needed to see training benefit beyond ceiling.
-- [ ] Hard-split ablation: split each neuron skeleton into two halves; test if trained encoder assigns higher cosine similarity to same-neuron halves than cross-neuron pairs (relevant for Phase 2's multi-root matching problem)
+- [x] **Hard-split ablation (40 real minnie65 neurons, each skeleton bisected at balance edge)**:
+  - Spatial baseline (uniform synapses): **0.466** (chance)
+  - DNA AUC random init: **0.728** — halves of the same neuron are only partially similar without training
+  - DNA AUC trained (80 epochs): **0.897** (+0.169) ✓ DNA beats proximity by **+0.431**
+  - Training signal: pos_cos 0.95→0.87, neg_cos 0.95→0.64 — encoder learns to align same-neuron halves
+  - **Interpretation**: the encoder learns genuine morphological identity from partial skeleton views, directly validating the Phase 2 multi-root matching use case
 
 ## Phase 2 — NEXT
 Global synapse graph (no box boundary) with DNA node features → CellGNN-style
