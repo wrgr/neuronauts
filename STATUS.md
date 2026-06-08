@@ -54,12 +54,40 @@ Cell type table: `aibs_metamodel_celltypes_v661_merged.csv.gz` (19,735 L2/3 pyra
   - **Interpretation**: quarter-skeletons are too small for reliable individual discrimination with
     current 6-scalar features. Richer features (multi-scale, spine density) likely needed.
 
-**Bisection within-type (40 × 23P):** *running*
+**Bisection within-type (40 × 23P, half-skeletons):**
+  - Random init AUC: **0.740** — nearly identical to cross-type bisection (0.728!)
+  - Trained AUC: **0.725** (−0.015 — training *hurts*, encoder collapses)
+  - Spatial baseline: 0.475
+  - Training signal: pos_cos 0.993, neg_cos 0.993 at epoch 80 — fully collapsed, no separation
+  - **Interpretation**: the 6-scalar path features carry individual-level signal at random init
+    (0.74 is above chance and comparable to the cross-type start). BUT the triplet loss fails
+    to discriminate — it collapses all within-type pairs to the same region of embedding space
+    because positives and negatives look too similar for the loss to find a gradient direction.
 
-### What to watch
-- **Bisection AUC ≥ 0.75** → individual morphological identity is learnable at half-skeleton scale
-- **Bisection AUC < 0.75** → features are type-discriminative only; need richer representations
-- Gap between bisection and 4-chunk reveals the fragment-size sensitivity curve
+### Summary table
+
+| Experiment | Random init AUC | Trained AUC | Δ | neg_cos (final) |
+|---|---|---|---|---|
+| Cross-type bisection (40 neurons) | 0.728 | 0.897 | +0.169 | 0.64 |
+| Within-type bisection (40 × 23P) | 0.740 | 0.725 | −0.015 | 0.993 (collapsed) |
+| Within-type 4-chunk (30 × 23P) | 0.599 | 0.687 | +0.089 | 0.822 (partial) |
+
+### Diagnosis
+The bottleneck is the **training recipe**, not the features. The 6-scalar features
+already encode enough individual morphological variation to reach 0.74 AUC at random
+init — matching the cross-type starting point. The problem: triplet loss with within-type
+negatives collapses, because same-type fragments are so similar that pos and neg pairs
+land at the same angle (neg_cos → 0.993) and the loss gradient vanishes.
+
+### Next steps for the training recipe
+- **Hard negative mining**: sample negatives with highest current cosine similarity instead
+  of random — the encoder is never forced to push apart the nearby pairs it's confusing
+- **InfoNCE / NT-Xent loss** (SimCLR-style): normalised temperature-scaled cross-entropy
+  doesn't suffer from the same collapse mode as triplet loss; within-batch negatives provide
+  denser gradient signal
+- **Larger margin**: current margin=1.0 may be too loose; try margin=2.0 to enforce wider separation
+- **More paths** (n_paths=16 instead of 6): larger variance in path samples per fragment
+  stabilises the training signal for within-type cases
 
 ## Phase 2 — IN PROGRESS
 Branch: `claude/tree-dna-phase-1-G1DNn`
