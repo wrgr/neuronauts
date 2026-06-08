@@ -38,10 +38,19 @@ boundary in the global synapse graph.
   - Training signal: pos_cos 0.95→0.87, neg_cos 0.95→0.64 — encoder learns to align same-neuron halves
   - **Interpretation**: the encoder learns genuine morphological identity from partial skeleton views, directly validating the Phase 2 multi-root matching use case
 
-## Phase 2 — NEXT
-Global synapse graph (no box boundary) with DNA node features → CellGNN-style
-GNN → neuron hypotheses that span regions.  The box-local CellGNN assembler is
-retired; `assemble/fragment_graph.py` replaces it.
+## Phase 2 — IN PROGRESS
+Branch: `claude/tree-dna-phase-1-G1DNn`
+
+**Architecture:** global synapse graph (k-NN, no box boundary) with DNA node
+features → CellGNN message-passing → per-synapse embeddings → cluster
+assignments.
+
+### Checklist
+- [x] `neuronauts/assemble/global_synapse_graph.py` — `GlobalSynapseGraph`, `build_global_synapse_graph`
+- [x] `neuronauts/assemble/synapse_gnn.py` — `train_global_gnn`, `run_global_gnn`, `assemble_neurons`
+- [x] `tests/test_assemble_global.py` — 10 tests (graph shape, edge invariants, GNN training/inference)
+- [x] `scripts/global_gnn_ablation.py` — end-to-end script (`--synthetic` + real-data mode)
+- [ ] Real-data GNN ablation on hard-split skeletons (DNA → GNN AUC improvement)
 
 ## See also
 - `docs/roadmap_global_assembly.md` — canonical north-star roadmap

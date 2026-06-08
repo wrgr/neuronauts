@@ -56,6 +56,13 @@ from .represent.enrich import (
     spatial_proximity_scores,
     synapse_pair_dna_scores,
 )
+from .assemble import (
+    GlobalSynapseGraph,
+    assemble_neurons,
+    build_global_synapse_graph,
+    run_global_gnn,
+    train_global_gnn,
+)
 
 __all__ = [
     # CellGNN architecture & training
@@ -116,4 +123,10 @@ __all__ = [
     "evaluate_dna_auc",
     "spatial_proximity_scores",
     "synapse_pair_dna_scores",
+    # Assemble stage: global synapse graph + GNN
+    "GlobalSynapseGraph",
+    "assemble_neurons",
+    "build_global_synapse_graph",
+    "run_global_gnn",
+    "train_global_gnn",
 ]
