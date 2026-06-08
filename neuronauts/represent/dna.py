@@ -276,21 +276,30 @@ class TreeDNAEncoder:
                     dev = next(self.encoder.parameters()).device
                     return torch.zeros(len(path_features_batch), self.output_dim, device=dev)
 
-                max_T = max(a.shape[0] for a in all_arrays)
+                # Truncate to encoder's max_path_len so positional encoding fits.
+                max_path_len: int = self.encoder.max_len  # type: ignore[attr-defined]
+                all_arrays = [a[:max_path_len] for a in all_arrays]
+
                 D = all_arrays[0].shape[1]
                 N = len(all_arrays)
-
                 dev = next(self.encoder.parameters()).device
-                padded = torch.zeros(N, max_T, D, device=dev)
-                pad_mask = torch.ones(N, max_T, dtype=torch.bool, device=dev)
 
-                for i, arr in enumerate(all_arrays):
-                    T = arr.shape[0]
-                    padded[i, :T] = torch.from_numpy(arr).to(dev)
-                    pad_mask[i, :T] = False  # False = not padding
-
-                # Encode: [N_total_paths, output_dim]
-                path_embs = self.encoder(padded, pad_mask)
+                # Encode in chunks to bound memory: each chunk processes at most
+                # _PATH_CHUNK paths through the Transformer (attention scales O(T²·N)).
+                _PATH_CHUNK = 32
+                all_embs_list: list[torch.Tensor] = []
+                for chunk_start in range(0, N, _PATH_CHUNK):
+                    chunk = all_arrays[chunk_start : chunk_start + _PATH_CHUNK]
+                    max_T = max(a.shape[0] for a in chunk)
+                    nc = len(chunk)
+                    padded = torch.zeros(nc, max_T, D, device=dev)
+                    pad_mask = torch.ones(nc, max_T, dtype=torch.bool, device=dev)
+                    for i, arr in enumerate(chunk):
+                        T = arr.shape[0]
+                        padded[i, :T] = torch.from_numpy(arr).to(dev)
+                        pad_mask[i, :T] = False
+                    all_embs_list.append(self.encoder(padded, pad_mask))
+                path_embs = torch.cat(all_embs_list, dim=0)
 
                 # Mean-pool per fragment
                 offset = 0
@@ -405,50 +414,85 @@ def train_dna_encoder(
             group_key = rid  # fall back to seg-root identity
         group_to_frags.setdefault(group_key, []).append(frag)
 
-    valid_groups = [gid for gid, frags in group_to_frags.items() if len(frags) >= 2]
+    # Groups with ≥2 fragments can form exact positive pairs.
+    # Single-fragment groups use path augmentation: the same fragment is
+    # featurized twice with different random seeds, producing two distinct
+    # views of the same skeleton.  Negatives always come from a different group.
+    valid_groups = [gid for gid, frags in group_to_frags.items() if len(frags) >= 1]
     all_groups = list(group_to_frags.keys())
 
     if len(valid_groups) < 2:
         raise ValueError(
-            f"Need ≥2 neuron groups with ≥2 clean fragments each; got {len(valid_groups)}. "
+            f"Need ≥2 neuron groups with ≥1 clean fragment each; got {len(valid_groups)}. "
             "Check root_label_map or use more regions."
         )
 
     rng = np.random.default_rng(42)
     history: dict[str, list[float]] = {"loss": [], "pos_cosine": [], "neg_cosine": []}
 
+    # All unique fragments used in training
+    all_train_frags: list[Fragment] = [f for frags in group_to_frags.values() for f in frags]
+    frag_to_idx: dict[int, int] = {id(f): i for i, f in enumerate(all_train_frags)}
+    fm = encoder.feature_mode
+
     for epoch in range(n_epochs):
         epoch_losses: list[float] = []
         pos_cosines: list[float] = []
         neg_cosines: list[float] = []
 
-        n_triplets = max(batch_size, len(valid_groups) * 4)
-        anchors: list[Fragment] = []
-        positives: list[Fragment] = []
-        negatives: list[Fragment] = []
+        # Pre-cache path features for every fragment once per epoch (avoids
+        # rebuilding adjacency on every featurize_fragment call in the inner loop).
+        epoch_seed = int(rng.integers(2**31))
+        cached_feats: list[list[np.ndarray]] = [
+            featurize_fragment(f, n_paths=n_paths, feature_mode=fm,
+                               rng=np.random.default_rng(epoch_seed + i))
+            for i, f in enumerate(all_train_frags)
+        ]
+        # For path augmentation (positives): cache a second independent view.
+        aug_seed = int(rng.integers(2**31))
+        aug_feats: list[list[np.ndarray]] = [
+            featurize_fragment(f, n_paths=n_paths, feature_mode=fm,
+                               rng=np.random.default_rng(aug_seed + i))
+            for i, f in enumerate(all_train_frags)
+        ]
 
-        for _ in range(n_triplets):
+        n_triplets = max(batch_size, len(valid_groups) * 4)
+        a_indices: list[int] = []
+        p_indices: list[int] = []
+        p_use_aug: list[bool] = []
+        n_indices: list[int] = []
+
+        for step_i in range(n_triplets):
             anchor_group = valid_groups[int(rng.integers(len(valid_groups)))]
             frags = group_to_frags[anchor_group]
-            ia, ip = rng.choice(len(frags), size=2, replace=False)
-            anchors.append(frags[int(ia)])
-            positives.append(frags[int(ip)])
+            if len(frags) >= 2:
+                ia, ip = rng.choice(len(frags), size=2, replace=False)
+                a_indices.append(frag_to_idx[id(frags[int(ia)])])
+                p_indices.append(frag_to_idx[id(frags[int(ip)])])
+                p_use_aug.append(False)
+            else:
+                # Path augmentation: anchor uses cached_feats, positive uses aug_feats
+                idx = frag_to_idx[id(frags[0])]
+                a_indices.append(idx)
+                p_indices.append(idx)
+                p_use_aug.append(True)
 
             neg_group = anchor_group
             while neg_group == anchor_group:
                 neg_group = all_groups[int(rng.integers(len(all_groups)))]
             neg_frags = group_to_frags[neg_group]
-            negatives.append(neg_frags[int(rng.integers(len(neg_frags)))])
+            n_indices.append(frag_to_idx[id(neg_frags[int(rng.integers(len(neg_frags)))])])
 
         for start in range(0, n_triplets, batch_size):
-            ba = anchors[start : start + batch_size]
-            bp = positives[start : start + batch_size]
-            bn = negatives[start : start + batch_size]
+            ai = a_indices[start : start + batch_size]
+            pi = p_indices[start : start + batch_size]
+            ni = n_indices[start : start + batch_size]
+            use_aug = p_use_aug[start : start + batch_size]
 
-            fm = encoder.feature_mode
-            a_emb = F.normalize(encoder([featurize_fragment(f, n_paths=n_paths, feature_mode=fm) for f in ba]), dim=-1)
-            p_emb = F.normalize(encoder([featurize_fragment(f, n_paths=n_paths, feature_mode=fm) for f in bp]), dim=-1)
-            n_emb = F.normalize(encoder([featurize_fragment(f, n_paths=n_paths, feature_mode=fm) for f in bn]), dim=-1)
+            a_emb = F.normalize(encoder([cached_feats[i] for i in ai]), dim=-1)
+            p_emb = F.normalize(encoder([aug_feats[i] if u else cached_feats[i]
+                                         for i, u in zip(pi, use_aug)]), dim=-1)
+            n_emb = F.normalize(encoder([cached_feats[i] for i in ni]), dim=-1)
 
             loss = triplet_loss_fn(a_emb, p_emb, n_emb)
             optimizer.zero_grad()
