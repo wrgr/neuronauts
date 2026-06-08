@@ -285,9 +285,9 @@ def test_train_dna_encoder_contamination_mask():
 
 
 def test_train_dna_encoder_insufficient_roots_raises():
-    """Raises ValueError if fewer than 2 clean roots with ≥2 fragments each."""
+    """Raises ValueError if fewer than 2 clean groups with ≥1 fragment each."""
     encoder = TreeDNAEncoder(output_dim=16, n_paths=4, n_layers=1)
-    # Only one valid root
+    # Only one group → can't form negatives
     frags = _make_fragment_set(root_id=1, n_frags=3, seed=0)
     with pytest.raises(ValueError, match="Need ≥2 neuron groups"):
         train_dna_encoder(encoder, [frags], n_epochs=1, n_paths=4)

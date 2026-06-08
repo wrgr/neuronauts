@@ -201,6 +201,7 @@ def run_ablation(
         n_layers=2,
         output_dim=output_dim,
         n_paths=n_paths,
+        max_path_len=128,  # truncate long paths: 128² attention vs 512² = 16× less memory
     )
 
     # --- Baseline: random init (before any training) ----------------------
