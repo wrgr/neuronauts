@@ -289,5 +289,5 @@ def test_train_dna_encoder_insufficient_roots_raises():
     encoder = TreeDNAEncoder(output_dim=16, n_paths=4, n_layers=1)
     # Only one valid root
     frags = _make_fragment_set(root_id=1, n_frags=3, seed=0)
-    with pytest.raises(ValueError, match="Need ≥2 roots"):
+    with pytest.raises(ValueError, match="Need ≥2 neuron groups"):
         train_dna_encoder(encoder, [frags], n_epochs=1, n_paths=4)
