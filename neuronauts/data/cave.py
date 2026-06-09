@@ -301,10 +301,11 @@ def encode_seg_dna(
         # Build a minimal Fragment for the SkeletonGNN encoder
         frag = Fragment(
             fragment_id=seg_id,
+            region_id="v117",
             base_root_id=seg_id,
             vertices_nm=sk.vertices,
             edges=sk.edges,
-            radii_nm=radii,
+            radius_nm=radii,
             endpoints_nm=_leaf_vertices(sk.vertices, sk.edges),
             synapse_indices=np.empty(0, dtype=np.int64),
         )

@@ -45,69 +45,302 @@ style: |
 
 # Synapse Co-Assignment
 
-## Partitioning neurons at connectome scale
+## Reconstructing neurons from a noisy connectome
 
 `neuronauts/coassign/` · branch `claude/synapse-coassign`
 
 ---
 
-# One central insight
+<!-- _class: section-header -->
 
-Synapses are **physical facts**.
-Segment IDs are **bookkeeping**.
-
-<br>
-
-| | Segment IDs | Synapses |
-|---|---|---|
-| Stable across versions? | ❌ Change with every proofread | ✅ Fixed locations in tissue |
-| Unit of measurement? | Version-dependent | Version-independent |
-| Ground truth? | v1412 ≠ v117 ≠ v1433 | Same physical event |
-
-<br>
-
-> "We've spent millions of dollars getting v117. Local is mostly not helpful — the segment evidence is the primary signal."
-
-**The task:** cluster synapses into neuron cliques using v117 segments as *evidence*, not as *nodes*.
+# Part 1 — The Biology
+## What are we actually looking at?
 
 ---
 
-# The problem, precisely
+# What is a connectome?
 
-Given N synapses with noisy v117 segment labels, find a **partition** where every synapse in a cluster belongs to the same physical neuron.
+A **connectome** is a complete wiring diagram of a piece of brain tissue.
+
+<br>
+
+<div class="columns">
+<div>
+
+**Nodes = neurons**
+The computing cells of the brain. Each has a cell body plus long branching wires (axons and dendrites) that stretch up to **millimeters** through tissue.
+
+**Edges = synapses**
+The junctions where one neuron passes a signal to another. Each synapse has a *sender* (pre-synaptic) and a *receiver* (post-synaptic) side.
+
+</div>
+<div>
+
+```
+   neuron A  ╮
+      ╲       ╲
+   synapse     ● ← signal passes here
+      ╱       ╱
+   neuron B  ╯
+```
+
+<br>
+
+The **structure** of this wiring — who connects to whom — is the physical substrate of computation in the brain. It's a prerequisite for understanding vision, memory, movement.
+
+</div>
+</div>
+
+---
+
+# The MICrONS dataset
+
+The largest connectome dataset ever produced:
+
+<br>
+
+| | |
+|---|---|
+| **Volume** | 1 mm³ of mouse visual cortex |
+| **Neurons** | ~200,000 |
+| **Synapses** | ~500,000,000 |
+| **Imaging** | Electron microscopy at 8×8×40 nm/voxel |
+
+<br>
+
+At 8 nm resolution you can see individual cell membranes, the synaptic cleft, and the thinnest axon branches threading between neighbours.
+
+> Reconstructing the wiring diagram from this raw image stack is one of the central open problems in modern neuroscience. **It is fundamentally a large-scale computer vision + clustering problem.**
+
+---
+
+# From pixels to neurons: segmentation
+
+The raw data is a 3D stack of grayscale EM images. To get neurons, a computer-vision pipeline assigns every voxel a **segment ID** (a.k.a. **root ID**) — ideally, all voxels of one neuron share one ID.
 
 <br>
 
 ```
-Synapse 0  (seg 1047)  ──┐
-Synapse 1  (seg 1047)  ──┼──► Neuron A   ← same-seg: strong evidence
-Synapse 2  (seg 2303)  ──┘                ← spatial proximity: DNA similar
-Synapse 3  (seg 9912)  ──────► Neuron B
-Synapse 4  (seg 9912)  ──┐
-Synapse 5  (seg 0041)  ──┴──► Neuron C   ← seg 9912 is a frankenmerge!
+  Raw EM voxels          Segmentation            Goal
+  ┌─┬─┬─┬─┬─┐            ┌─┬─┬─┬─┬─┐
+  │ │ │▓│ │ │            │1│1│▓│2│2│      all voxels of one
+  │ │▓│▓│▓│ │   ──CV──►  │1│▓│▓│▓│2│  →   neuron share one ID
+  │ │ │▓│ │ │            │1│1│▓│2│2│
+  └─┴─┴─┴─┴─┘            └─┴─┴─┴─┴─┘
 ```
 
 <br>
 
-Two kinds of errors we must survive:
+This is **extraordinarily hard**: neurites are thin, membranes are sometimes ambiguous, and a single neuron snakes through hundreds of microns in a complex tree shape. The segmentation is **never perfect**.
 
-- **Splits** — one neuron, many v117 segments → model must merge them
-- **Frankenmerges** — many neurons, one v117 segment → model must ignore same-seg evidence selectively
+---
+
+# Two versions: v117 and v1412
+
+Segmentation is iterated, not one-shot:
+
+<br>
+
+<div class="columns">
+<div>
+
+### v117 — automated
+Computer vision ran once and produced a complete labeling of the volume.
+
+**It is noisy.** This is the cheap, fast, error-prone output.
+
+This is what we have at scale for fresh tissue.
+
+</div>
+<div>
+
+### v1412 — proofread
+Human annotators reviewed v117, found errors, and corrected them.
+
+**This is ground truth.** Expensive — it took years of expert labor.
+
+We train *against* it and evaluate *against* it.
+
+</div>
+</div>
+
+<br>
+
+> The whole point: we paid millions of dollars to produce v117 at scale. We cannot afford to proofread every neuron by hand. **Can a model do the cleanup automatically?**
+
+---
+
+# Two kinds of segmentation error
+
+<div class="columns">
+<div>
+
+### Splits (common)
+One real neuron broken into **many** v117 segments. The CV cut a neuron where it shouldn't have.
+
+```
+   real neuron
+   ████████████
+        ↓ v117
+   ███ ██ ████      ← 3 seg IDs
+   1042 88 9931        for 1 neuron
+```
+
+Fix: **merge** the pieces back together.
+
+</div>
+<div>
+
+### Frankenmerges (rarer, worse)
+**Two** neurons fused into one v117 segment. The CV missed a membrane.
+
+```
+  neuron A   neuron B
+   ███████ + ███████
+        ↓ v117
+   ██████████████     ← 1 seg ID
+       seg 9912          for 2 neurons
+```
+
+Fix: **ignore** the false same-seg evidence.
+
+</div>
+</div>
+
+<br>
+
+Frankenmerges are worse: they inject **false synaptic connections** into the connectome, and a big merged blob looks locally plausible everywhere.
 
 ---
 
 <!-- _class: section-header -->
 
-# Architecture
-## SynapseGraph → GNN → Correlation Clustering
+# Part 2 — The Core Idea
+## Why cluster synapses, not segments?
 
 ---
 
-# Step 1: Build the SynapseGraph
+# The task, in one sentence
 
-Two edge types, one graph:
+> Given a set of synapses, each carrying a **noisy v117 segment label**, decide **which synapses belong to the same neuron**.
 
 <br>
+
+This is a **clustering / partition problem**: group synapses into clusters, one cluster per physical neuron.
+
+```
+Synapse 0  (seg 1047)  ──┐
+Synapse 1  (seg 1047)  ──┼──► Neuron A      same-seg → likely together
+Synapse 2  (seg 2303)  ──┘                  but seg 2303 ≠ 1047 (a split!)
+Synapse 3  (seg 9912)  ──────► Neuron B
+Synapse 4  (seg 9912)  ──┐                  seg 9912 spans two neurons
+Synapse 5  (seg 0041)  ──┴──► Neuron C      (a frankenmerge!)
+```
+
+We must **see through** splits (merge across seg IDs) and **see past** frankenmerges (don't blindly trust same-seg).
+
+---
+
+# The key insight: synapses are invariant
+
+<div class="columns">
+<div>
+
+### Segment IDs
+- Change with **every** round of proofreading
+- v117 root ≠ v1412 root ≠ v1433 root
+- Bookkeeping that shifts under your feet
+
+</div>
+<div>
+
+### Synapses
+- Fixed physical events at fixed locations
+- A synapse is the **same** across all versions
+- The stable ground we build on
+
+</div>
+</div>
+
+<br>
+
+**Consequence:** if we cluster *synapses*, the partition we learn is **stable across segmentation versions**.
+
+That's why every metric in `cluster.py` is defined on **synapse pairs**, never on segment IDs. A result computed on v117 stays valid when v1412 arrives.
+
+> "Synapses are the invariant nodes. We're finding cliques — which optimizes connectivity as intended and leads to natural metrics."
+
+---
+
+# Two channels of evidence
+
+How do we know two synapses share a neuron? Two signals:
+
+<br>
+
+<div class="columns">
+<div>
+
+### 1. Same-segment
+Two synapses with the **same v117 seg ID** are co-continuous in the automated segmentation.
+
+**Strong but noisy.** Correct when v117 is right; broken by splits; poisoned by frankenmerges.
+
+</div>
+<div>
+
+### 2. DNA similarity
+A learned embedding of each segment's 3D **skeleton shape** — its branching, caliber, extent.
+
+**The morphological fingerprint.** Two segments with similar DNA are likely pieces of one neuron — even across a split.
+
+</div>
+</div>
+
+<br>
+
+> "DNA" is an analogy: just as biological DNA encodes an organism's identity, this embedding encodes a neuron piece's morphological identity. Produced by the `SkeletonGNN`. The model learns it from **raw** skeleton vertices — no hand-crafted features.
+
+---
+
+<!-- _class: section-header -->
+
+# Part 3 — The Pipeline
+## Four steps, four files, ~500 lines
+
+---
+
+# Pipeline overview
+
+```
+   Synapses + v117 seg IDs + skeletons
+                  │
+   ┌──────────────┘
+   │  graph.py        build_synapse_graph()
+   ▼
+   SynapseGraph                          nodes = synapses
+   (nodes + same-seg edges + spatial edges)   edges = evidence
+                  │
+   │  model.py        SynapseCoassigner (a GNN)
+   ▼
+   P(same neuron) for every edge         learned edge scores
+                  │
+   │  cluster.py      greedy_cluster() × K
+   ▼
+   K candidate partitions                ranked by likelihood
+                  │
+   │  cluster.py      pairwise_precision_recall, coverage_at_k
+   ▼
+   Metrics + human-review output
+```
+
+Each file has one clear job. `train.py` ties them together with a loss.
+
+---
+
+# Step 1 — Build the SynapseGraph
+
+`build_synapse_graph(positions, seg_ids, labels, seg_dna)` turns raw data into a graph with **two edge types**:
 
 <div class="columns">
 <div>
@@ -115,11 +348,9 @@ Two edge types, one graph:
 ### Same-segment edges
 `same_seg = 1.0`
 
-Two synapses sharing a v117 root ID are co-continuous in the automated segmentation.
+Connect every pair of synapses sharing a v117 seg ID.
 
-**Strong but noisy**: correct when v117 is right, broken by splits, poisoned by frankenmerges.
-
-Cap: 200 directed pairs per segment — prevents O(N²) blowup from large frankenmerges.
+*Capped at 200 pairs per segment* — otherwise a frankenmerge with 10k synapses would create 50M edges (O(N²) blowup).
 
 </div>
 <div>
@@ -127,213 +358,211 @@ Cap: 200 directed pairs per segment — prevents O(N²) blowup from large franke
 ### Spatial k-NN edges
 `same_seg = 0.0`
 
-Each synapse connected to its 8 nearest neighbours in nm space.
+Connect each synapse to its **8 nearest neighbours** in nm space.
 
-**Weak but unbiased**: catches cross-segment proximity where a split puts two nearby synapses in different segments.
+Catches cross-segment proximity — two synapses from split pieces that happen to sit close together.
 
 </div>
 </div>
 
 <br>
 
-**Nothing hardcoded.** Position scale and the relative weight of same-seg vs. spatial edges are learned from data.
+**Each node carries:** `[x, y, z, dna_0 … dna_63]` — its position plus the DNA of its segment.
+**Each edge carries:** the `same_seg` flag (1.0 or 0.0).
+
+Nothing else is hand-fed. The model decides what matters.
 
 ---
 
-# Step 2: SynapseCoassigner
+# Step 2 — Score edges with a GNN
 
-A GNN that reads the SynapseGraph and outputs **P(same neuron)** per edge.
-
-<br>
+`SynapseCoassigner` reads the graph and outputs **P(same neuron)** per edge.
 
 ```
-Input per node: [pos_x, pos_y, pos_z, dna_0, …, dna_63]  ← LayerNorm (learned)
-                                                             ↓
-                             3 × MessagePassing layers
-                     msg = Linear([h_src ∥ same_seg])     ← same_seg is a learned feature
-                     update = Linear([h ∥ agg]) → ReLU → LayerNorm
-                                                             ↓
-               Edge scorer: MLP([h_u ∥ h_v ∥ |h_u−h_v| ∥ same_seg])
-                                                             ↓
-                                              σ → P(same neuron)
+ node features [x,y,z,dna…]  ──►  LayerNorm  (learned normalisation, no hardcoded scale)
+                                      │
+                       3 × message-passing layers:
+                       msg    = Linear([h_neighbour ∥ same_seg])
+                       update = Linear([h ∥ aggregated_msg]) → ReLU → LayerNorm
+                                      │
+                       per-synapse embedding h  [N, 64]
+                                      │
+        edge scorer:  MLP([ h_u ∥ h_v ∥ |h_u − h_v| ∥ same_seg ])  →  σ  →  P
 ```
 
 <br>
 
-Key design choices:
-- `LayerNorm` at input — learned normalisation, no hardcoded position scale
-- `same_seg` is a plain input feature — the model learns its weight, not a hard gate
-- Scorer sees **both** node embeddings **and** the raw same-seg flag — explicit shortcut for easy cases
+Three deliberate choices, all in service of *"avoid hardcoding features"*:
+- **LayerNorm at input** — the network learns position scaling
+- **`same_seg` is a plain input** — not a hard gate; the model learns how much to trust it
+- **scorer sees both embeddings AND the raw flag** — an explicit shortcut for the easy cases
 
 ---
 
-# Step 3: Correlation Clustering
+# Step 3 — Cluster into neurons
 
-Given P(same neuron) per edge, find the **best partition** of synapses into neuron clusters.
+We have P(same neuron) on every edge. Now find the **partition** that best agrees with those probabilities.
 
-This is correlation clustering — NP-hard in general.
-We use the **greedy pivot algorithm** (O(E), 3-approximation):
+This is **correlation clustering** — NP-hard in general. We use the **greedy pivot** algorithm (O(E), 3-approximation):
 
 <br>
 
 ```
-Shuffle nodes randomly.
-For each unassigned node:
-  Look at already-assigned neighbours with P >= threshold.
-  If any: join the cluster with the highest mean edge probability.
-  Else: start a new cluster.
+Shuffle the synapses into a random order.
+For each synapse not yet assigned:
+    Look at neighbours already in a cluster, where P ≥ threshold.
+    If any exist → join the cluster with the highest mean edge probability.
+    Otherwise    → start a new cluster of its own.
 ```
 
 <br>
 
-**K materializations**: run greedy K times with different random orderings.
-Each run produces a different (but nearby) partition.
-Sort by log-likelihood → return top-K unique results.
-
-<br>
-
-> The true partition should appear in the top-K — **coverage@K** measures this.
+Simple, fast, and good enough in practice. One pass over the edges produces one full partition of all synapses into neuron clusters.
 
 ---
 
-# Step 4: Training
+# Step 3 (cont.) — K materializations
 
-Binary cross-entropy on edge labels: **1** if both synapses share the same v1412 neuron, **0** otherwise.
+Run greedy **K times** with different random shuffles → K different partitions. Keep the K unique ones, **sorted by log-likelihood** (best first).
+
+```
+Materialization 1:  [A,B,C | D | E,F]      log-score −12.4   ← best
+Materialization 2:  [A,B | C | D | E,F]    log-score −13.1
+Materialization 3:  [A,B,C | D | E | F]    log-score −13.9
+```
 
 <br>
 
-### Hard negative mining
+**Why several answers instead of one?**
 
-The hard cases are spatially close synapses that belong to *different* interdigitated neurons.
-A random negative is usually far away and trivially easy.
+A single partition gives no signal about *where* it was uncertain. With K partitions, the **edges where they disagree** are exactly the uncertain decisions — and that's where a human should look.
+
+> coverage@K asks: does the **true** partition appear in the top-K? A well-calibrated model should include it even when no single answer is perfect.
+
+---
+
+# Step 4 — Train the model
+
+Binary cross-entropy on edge labels: **1** if the two synapses share a v1412 neuron, **0** if not.
+
+<br>
+
+### The problem: easy negatives dominate
+
+Most random synapse pairs are from far-apart neurons — trivially "different." Training on those teaches the model nothing.
+
+### The fix: hard negative mining
 
 ```python
-# Hard negatives: spatial edges (same_seg=0) that cross neuron boundaries
-hard_neg_pool = spatial_edges_where(
-    true_label[src] != true_label[dst]   # different neuron
-    and true_label[src] > 0              # both labeled
-    and true_label[dst] > 0
-)
-# 50% of the negative sample is drawn from hard_neg_pool
+# Over-sample the HARD negatives: spatially close, but different neurons
+hard_neg = spatial_edges where  label[src] != label[dst]   # different neuron
+                            and  label[src] > 0 and label[dst] > 0  # both known
+# 50% of each negative batch is drawn from this pool
 ```
 
-<br>
-
-This forces the model to learn what makes two nearby-but-different neurons distinguishable — primarily their DNA.
+These are interdigitated neurons that sit right next to each other. Forcing the model to separate them is what makes it learn to **use DNA**, not just distance.
 
 ---
 
 <!-- _class: section-header -->
 
-# Results
-## 20 real proofread neurons, 3 pieces each, 60 epochs
+# Part 4 — Results
+## Does it work?
 
 ---
 
-# Real-data results
+# Synthetic-split results
 
-Neurons fetched from CAVE (v1412), split into 3 pieces each to simulate v117 splits, trained end-to-end on CPU in ~5 minutes.
+20 real proofread neurons (v1412), each cut into 3 pieces to *simulate* v117 splits. Synthetic synapses placed near skeleton vertices. Trained end-to-end on CPU, ~5 minutes.
 
 <br>
 
-| Metric | Value | Notes |
+| Metric | Value | Reading |
 |---|---|---|
-| Pairwise precision | **0.952** | Co-assignments made are almost always correct |
-| Pairwise recall | **0.420** | Under-merging — threshold too conservative |
+| Pairwise precision | **0.952** | Merges made are almost always correct |
+| Pairwise recall | **0.420** | Under-merging — too cautious |
 | Pairwise F1 | **0.583** | |
 | coverage@5 | **False** | True partition not yet in top-5 |
 
 <br>
 
-**The precision/recall story:**
+**The story:** the model *knows* which edges are safe — 95% precision means it rarely merges wrongly. It is declining to merge when unsure. The fixed **threshold = 0.5 is too conservative**; calibrating it should lift recall toward 0.8+ without hurting precision.
 
-The model *knows* which edges are confident. It is declining to merge when it's unsure.
-The fixed threshold=0.5 is too conservative — a **calibration pass** on held-out data would move recall from 0.42 toward 0.8+ without hurting precision.
+---
+
+# Real v117 results
+
+<!-- RESULTS_PLACEHOLDER -->
+
+`python scripts/v117_coassign.py --token YOUR_TOKEN --cache-dir /tmp/cache`
+
+This run uses **actual CAVE data**, not synthetic splits:
+- Synapses fetched from CAVE at materialization **v117**
+- Ground-truth labels from the real **v117 → v1412** mapping
+- DNA from `SkeletonGNN` on the **real v117 skeletons**
+
+<br>
+
+| Metric | Value |
+|---|---|
+| Synapses fetched | *(populated from live run)* |
+| v117 segments | *(populated from live run)* |
+| Distinct v1412 neurons | *(populated from live run)* |
+| Pairwise precision / recall / F1 | *(populated from live run)* |
+| coverage@5 | *(populated from live run)* |
+
+> This is the honest test: real splits, real frankenmerges, real morphology.
 
 ---
 
 # The v117 data harness
 
-`neuronauts/data/cave.py` connects the pipeline to real CAVE data:
-
-<br>
+`neuronauts/data/cave.py` connects the pipeline to real CAVE data in three calls:
 
 ```python
 from neuronauts.data.cave import fetch_v117_region, encode_seg_dna
 from neuronauts.coassign import build_synapse_graph, SynapseCoassigner, train
 
-# 1. Fetch from CAVE
-region = fetch_v117_region(
-    bbox_nm,              # spatial bounding box in global nm
-    token=CAVE_TOKEN,
-    min_seg_synapses=2,   # drop tiny segments
-    skeleton_cache_dir="/tmp/cache",
-)
-# → positions_nm [N,3], seg_ids [N], gt_labels [N], skeletons dict
+# 1. Fetch real data: synapses + skeletons at v117, labels via v117→v1412 map
+region = fetch_v117_region(bbox_nm, token=CAVE_TOKEN, min_seg_synapses=2,
+                           skeleton_cache_dir="/tmp/cache")
+# → positions_nm [N,3], seg_ids [N], gt_labels [N], skeletons{seg_id: SkeletonData}
 
-# 2. Encode DNA
+# 2. Encode DNA from the fetched skeletons
 seg_dna = encode_seg_dna(region.skeletons, region.seg_ids)
 
-# 3. Build graph and train — identical to the demo
-graph = build_synapse_graph(region.positions_nm, region.seg_ids, region.gt_labels, seg_dna)
-model = SynapseCoassigner(node_dim=graph.node_dim)
-train(model, [graph])
+# 3. Build + train — identical from here to the synthetic demo
+graph = build_synapse_graph(region.positions_nm, region.seg_ids,
+                            region.gt_labels, seg_dna)
+train(SynapseCoassigner(node_dim=graph.node_dim), [graph])
 ```
 
 <br>
 
-Run end-to-end: `python scripts/v117_coassign.py --token YOUR_TOKEN --cache-dir /tmp/v117_cache`
-
----
-
-# Why K materializations?
-
-A single partition can be wrong in subtle ways with no signal about *where* the uncertainty is.
-
-<br>
-
-### The workflow
-
-K candidate partitions, ranked by log-likelihood. A proofreader sees the **edges where materializations disagree** — exactly the uncertain decisions.
-
-```
-Materialization 1:  [A,B,C | D | E,F]      ← merges synapses 2+3
-Materialization 2:  [A,B | C | D | E,F]    ← keeps synapse 3 separate
-Materialization 3:  [A,B,C | D | E | F]    ← merges 2+3, splits 5+6
-
-Disagreement on synapse 3: review this merge decision.
-Disagreement on synapses 5+6: review this split decision.
-```
-
-<br>
-
-**coverage@K** = "is the true partition in the top-K?"
-
-Target: coverage@5 ≥ 0.9 after threshold calibration.
+The split between **fetch** (needs network) and **encode** (needs GPU) is intentional — cache skeletons once, re-encode freely.
 
 ---
 
 <!-- _class: section-header -->
 
-# Next Steps
-## Where to contribute
+# Part 5 — Where to Help
+## The roadmap and how to contribute
 
 ---
 
-# Immediate (this branch)
+# Immediate next steps
 
 <div class="columns">
 <div>
 
 ### 1. Threshold calibration
-`cluster.py`
+`cluster.py` · **biggest win**
 
-The model learns good edge scores but threshold=0.5 is too conservative.
+The model learns good scores but threshold = 0.5 is too cautious.
 
-Add `calibrate_threshold(model, graphs)`:
-sweep threshold on held-out graphs, pick the F1-maximizing value.
+Add `calibrate_threshold(model, graphs)`: sweep on held-out data, pick the F1-max value.
 
-**Expected impact: recall 0.42 → 0.7+**
+**Expected: recall 0.42 → 0.7+**
 
 </div>
 <div>
@@ -341,71 +570,66 @@ sweep threshold on held-out graphs, pick the F1-maximizing value.
 ### 3. Endpoint-adjacent edges
 `graph.py`
 
-Add a third edge type: skeleton endpoints (leaf vertices) that are spatially near each other across different segments.
+Add a third edge type: skeleton **leaf vertices** that are spatially near each other across segments.
 
-These are the principled bridge sites — where a real neuron was cut by the automated segmentation.
+These are the principled bridge sites — exactly where the CV cut a neuron.
 
-```python
-Fragment.endpoints_nm  # already populated
-```
+`Fragment.endpoints_nm` is already populated.
 
 </div>
 </div>
 
 <br>
 
-### 2. More training / larger model
-100-200 epochs, d_model=128-256, 4-6 GNN layers. Neurons span hundreds of microns; 3 layers × 8 k-NN hops = ~24 hops of effective range.
+### 2. Bigger model, longer training
+100–200 epochs · d_model 128–256 · 4–6 GNN layers. Real neurons span hundreds of microns; 3 layers × 8 hops ≈ 24-hop reach is too short.
 
 ---
 
-# Medium term
+# Medium-term: see through the noise
 
 ### 4. Prototype-based assignment (EM-style)
 
-The hardest case: segment A and C belong to the same neuron, but B between them is a frankenmerge. A→B is weak, B→C is weak — A and C never connect.
+The case that pure pairwise scoring **fails**: segments A and C belong to one neuron, but B between them is a frankenmerge with ambiguous DNA. A→B weak, B→C weak → A and C never connect.
 
-Fix: maintain a **running embedding per growing neuron hypothesis** (mean of its confirmed members). Assign unassigned synapses to the closest hypothesis — or mark uncertain. Iterate E/M steps until convergence. The prototype aggregates clean evidence from across the full arbor, bypassing local gaps.
+**Fix:** maintain a running embedding per *growing neuron hypothesis* (mean of its confirmed members). Assign each synapse to the closest hypothesis, or mark it uncertain. Iterate E / M steps. The prototype pools clean evidence from the **whole arbor**, bypassing local gaps.
 
 <br>
 
-### 5. Within-type evaluation
+### 5. Within-type evaluation — the honest test
 
 ```bash
 python scripts/coassign_demo.py --n-neurons 30 --n-pieces 3 --cell-type 23P
 ```
 
-All neurons L2/3 pyramidal — same cell type, similar morphology. Current cross-type precision (0.95) is partly easy cross-type separation. **Within-type is the honest test.**
+All neurons are L2/3 pyramidal — same type, similar shape. Cross-type precision (0.95) is partly *easy* cross-type separation. Within-type is the real difficulty.
 
 ---
 
 # How to contribute
 
 ```
-neuronauts/coassign/          ← 4 files, ~500 lines
+neuronauts/coassign/          ← 4 files, ~500 lines, one job each
 ├── graph.py                  ← SynapseGraph + build_synapse_graph
 ├── model.py                  ← SynapseCoassigner (GNN encoder + scorer)
 ├── cluster.py                ← greedy_cluster, materializations, metrics
 └── train.py                  ← BCE + hard negative mining
 
-tests/test_coassign.py        ← 25 tests
-scripts/coassign_demo.py      ← end-to-end demo (~5 min on CPU)
+scripts/coassign_demo.py      ← synthetic-split demo (~5 min on CPU)
 scripts/v117_coassign.py      ← real v117 data harness
 neuronauts/data/cave.py       ← CAVE fetch + DNA encode
+tests/test_coassign.py        ← 25 tests, all green
 ```
 
 <br>
 
-**Good first contributions:**
-
-| Task | File | Effort |
+| Good first task | File | Effort |
 |---|---|---|
 | Threshold calibration | `cluster.py` | 1–2 days |
 | Endpoint edges | `graph.py` | 1 day |
 | Within-type eval | run the demo | 30 min |
 
-See `INTRO.md` for the full biology + pipeline walkthrough.
-See `NEXT_STEPS.md` for the full roadmap.
+**Read `INTRO.md`** for the full biology + pipeline walkthrough · **`NEXT_STEPS.md`** for the roadmap.
 
 ---
 
@@ -415,6 +639,6 @@ See `NEXT_STEPS.md` for the full roadmap.
 
 `python scripts/coassign_demo.py --n-neurons 20 --n-pieces 3`
 
-P=0.952 · R=0.420 · F1=0.583 after 60 epochs
+Synapses are the invariant nodes. We're finding cliques.
 
-**Next:** threshold calibration → coverage@5 → real v117 evaluation
+**Next:** threshold calibration → coverage@5 → real v117 at scale
