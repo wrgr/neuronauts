@@ -218,7 +218,17 @@ def _sample_pairs(
     all_labels: list[int],
     max_pairs: int,
     rng: np.random.Generator,
+    *,
+    hard_neg_pool: list[tuple[int, int]] | None = None,
+    hard_neg_frac: float = 0.5,
 ) -> tuple[list, list]:
+    """Sample positive and negative pairs for contrastive training.
+
+    hard_neg_pool: pre-computed list of (i, j) pairs that are spatially close
+        but belong to different neurons — the hard negatives the GNN must learn
+        to separate.  When provided, hard_neg_frac of negatives are sampled
+        from this pool; the rest are random.
+    """
     pos_pairs: list[tuple[int, int]] = []
     neg_pairs: list[tuple[int, int]] = []
 
@@ -238,7 +248,16 @@ def _sample_pairs(
         if len(pos_pairs) >= max_pairs:
             break
 
-    for _ in range(len(pos_pairs)):
+    n_neg = len(pos_pairs)
+    n_hard = int(n_neg * hard_neg_frac) if hard_neg_pool else 0
+    n_rand = n_neg - n_hard
+
+    if n_hard > 0 and hard_neg_pool:
+        chosen = rng.integers(len(hard_neg_pool), size=n_hard)
+        for idx in chosen:
+            neg_pairs.append(hard_neg_pool[int(idx)])
+
+    for _ in range(n_rand):
         la = int(rng.choice(all_labels))
         lb = int(rng.choice(all_labels))
         while lb == la:
@@ -260,6 +279,7 @@ def train_partition_gnn(
     device: str = "cpu",
     seed: int = 42,
     log_every: int = 10,
+    hard_neg_frac: float = 0.5,
 ) -> tuple[Any, dict]:
     """Train HalfSynapseGNN with contrastive loss on the label partition.
 
@@ -281,6 +301,10 @@ def train_partition_gnn(
         RNG seed for pair sampling.
     log_every:
         Print loss every N epochs (0 = silent).
+    hard_neg_frac:
+        Fraction of negative pairs drawn from the hard negative pool
+        (spatial edges connecting different-label nodes).  The remainder
+        are random cross-neuron pairs.  Default 0.5.
 
     Returns
     -------
@@ -313,6 +337,18 @@ def train_partition_gnn(
     pos_labels = [lbl for lbl, idxs in label_groups.items() if len(idxs) >= 2]
     all_labels = list(label_groups.keys())
 
+    # Hard negatives: spatial edges (type 1) connecting different-label nodes.
+    # These are the cases the GNN most needs to learn to separate — spatially
+    # close synapses that belong to different interdigitated neurons.
+    hard_neg_pool: list[tuple[int, int]] = []
+    for i in range(len(graph.edge_src)):
+        if graph.edge_type[i] != 1:
+            continue
+        u, v = int(graph.edge_src[i]), int(graph.edge_dst[i])
+        lu, lv = int(graph.labels[u]), int(graph.labels[v])
+        if lu != 0 and lv != 0 and lu != lv:
+            hard_neg_pool.append((u, v))
+
     history: dict[str, list[float]] = {"loss": [], "pos_sim": [], "neg_sim": []}
 
     for epoch in range(1, n_epochs + 1):
@@ -322,7 +358,9 @@ def train_partition_gnn(
         emb = gnn(node_feat_t, edge_src_t, edge_dst_t, edge_type_t)
 
         pos_pairs, neg_pairs = _sample_pairs(
-            label_groups, pos_labels, all_labels, max_pairs, rng
+            label_groups, pos_labels, all_labels, max_pairs, rng,
+            hard_neg_pool=hard_neg_pool if hard_neg_pool else None,
+            hard_neg_frac=hard_neg_frac,
         )
 
         if not pos_pairs:
