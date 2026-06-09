@@ -203,6 +203,8 @@ def main() -> int:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--cache-dir", default=None,
                    help="Directory to cache downloaded tables")
+    p.add_argument("--encoder", choices=["path", "gnn"], default="path",
+                   help="path=TreeDNAEncoder (hand-crafted 6-D), gnn=SkeletonGNN (raw graph)")
     args = p.parse_args()
 
     rng = np.random.default_rng(args.seed)
@@ -262,6 +264,7 @@ def main() -> int:
         max_pairs=args.max_pairs,
         device=args.device,
         seed=args.seed,
+        encoder_type=args.encoder,
     )
 
     print(f"\nNote: negatives above are all within-type ('{args.cell_type}').")

@@ -56,6 +56,12 @@ from .represent.enrich import (
     spatial_proximity_scores,
     synapse_pair_dna_scores,
 )
+from .represent.skeleton_gnn import (
+    SkeletonGNN,
+    encode_fragments_gnn,
+    fragment_to_tensors,
+    train_skeleton_gnn,
+)
 from .assemble import (
     GlobalSynapseGraph,
     assemble_neurons,
@@ -123,6 +129,11 @@ __all__ = [
     "evaluate_dna_auc",
     "spatial_proximity_scores",
     "synapse_pair_dna_scores",
+    # Represent stage: GNN encoder (data-driven, no hand-crafted features)
+    "SkeletonGNN",
+    "encode_fragments_gnn",
+    "fragment_to_tensors",
+    "train_skeleton_gnn",
     # Assemble stage: global synapse graph + GNN
     "GlobalSynapseGraph",
     "assemble_neurons",

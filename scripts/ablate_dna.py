@@ -183,86 +183,101 @@ def run_ablation(
     max_pairs: int = 2000,
     device: str = "cpu",
     seed: int = 42,
+    encoder_type: str = "path",
 ) -> dict:
-    """Train the TreeDNAEncoder and report AUC before / after training."""
-    from neuronauts.represent.dna import TreeDNAEncoder, encode_fragments, train_dna_encoder
+    """Train a DNA encoder and report AUC before / after training.
+
+    encoder_type : "path"  — TreeDNAEncoder (path-sampling, hand-crafted 6-D features)
+                   "gnn"   — SkeletonGNN (graph-level, raw (x,y,z,r) node features)
+    """
     from neuronauts.represent.enrich import evaluate_dna_auc
 
     rng = np.random.default_rng(seed)
 
+    n_neurons = len(set(
+        next(iter(root_label_map[f.base_root_id]))
+        for f in fragments
+        if f.base_root_id in root_label_map
+    )) if root_label_map else "?"
+
     print(f"\n{'='*60}")
+    print(f"Encoder: {encoder_type}")
     print(f"Region: {region.n_synapses} synapses, {len(fragments)} seg roots")
-    print(f"Neurons: {len(set(root_label_map[f.base_root_id].copy().pop() for f in fragments if f.base_root_id in root_label_map))}")
+    print(f"Neurons: {n_neurons}")
     print(f"{'='*60}\n")
 
-    encoder = TreeDNAEncoder(
-        d_model=d_model,
-        n_heads=4,
-        n_layers=2,
-        output_dim=output_dim,
-        n_paths=n_paths,
-        max_path_len=128,  # truncate long paths: 128² attention vs 512² = 16× less memory
-    )
+    if encoder_type == "gnn":
+        from neuronauts.represent.skeleton_gnn import (
+            SkeletonGNN,
+            encode_fragments_gnn,
+            train_skeleton_gnn,
+        )
+        encoder = SkeletonGNN(d_model=d_model, output_dim=output_dim, n_layers=3)
 
-    # --- Baseline: random init (before any training) ----------------------
-    print("Evaluating random-init DNA AUC (before training)...")
-    frags_init = encode_fragments(encoder, fragments, device=device, n_paths=n_paths)
-    result_before = evaluate_dna_auc(
-        region, frags_init,
-        max_pairs=max_pairs,
-        rng=np.random.default_rng(seed),
-        include_baseline=True,
-    )
-    print(f"  DNA AUC (random init):   {result_before['dna_auc']:.4f}")
-    print(f"  Spatial baseline AUC:    {result_before['baseline_auc']:.4f}")
-    print(f"  Pairs: {result_before['n_pos']} pos / {result_before['n_neg']} neg")
-    print(f"  Synapses without DNA:    {result_before['n_no_dna']}")
+        print("Evaluating random-init DNA AUC (before training)...")
+        frags_init = encode_fragments_gnn(encoder, fragments, device=device)
+        result_before = evaluate_dna_auc(
+            region, frags_init, max_pairs=max_pairs,
+            rng=np.random.default_rng(seed), include_baseline=True,
+        )
+        _print_before(result_before)
 
-    # --- Train -----------------------------------------------------------
-    print(f"\nTraining TreeDNAEncoder for {n_epochs} epochs...")
-    history = train_dna_encoder(
-        encoder,
-        [fragments],
-        n_epochs=n_epochs,
-        lr=lr,
-        margin=0.5,
-        batch_size=32,
-        device=device,
-        root_label_map=root_label_map,
-        n_paths=n_paths,
-    )
+        print(f"\nTraining SkeletonGNN for {n_epochs} epochs...")
+        history = train_skeleton_gnn(
+            encoder, [fragments],
+            n_epochs=n_epochs, lr=lr, margin=1.0,
+            device=device, root_label_map=root_label_map, log_every=10,
+        )
+        _print_history(history, key_loss="loss", key_pos="pos_cos", key_neg="neg_cos")
 
-    # Print epoch summary every 5 epochs
-    for i, (loss, pos_cos, neg_cos) in enumerate(
-        zip(history["loss"], history["pos_cosine"], history["neg_cosine"])
-    ):
-        if (i + 1) % 5 == 0 or i == 0:
-            print(f"  epoch {i+1:3d}: loss={loss:.4f}  pos_cos={pos_cos:.3f}  neg_cos={neg_cos:.3f}")
+        print("\nEvaluating trained DNA AUC...")
+        frags_trained = encode_fragments_gnn(encoder, fragments, device=device)
 
-    # --- After training: re-encode ----------------------------------------
-    print("\nEvaluating trained DNA AUC...")
-    frags_trained = encode_fragments(encoder, fragments, device=device, n_paths=n_paths)
+    else:  # "path"
+        from neuronauts.represent.dna import TreeDNAEncoder, encode_fragments, train_dna_encoder
+
+        encoder = TreeDNAEncoder(
+            d_model=d_model, n_heads=4, n_layers=2,
+            output_dim=output_dim, n_paths=n_paths,
+            max_path_len=128,
+        )
+
+        print("Evaluating random-init DNA AUC (before training)...")
+        frags_init = encode_fragments(encoder, fragments, device=device, n_paths=n_paths)
+        result_before = evaluate_dna_auc(
+            region, frags_init, max_pairs=max_pairs,
+            rng=np.random.default_rng(seed), include_baseline=True,
+        )
+        _print_before(result_before)
+
+        print(f"\nTraining TreeDNAEncoder for {n_epochs} epochs...")
+        history = train_dna_encoder(
+            encoder, [fragments],
+            n_epochs=n_epochs, lr=lr, margin=0.5, batch_size=32,
+            device=device, root_label_map=root_label_map, n_paths=n_paths,
+        )
+        _print_history(history, key_loss="loss", key_pos="pos_cosine", key_neg="neg_cosine")
+
+        print("\nEvaluating trained DNA AUC...")
+        frags_trained = encode_fragments(encoder, fragments, device=device, n_paths=n_paths)
+
     result_after = evaluate_dna_auc(
-        region, frags_trained,
-        max_pairs=max_pairs,
-        rng=np.random.default_rng(seed),
-        include_baseline=True,
+        region, frags_trained, max_pairs=max_pairs,
+        rng=np.random.default_rng(seed), include_baseline=True,
     )
     print(f"  DNA AUC (trained):       {result_after['dna_auc']:.4f}")
     print(f"  Spatial baseline AUC:    {result_after['baseline_auc']:.4f}")
 
     delta = result_after["dna_auc"] - result_before["dna_auc"]
-    baseline_auc = result_after["baseline_auc"]
+    baseline_auc = result_after.get("baseline_auc", float("nan"))
     trained_auc = result_after["dna_auc"]
 
     print(f"\n{'='*60}")
     print(f"  AUC improvement:  {delta:+.4f}  (random → trained)")
     if trained_auc > baseline_auc:
-        margin = trained_auc - baseline_auc
-        print(f"  vs spatial baseline: +{margin:.4f}  ✓  DNA beats proximity")
+        print(f"  vs spatial baseline: +{trained_auc - baseline_auc:.4f}  ✓  DNA beats proximity")
     else:
-        shortfall = baseline_auc - trained_auc
-        print(f"  vs spatial baseline: -{shortfall:.4f}  (needs more training / data)")
+        print(f"  vs spatial baseline: -{baseline_auc - trained_auc:.4f}  (needs more training / data)")
     print(f"{'='*60}\n")
 
     return {
@@ -271,6 +286,23 @@ def run_ablation(
         "history": history,
         "delta_auc": delta,
     }
+
+
+def _print_before(result: dict) -> None:
+    print(f"  DNA AUC (random init):   {result['dna_auc']:.4f}")
+    if "baseline_auc" in result:
+        print(f"  Spatial baseline AUC:    {result['baseline_auc']:.4f}")
+    print(f"  Pairs: {result['n_pos']} pos / {result['n_neg']} neg")
+    print(f"  Synapses without DNA:    {result['n_no_dna']}")
+
+
+def _print_history(history: dict, *, key_loss: str, key_pos: str, key_neg: str) -> None:
+    losses = history.get(key_loss, [])
+    pos_cos = history.get(key_pos, [])
+    neg_cos = history.get(key_neg, [])
+    for i, (loss, pc, nc) in enumerate(zip(losses, pos_cos, neg_cos)):
+        if (i + 1) % 10 == 0 or i == 0:
+            print(f"  epoch {i+1:3d}: loss={loss:.4f}  pos_cos={pc:.3f}  neg_cos={nc:.3f}")
 
 
 def main() -> int:
@@ -298,6 +330,8 @@ def main() -> int:
     p.add_argument("--max-pairs", type=int, default=2000)
     p.add_argument("--device", default="cpu")
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--encoder", choices=["path", "gnn"], default="path",
+                   help="path=TreeDNAEncoder (hand-crafted features), gnn=SkeletonGNN (data-driven)")
     args = p.parse_args()
 
     if args.synthetic:
@@ -331,6 +365,7 @@ def main() -> int:
         max_pairs=args.max_pairs,
         device=args.device,
         seed=args.seed,
+        encoder_type=args.encoder,
     )
     return 0
 

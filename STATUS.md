@@ -37,6 +37,9 @@ boundary in the global synapse graph.
   - DNA AUC trained (80 epochs): **0.897** (+0.169) ✓ DNA beats proximity by **+0.431**
   - Training signal: pos_cos 0.95→0.87, neg_cos 0.95→0.64 — encoder learns to align same-neuron halves
   - **Interpretation**: the encoder learns genuine morphological identity from partial skeleton views, directly validating the Phase 2 multi-root matching use case
+- [x] `neuronauts/represent/skeleton_gnn.py` — `SkeletonGNN`, `encode_fragments_gnn`, `train_skeleton_gnn` (data-driven: raw (x,y,z,r) node features, no hand-crafted geometry)
+- [x] `tests/test_represent_skeleton_gnn.py` — 20 tests (tensor shapes, bidirectionality, centroid normalisation, isolated vertex, training loop, L2 normalisation)
+- [x] `--encoder [path|gnn]` flag added to `ablate_dna.py`, `half_split_ablation.py`, `within_type_ablation.py`
 
 ## Within-type evaluation — IN PROGRESS
 
@@ -54,7 +57,7 @@ Cell type table: `aibs_metamodel_celltypes_v661_merged.csv.gz` (19,735 L2/3 pyra
   - **Interpretation**: quarter-skeletons are too small for reliable individual discrimination with
     current 6-scalar features. Richer features (multi-scale, spine density) likely needed.
 
-**Bisection within-type (40 × 23P, half-skeletons):**
+**Bisection within-type (40 × 23P, half-skeletons), `--encoder path` (TreeDNAEncoder):**
   - Random init AUC: **0.740** — nearly identical to cross-type bisection (0.728!)
   - Trained AUC: **0.725** (−0.015 — training *hurts*, encoder collapses)
   - Spatial baseline: 0.475
@@ -64,22 +67,29 @@ Cell type table: `aibs_metamodel_celltypes_v661_merged.csv.gz` (19,735 L2/3 pyra
     to discriminate — it collapses all within-type pairs to the same region of embedding space
     because positives and negatives look too similar for the loss to find a gradient direction.
 
+**Bisection within-type, `--encoder gnn` (SkeletonGNN):** *pending*
+
 ### Summary table
 
-| Experiment | Random init AUC | Trained AUC | Δ | neg_cos (final) |
-|---|---|---|---|---|
-| Cross-type bisection (40 neurons) | 0.728 | 0.897 | +0.169 | 0.64 |
-| Within-type bisection (40 × 23P) | 0.740 | 0.725 | −0.015 | 0.993 (collapsed) |
-| Within-type 4-chunk (30 × 23P) | 0.599 | 0.687 | +0.089 | 0.822 (partial) |
+| Experiment | Encoder | Random init AUC | Trained AUC | Δ | neg_cos (final) |
+|---|---|---|---|---|---|
+| Cross-type bisection (40 neurons) | path | 0.728 | 0.897 | +0.169 | 0.64 |
+| Within-type bisection (40 × 23P) | path | 0.740 | 0.725 | −0.015 | 0.993 (collapsed) |
+| Within-type 4-chunk (30 × 23P) | path | 0.599 | 0.687 | +0.089 | 0.822 (partial) |
+| Within-type bisection (40 × 23P) | gnn | *pending* | *pending* | — | — |
 
-### Diagnosis
-The bottleneck is the **training recipe**, not the features. The 6-scalar features
-already encode enough individual morphological variation to reach 0.74 AUC at random
-init — matching the cross-type starting point. The problem: triplet loss with within-type
-negatives collapses, because same-type fragments are so similar that pos and neg pairs
-land at the same angle (neg_cos → 0.993) and the loss gradient vanishes.
+### Why SkeletonGNN replaces TreeDNAEncoder
 
-### Next steps for the training recipe
+`TreeDNAEncoder` samples root-to-leaf paths and encodes each with a Transformer over hand-crafted
+features `(dx, dy, dz, step_dist, arc_norm, turn)`.  The direction features `dx/dy/dz` are in
+global nm space — all L2/3 pyramidal (23P) neurons have apical dendrites pointing roughly the same
+direction, so within-type negatives look identical to positives.
+
+`SkeletonGNN` receives centroid-normalised `(x-cx, y-cy, z-cz, radius)` — orientation-free by
+design. The relative geometry and branching topology are emergent in the learned message-passing
+representations rather than baked in as fixed features.
+
+### Next steps for the training recipe (both encoders)
 - **Hard negative mining**: sample negatives with highest current cosine similarity instead
   of random — the encoder is never forced to push apart the nearby pairs it's confusing
 - **InfoNCE / NT-Xent loss** (SimCLR-style): normalised temperature-scaled cross-entropy
@@ -102,6 +112,7 @@ assignments.
 - [x] `tests/test_assemble_global.py` — 10 tests (graph shape, edge invariants, GNN training/inference)
 - [x] `scripts/global_gnn_ablation.py` — end-to-end script (`--synthetic` + real-data mode)
 - [ ] Real-data GNN ablation on hard-split skeletons (DNA → GNN AUC improvement)
+- [ ] Within-type GNN ablation with `--encoder gnn` to compare against path baseline
 
 ## See also
 - `docs/roadmap_global_assembly.md` — canonical north-star roadmap
