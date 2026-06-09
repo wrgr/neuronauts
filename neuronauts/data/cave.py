@@ -224,7 +224,9 @@ def fetch_v117_region(
     # 4. Map v117 seg_ids → v1412 ground-truth labels
     # ------------------------------------------------------------------ #
     log.info("Mapping %d v%d seg_ids → v%d", len(unique_seg_ids), v117_version, v1412_version)
-    v117_to_v1412 = map_roots_between_versions(unique_seg_ids, v117_version, v1412_version)
+    v117_to_v1412 = map_roots_between_versions(
+        unique_seg_ids, v117_version, v1412_version, token=token,
+    )
     gt_labels = np.array(
         [v117_to_v1412.get(int(s), 0) for s in seg_ids.tolist()],
         dtype=np.int64,
