@@ -68,6 +68,12 @@ from .assemble import (
     build_global_synapse_graph,
     run_global_gnn,
     train_global_gnn,
+    HalfSynapseGraph,
+    build_half_synapse_graph,
+    HalfSynapseGNN,
+    evaluate_partition_ari,
+    partition_half_synapses,
+    train_partition_gnn,
 )
 
 __all__ = [
@@ -140,4 +146,11 @@ __all__ = [
     "build_global_synapse_graph",
     "run_global_gnn",
     "train_global_gnn",
+    # Assemble stage: half-synapse graph + partition GNN (Phase 2.1)
+    "HalfSynapseGraph",
+    "build_half_synapse_graph",
+    "HalfSynapseGNN",
+    "evaluate_partition_ari",
+    "partition_half_synapses",
+    "train_partition_gnn",
 ]
