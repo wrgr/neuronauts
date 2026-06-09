@@ -122,6 +122,38 @@ assignments.
 - [ ] Real-data GNN ablation on hard-split skeletons (DNA → GNN AUC improvement)
 - [ ] Within-type GNN ablation with `--encoder gnn` to compare against path baseline
 
+## Phase 2.1 — IN PROGRESS (Half-Synapse Graph Reformulation)
+Branch: `claude/tree-dna-phase-1-G1DNn`
+
+**Problem reformulation:** The correct task is to partition the half-synapse set such that
+each partition belongs to a single neuron.  The v117 segmentation is noisy evidence (split +
+merge errors) but informative — used as a soft evidence channel, not as ground truth.
+
+**Key design choices:**
+- Nodes = half-synapses (pre-side and post-side treated as independent partition problems)
+- Node features = concat(normalised position, seg DNA from SkeletonGNN)
+  — position captures local context; DNA captures "what kind of neuron am I on"
+- Edge type 0 (same-segment): strong topological evidence, may span frankenmerges
+- Edge type 1 (spatial k-NN): weak proximity evidence
+- Edge feature = [type_onehot(2), cosine_similarity(dna_i, dna_j)] — DNA cos-sim is physically
+  motivated: neurons are connected trees, so same-neuron segments share morphological character
+- Ground truth = label-version root IDs (supervision only, never in node features)
+- Evaluation = ARI (Adjusted Rand Index, partition quality), not cosine AUC
+
+### Checklist
+- [x] `neuronauts/assemble/half_synapse_graph.py` — `HalfSynapseGraph`, `build_half_synapse_graph`
+- [x] `neuronauts/assemble/partition_gnn.py` — `HalfSynapseGNN`, `train_partition_gnn`, `partition_half_synapses`, `evaluate_partition_ari`
+- [x] `tests/test_assemble_half_synapse.py` — 24 tests (graph construction, GNN forward/training, ARI evaluation)
+- [x] `scripts/half_synapse_ablation.py` — end-to-end `--synthetic` mode smoke test
+- [x] **Synthetic ablation (10 neurons × 2 segs × 8 syn/seg, frankenfraction=0.2)**:
+  - ARI random init: **0.585**  (already above chance — same-seg edges provide structure)
+  - ARI trained (40 epochs): **0.661** (+0.076) ✓ training improves partition quality
+  - Training signal: pos_sim 0.878→0.975, neg_sim 0.601→−0.161 — model genuinely learns
+  - **Interpretation**: remaining gap is from missing cross-segment spatial edges (inter-segment
+    distances exceed k-NN reach with current skeleton offsets); endpoint-adjacent edges will close this
+- [ ] Endpoint-adjacent edges in `build_half_synapse_graph` (Phase 2.2)
+- [ ] Real-data ARI evaluation with CAVE v117 seg IDs
+
 ## See also
 - `docs/roadmap_global_assembly.md` — canonical north-star roadmap
 - `docs/stage_ownership.md` — stage→module ownership map
