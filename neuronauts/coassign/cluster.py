@@ -46,11 +46,14 @@ def greedy_cluster(
     """
     rng = rng or np.random.default_rng()
 
-    # Adjacency list: node → list of (neighbour, prob)
-    adj: list[list[tuple[int, float]]] = [[] for _ in range(n_nodes)]
+    # Deduplicated adjacency: node → {neighbour: max_prob}.
+    # The edge list may contain both directions (u→v and v→u) for same-segment
+    # edges; using a dict keyed by neighbour collapses duplicates and keeps the
+    # highest probability so no neighbour is double-counted in votes.
+    adj: list[dict[int, float]] = [{} for _ in range(n_nodes)]
     for u, v, p in zip(edge_src.tolist(), edge_dst.tolist(), edge_probs.tolist()):
-        adj[u].append((v, p))
-        adj[v].append((u, p))
+        adj[u][v] = max(adj[u].get(v, 0.0), p)
+        adj[v][u] = max(adj[v].get(u, 0.0), p)
 
     labels = np.full(n_nodes, -1, dtype=np.int64)
     next_label = 0
@@ -61,7 +64,7 @@ def greedy_cluster(
 
         # Gather votes from already-assigned neighbours above threshold
         votes: dict[int, list[float]] = {}
-        for nbr, prob in adj[node]:
+        for nbr, prob in adj[node].items():
             if labels[nbr] >= 0 and prob >= threshold:
                 votes.setdefault(int(labels[nbr]), []).append(prob)
 
