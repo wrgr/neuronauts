@@ -19,6 +19,13 @@ from .skeleton_gnn import (
     fragment_to_tensors,
     train_skeleton_gnn,
 )
+from .path_grammar import (
+    PathGrammarReranker,
+    fragment_to_intrinsic_paths,
+    path_to_intrinsic,
+    score_fragment_pairs,
+    train_path_grammar_reranker,
+)
 
 __all__ = [
     "TreeDNAEncoder",
@@ -34,4 +41,9 @@ __all__ = [
     "encode_fragments_gnn",
     "fragment_to_tensors",
     "train_skeleton_gnn",
+    "PathGrammarReranker",
+    "fragment_to_intrinsic_paths",
+    "path_to_intrinsic",
+    "score_fragment_pairs",
+    "train_path_grammar_reranker",
 ]

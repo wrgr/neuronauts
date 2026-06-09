@@ -67,16 +67,24 @@ Cell type table: `aibs_metamodel_celltypes_v661_merged.csv.gz` (19,735 L2/3 pyra
     to discriminate — it collapses all within-type pairs to the same region of embedding space
     because positives and negatives look too similar for the loss to find a gradient direction.
 
-**Bisection within-type, `--encoder gnn` (SkeletonGNN):** *pending*
+**Bisection within-type (40 × 23P, half-skeletons), `--encoder gnn` (SkeletonGNN):**
+  - Random init AUC: **0.768** — higher than path encoder at random init (0.740)
+  - Trained AUC: **0.829** (+0.061) ✓ clears the 0.75 individual-identity bar
+  - Spatial baseline: 0.475
+  - Training signal: pos_cos 0.990→0.730, neg_cos 0.988→0.345 — **no collapse**
+  - **Interpretation**: raw centroid-normalised (x,y,z,r) features break the orientation
+    degeneracy that collapses the path encoder on within-type negatives. The GNN learns
+    individual morphological identity within a cell type. The bottleneck was the features,
+    not the loss function.
 
 ### Summary table
 
 | Experiment | Encoder | Random init AUC | Trained AUC | Δ | neg_cos (final) |
 |---|---|---|---|---|---|
 | Cross-type bisection (40 neurons) | path | 0.728 | 0.897 | +0.169 | 0.64 |
-| Within-type bisection (40 × 23P) | path | 0.740 | 0.725 | −0.015 | 0.993 (collapsed) |
+| Within-type bisection (40 × 23P) | path | 0.740 | 0.725 | −0.015 | 0.993 ✗ collapsed |
 | Within-type 4-chunk (30 × 23P) | path | 0.599 | 0.687 | +0.089 | 0.822 (partial) |
-| Within-type bisection (40 × 23P) | gnn | *pending* | *pending* | — | — |
+| Within-type bisection (40 × 23P) | **gnn** | **0.768** | **0.829** | **+0.061** | **0.345 ✓** |
 
 ### Why SkeletonGNN replaces TreeDNAEncoder
 
