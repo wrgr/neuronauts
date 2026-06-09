@@ -294,6 +294,49 @@ class TestHalfSynapseGNN:
         for key in history:
             assert all(np.isfinite(v) for v in history[key])
 
+    def test_hard_neg_frac_zero_still_trains(self):
+        """hard_neg_frac=0 falls back to pure random negatives without error."""
+        pytest.importorskip("torch")
+        from neuronauts.assemble.half_synapse_graph import build_half_synapse_graph
+        from neuronauts.assemble.partition_gnn import train_partition_gnn
+
+        region = _make_region(n_synapses=20, n_neurons=4)
+        graph = build_half_synapse_graph(region, [], side="pre")
+        _, history = train_partition_gnn(graph, n_epochs=3, log_every=0, hard_neg_frac=0.0)
+        assert len(history["loss"]) == 3
+        assert all(np.isfinite(v) for v in history["loss"])
+
+    def test_hard_neg_pool_populated_from_spatial_edges(self):
+        """When multiple neurons share spatial edges, hard neg pool is non-empty."""
+        from neuronauts.assemble.half_synapse_graph import build_half_synapse_graph
+        from neuronauts.assemble.partition_gnn import _sample_pairs
+
+        rng = np.random.default_rng(0)
+        # Place 4 neurons in the same spatial region so k-NN crosses neuron boundaries
+        N = 40
+        pre_pt = rng.uniform(0, 10_000, (N, 3)).astype(np.float32)
+        labels = np.repeat(np.arange(1, 5), 10).astype(np.int64)
+        from neuronauts.schemas import Region
+        region = Region(
+            region_id="t", bbox_nm=((0,0,0),(20000,20000,20000)),
+            voxel_size_nm=(8,8,40), seg_version=117, label_version=1412,
+            pre_pt_nm=pre_pt, post_pt_nm=pre_pt.copy(),
+            pre_root_id=labels, post_root_id=labels,
+            synapse_id=np.arange(N, dtype=np.int64),
+        )
+        graph = build_half_synapse_graph(region, [], side="pre", k_spatial=4)
+
+        # Manually replicate hard neg pool construction from train_partition_gnn
+        hard_neg_pool = [
+            (int(graph.edge_src[i]), int(graph.edge_dst[i]))
+            for i in range(len(graph.edge_src))
+            if graph.edge_type[i] == 1
+            and int(graph.labels[int(graph.edge_src[i])]) != 0
+            and int(graph.labels[int(graph.edge_dst[i])]) != 0
+            and int(graph.labels[int(graph.edge_src[i])]) != int(graph.labels[int(graph.edge_dst[i])])
+        ]
+        assert len(hard_neg_pool) > 0, "Expected cross-neuron spatial edges in tightly-packed graph"
+
 
 # ---------------------------------------------------------------------------
 # Partition tests
