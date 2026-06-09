@@ -48,6 +48,11 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     datefmt="%H:%M:%S",
 )
+# caveclient logs every skeleton-service version check at INFO — with 500
+# skeletons that floods the log with thousands of get_versions() lines. Quiet
+# the third-party loggers so our own progress messages stay readable.
+for _noisy in ("root", "caveclient", "urllib3", "CAVEclient"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 log = logging.getLogger("v117_coassign")
 
 # ---------------------------------------------------------------------------
