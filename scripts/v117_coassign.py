@@ -51,10 +51,12 @@ logging.basicConfig(
 log = logging.getLogger("v117_coassign")
 
 # ---------------------------------------------------------------------------
-# Defaults — a region in mouse V1 that contains well-proofread neurons
-# (L2/3 pyramidal cell soma layer, ~660,000 nm X, ~340,000 nm Y, ~620,000 nm Z)
+# Defaults — a region in the densely-proofread core of MICrONS minnie65.
+# This center is one of the validated sampling boxes used by the legacy
+# pipeline (neuronauts/legacy/run.py), so it is known to contain synapses and
+# proofread neurons at v117.
 # ---------------------------------------------------------------------------
-DEFAULT_CENTER_NM = (661_000, 340_000, 620_000)
+DEFAULT_CENTER_NM = (733_592, 513_592, 595_640)
 DEFAULT_SIDE_UM = 20.0
 
 
