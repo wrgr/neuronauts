@@ -13,6 +13,12 @@ from .enrich import (
     spatial_proximity_scores,
     synapse_pair_dna_scores,
 )
+from .skeleton_gnn import (
+    SkeletonGNN,
+    encode_fragments_gnn,
+    fragment_to_tensors,
+    train_skeleton_gnn,
+)
 
 __all__ = [
     "TreeDNAEncoder",
@@ -24,4 +30,8 @@ __all__ = [
     "evaluate_dna_auc",
     "spatial_proximity_scores",
     "synapse_pair_dna_scores",
+    "SkeletonGNN",
+    "encode_fragments_gnn",
+    "fragment_to_tensors",
+    "train_skeleton_gnn",
 ]
