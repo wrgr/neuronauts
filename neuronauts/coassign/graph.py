@@ -89,6 +89,11 @@ def build_synapse_graph(
     from .._scipy_compat import cKDTree
 
     N = len(positions)
+    if len(seg_ids) != N or len(labels) != N:
+        raise ValueError(
+            f"positions, seg_ids, and labels must all have the same length; "
+            f"got {N}, {len(seg_ids)}, {len(labels)}"
+        )
     pos = positions.astype(np.float32)
 
     # DNA lookup — dimension inferred from first entry

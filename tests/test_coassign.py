@@ -15,9 +15,10 @@ def _small_graph(n=30, n_neurons=3, dna_dim=0, seed=0):
     from neuronauts.coassign import build_synapse_graph
 
     rng = np.random.default_rng(seed)
+    # Ensure n is divisible by n_neurons so every array is the same length
+    n = (n // n_neurons) * n_neurons
     pos = rng.uniform(0, 50_000, (n, 3)).astype(np.float32)
     labels = np.repeat(np.arange(1, n_neurons + 1), n // n_neurons).astype(np.int64)
-    labels = labels[:n]
     seg_ids = labels.copy()  # one segment per neuron for simplicity
 
     seg_dna = {}
@@ -34,8 +35,8 @@ def _small_graph(n=30, n_neurons=3, dna_dim=0, seed=0):
 
 class TestBuildSynapseGraph:
     def test_node_count(self):
-        g = _small_graph(n=20)
-        assert g.n_nodes == 20
+        g = _small_graph(n=21)  # 21 divisible by n_neurons=3
+        assert g.n_nodes == 21
 
     def test_node_dim_no_dna(self):
         g = _small_graph(n=10, dna_dim=0)
@@ -64,8 +65,8 @@ class TestBuildSynapseGraph:
         assert g.edge_dst.max() < g.n_nodes
 
     def test_no_dna_gives_zero_embeddings(self):
-        g = _small_graph(n=10, dna_dim=0)
-        assert g.node_dna.shape == (10, 0)
+        g = _small_graph(n=9, dna_dim=0)  # 9 divisible by n_neurons=3
+        assert g.node_dna.shape == (9, 0)
 
     def test_dna_filled_for_known_segments(self):
         g = _small_graph(n=12, dna_dim=8)
@@ -144,17 +145,17 @@ class TestTrain:
 
     def test_loss_decreases(self):
         pytest.importorskip("torch")
-        from neuronauts.coassign import SynapseCoassigner, train
+        from neuronauts.coassign import SynapseCoassigner, build_synapse_graph, train
 
-        # Place neurons in distinct spatial clusters so learning is easy
+        # Neurons spatially interleaved (same volume) but distinct seg_ids.
+        # k-NN creates many cross-neuron (negative) edges, making the task
+        # non-trivial and ensuring both positives and negatives are present.
         rng = np.random.default_rng(42)
-        n_neurons, n_per = 4, 15
+        n_neurons, n_per = 4, 20
         N = n_neurons * n_per
-        centers = rng.uniform(0, 200_000, (n_neurons, 3)).astype(np.float32)
-        pos = np.repeat(centers, n_per, axis=0) + rng.normal(0, 500, (N, 3)).astype(np.float32)
+        pos = rng.uniform(0, 50_000, (N, 3)).astype(np.float32)
         labels = np.repeat(np.arange(1, n_neurons + 1), n_per).astype(np.int64)
         seg_ids = labels.copy()
-        from neuronauts.coassign import build_synapse_graph
         g = build_synapse_graph(pos, seg_ids, labels, {}, k_spatial=4)
         model = SynapseCoassigner(node_dim=g.node_dim)
         h = train(model, [g], n_epochs=30, log_every=0)
