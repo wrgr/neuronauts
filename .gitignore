@@ -40,3 +40,4 @@ Thumbs.db
 models/*.pt
 models/*.npz
 models/*.json
+.v117_cache/
