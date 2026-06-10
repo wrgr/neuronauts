@@ -19,8 +19,10 @@ Current results on 20 real proofread neurons (3 pieces each, 60 training epochs)
 
 ## Immediate (this branch)
 
-### 1. Threshold calibration
-The model learns good edge scores but the fixed threshold=0.5 in `greedy_cluster` is too conservative. Add a calibration pass: sweep threshold on held-out graphs, pick the value maximising F1. The precision/recall trade-off should be user-configurable.
+### 1. Threshold calibration ✅ DONE — `calibrate_threshold` in `cluster.py`
+Sweeps thresholds, clusters at each, returns the F1-maximising cut plus the full threshold→F1 curve. On real v117 (60-neuron box) it lifted best-materialization **F1 from 0.51 → 0.76** (with a larger model + more epochs); calibration alone moved sweep F1 0.724 → 0.792. Wired into `scripts/v117_coassign.py` (default on; `--no-calibrate` to disable).
+
+**Remaining:** the current pass calibrates a single scalar in-sample. At scale, calibrate on held-out graphs and apply the chosen threshold to unseen regions for an unbiased cut. Optionally expose the precision/recall trade-off as a user knob (favour precision for proofreading, recall for discovery).
 
 ### 2. Longer training / larger model
 60 epochs with d_model=64 is a starting point. Real neurons span hundreds of microns; 3 GNN layers × 8 k-NN hops = ~24 hops of effective range. Likely need:

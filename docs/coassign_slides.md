@@ -525,24 +525,26 @@ The model **learns**: over 40 epochs the edge loss falls 0.69 → 0.44, and edge
 
 ---
 
-# Real v117 results — the honest gap
+# Real v117 results — closing the partition gap
 
-Edge scoring is strong, but the **partition** is not yet:
+Edge scoring was always strong; the **partition** lagged. Calibrating the
+clustering threshold and scaling the model closes most of the gap:
 
-| Materialization | Pairwise P | Pairwise R | F1 |
+| Same 60-neuron v117 box | Best F1 | Best recall | Edge P/R |
 |---|---|---|---|
-| [1] best log-likelihood | 0.448 | 0.583 | **0.507** |
-| [2] | 0.375 | 0.588 | 0.458 |
-| [3] | 0.389 | 0.574 | 0.464 |
-| **coverage@5** | | | **False** (best R = 0.588) |
+| 40 ep · d64 · threshold 0.5 | 0.507 | 0.588 | 0.76 / 0.88 |
+| **120 ep · d128 · calibrated (0.675)** | **0.760** | **0.723** | **0.82 / 0.92** |
 
-**What this tells us** — and it's the central lesson:
+Threshold calibration alone (holding the model fixed) lifts sweep F1 from
+**0.724 → 0.792**; the larger model + more epochs add the rest.
 
-- **Edge-level learning works** (edge P/R = 0.76 / 0.88). The model can tell, for a given pair, whether they share a neuron.
-- **Greedy clustering loses that signal**: turning good edge probabilities into a good *partition* is the hard part. Errors compound across the greedy pivot, and the fixed threshold = 0.5 isn't calibrated for this denser, harder real-data regime.
-- This is exactly why **threshold calibration (#1)** and **prototype/EM assignment (#4)** are the top priorities — the bottleneck is the partition step, not the encoder.
+**What this tells us** — the central lesson:
 
-> Synthetic splits gave P=0.95; real, interdigitated v117 gives F1≈0.51. The gap *is* the research problem.
+- **Edge-level learning works** (edge P/R = 0.82 / 0.92). The model can tell, for a given pair, whether they share a neuron.
+- **The partition step was the bottleneck, not the encoder.** A fixed 0.5 cut over-merged this denser real-data graph; the calibrated 0.675 threshold recovers most of the lost F1 (0.51 → 0.76).
+- **coverage@5 is still False** (best recall 0.72 < 0.90): getting the *whole* neuron requires bridging see-through gaps — the job of **prototype/EM assignment (#4)**, the next lever.
+
+> Synthetic splits gave P=0.95; real interdigitated v117 went 0.51 → 0.76 F1 once the partition step was calibrated. The remaining gap to coverage *is* the research problem.
 
 ---
 
@@ -586,14 +588,12 @@ The split between **fetch** (needs network) and **encode** (needs GPU) is intent
 <div class="columns">
 <div>
 
-### 1. Threshold calibration
-`cluster.py` · **biggest win**
+### 1. Threshold calibration ✅ done
+`cluster.py` · `calibrate_threshold`
 
-The model learns good scores but threshold = 0.5 is too cautious.
+Sweeps thresholds, picks F1-max. On real v117 it lifted partition **F1 0.51 → 0.76**.
 
-Add `calibrate_threshold(model, graphs)`: sweep on held-out data, pick the F1-max value.
-
-**Expected: recall 0.42 → 0.7+**
+**Next here:** calibrate on *held-out* graphs (not in-sample) for an unbiased cut at scale.
 
 </div>
 <div>
@@ -672,4 +672,5 @@ tests/test_coassign.py        ← 25 tests, all green
 
 Synapses are the invariant nodes. We're finding cliques.
 
-**Next:** threshold calibration → coverage@5 → real v117 at scale
+**Done:** real v117 harness · threshold calibration (F1 0.51 → 0.76)
+**Next:** prototype/EM assignment → coverage@5 → within-type eval
