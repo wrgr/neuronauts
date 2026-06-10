@@ -375,6 +375,7 @@ def run_partition_eval(
     max_pairs: int = 800,
     threshold: float = 0.75,
     pos_scale_nm: float = 50_000.0,
+    endpoint_radius_nm: float | None = None,
     device: str = "cpu",
     seed: int = 42,
     log_every: int = 10,
@@ -391,14 +392,19 @@ def run_partition_eval(
     print(f"Building {side}-half-synapse graph …")
     graph = build_half_synapse_graph(
         region, fragments, side=side, k_spatial=k_spatial, pos_scale_nm=pos_scale_nm,
+        endpoint_radius_nm=endpoint_radius_nm,
     )
     dna_dim = graph.dna_dim
     n_same_seg = int((graph.edge_type == 0).sum())
     n_spatial = int((graph.edge_type == 1).sum())
+    n_endpoint = int((graph.edge_type == 2).sum())
     n_labeled = int((graph.labels != 0).sum())
     n_true = int(len(np.unique(graph.labels[graph.labels != 0])))
-    print(f"  {graph.n_nodes} nodes | {graph.n_edges} edges "
-          f"({n_same_seg} same-seg, {n_spatial} spatial)")
+    edge_summary = f"({n_same_seg} same-seg, {n_spatial} spatial"
+    if n_endpoint:
+        edge_summary += f", {n_endpoint} endpoint-adj"
+    edge_summary += ")"
+    print(f"  {graph.n_nodes} nodes | {graph.n_edges} edges {edge_summary}")
     print(f"  node_dim={graph.node_dim} (3 pos + {dna_dim} DNA) | "
           f"{n_labeled}/{graph.n_nodes} labelled | {n_true} true neurons")
     print(f"{'='*60}\n")
@@ -473,6 +479,8 @@ def main() -> int:
     p.add_argument("--threshold", type=float, default=0.75)
     p.add_argument("--pos-scale-nm", type=float, default=50_000.0,
                    help="Divisor for position normalisation. Larger = position features less dominant.")
+    p.add_argument("--endpoint-radius-nm", type=float, default=None,
+                   help="Radius (nm) for endpoint-adjacent edges (type 2). None = disabled.")
     p.add_argument("--side", choices=["pre", "post"], default="pre")
     p.add_argument("--device", default="cpu")
     p.add_argument("--seed", type=int, default=42)
@@ -544,6 +552,7 @@ def main() -> int:
         max_pairs=args.max_pairs,
         threshold=args.threshold,
         pos_scale_nm=args.pos_scale_nm,
+        endpoint_radius_nm=args.endpoint_radius_nm,
         device=args.device,
         seed=args.seed,
     )
