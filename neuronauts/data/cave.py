@@ -39,7 +39,8 @@ import numpy as np
 from ..fetch import (
     CAVE_SERVER,
     MICRONS_DATASTACK,
-    fetch_root_skeletons,
+    SkeletonData,
+    fetch_root_skeleton,
     fetch_synapses,
 )
 from ..cave_root_mapping import map_roots_between_versions
@@ -164,6 +165,57 @@ def _robust_map_roots(
     return mapping
 
 
+def _fetch_skeletons_parallel(
+    root_ids: list[int],
+    *,
+    version: int,
+    token: str | None,
+    datastack: str,
+    cave_server: str,
+    cache_dir: str | None,
+    workers: int = 8,
+) -> dict[int, "SkeletonData"]:
+    """Fetch skeletons concurrently, keyed by root ID.
+
+    v117 roots are skeletonised on demand by the service (~1/s serially), so a
+    sequential fetch of a few hundred roots takes many minutes. Each skeleton
+    is independent network I/O, so a small thread pool overlaps the waits and
+    cuts wall time roughly ``workers``-fold. Every worker writes its own
+    ``.npz`` to ``cache_dir``, so an interrupted run resumes from cache.
+    Unreachable roots (extinct / no skeleton) are returned as empty skeletons.
+    """
+    import concurrent.futures
+    import threading
+
+    progress = {"done": 0}
+    lock = threading.Lock()
+    total = len(root_ids)
+
+    def _one(rid: int) -> tuple[int, "SkeletonData"]:
+        try:
+            sk = fetch_root_skeleton(
+                int(rid), version=version, token=token, datastack=datastack,
+                cave_server=cave_server, cache_dir=cache_dir, max_retries=2,
+            )
+        except Exception:  # noqa: BLE001 - missing/extinct roots are expected
+            sk = SkeletonData(
+                root_id=int(rid), materialization_version=int(version),
+                vertices=np.zeros((0, 3), dtype=np.float32),
+                edges=np.zeros((0, 2), dtype=np.int64), radius=None,
+            )
+        with lock:
+            progress["done"] += 1
+            if progress["done"] % 25 == 0 or progress["done"] == total:
+                log.info("  skeletons fetched: %d/%d", progress["done"], total)
+        return int(rid), sk
+
+    out: dict[int, "SkeletonData"] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        for rid, sk in pool.map(_one, [int(r) for r in root_ids]):
+            out[rid] = sk
+    return out
+
+
 def fetch_v117_region(
     bbox_nm: tuple,
     *,
@@ -175,6 +227,7 @@ def fetch_v117_region(
     v1412_version: int = V1412,
     datastack: str = MICRONS_DATASTACK,
     cave_server: str = CAVE_SERVER,
+    skeleton_workers: int = 8,
 ) -> V117Region:
     """Fetch synapse co-assignment data for a spatial region at version 117.
 
@@ -294,17 +347,18 @@ def fetch_v117_region(
              100 * n_mapped / max(len(gt_labels), 1))
 
     # ------------------------------------------------------------------ #
-    # 5. Fetch v117 skeletons for each unique segment
+    # 5. Fetch v117 skeletons for each unique segment (in parallel)
     # ------------------------------------------------------------------ #
-    log.info("Fetching skeletons for %d v%d segments", len(unique_seg_ids), v117_version)
-    skeletons = fetch_root_skeletons(
+    log.info("Fetching skeletons for %d v%d segments (%d workers)",
+             len(unique_seg_ids), v117_version, skeleton_workers)
+    skeletons = _fetch_skeletons_parallel(
         unique_seg_ids,
         version=v117_version,
         token=token,
         datastack=datastack,
         cave_server=cave_server,
         cache_dir=skeleton_cache_dir,
-        allow_missing=True,
+        workers=skeleton_workers,
     )
     n_empty = sum(1 for sk in skeletons.values() if len(sk.vertices) == 0)
     if n_empty:
