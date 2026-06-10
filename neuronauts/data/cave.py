@@ -107,6 +107,63 @@ class V117Region:
         return len(self.skeletons)
 
 
+def _robust_map_roots(
+    seg_ids: list[int],
+    old_version: int,
+    new_version: int,
+    *,
+    token: str | None,
+    batch_size: int = 50,
+    per_batch_timeout_s: float = 60.0,
+    max_attempts: int = 3,
+) -> dict[int, int]:
+    """Map root IDs version-to-version with per-batch timeout and retry.
+
+    The chunkedgraph ``get_latest_roots`` endpoint occasionally hangs with no
+    timeout of its own — a single stalled call would block the whole pipeline
+    forever. We split the IDs into small batches and run each in a worker
+    thread bounded by ``per_batch_timeout_s``; a stalled batch is retried up to
+    ``max_attempts`` times. IDs that never map (all attempts time out) are
+    simply omitted from the result, so callers treat them as label 0.
+    """
+    import threading
+
+    def _run_batch(batch: list[int], box: dict) -> None:
+        # Runs in a daemon thread; a stalled call is abandoned (the thread is
+        # left to die with the process) rather than blocking the pipeline.
+        try:
+            box["result"] = map_roots_between_versions(
+                batch, old_version, new_version, token=token,
+            )
+        except Exception as exc:  # noqa: BLE001 - surfaced to the caller via box
+            box["error"] = exc
+
+    mapping: dict[int, int] = {}
+    batches = [seg_ids[i:i + batch_size] for i in range(0, len(seg_ids), batch_size)]
+    for bi, batch in enumerate(batches):
+        for attempt in range(1, max_attempts + 1):
+            box: dict = {}
+            t = threading.Thread(target=_run_batch, args=(batch, box), daemon=True)
+            t.start()
+            t.join(per_batch_timeout_s)
+            if "result" in box:
+                mapping.update(box["result"])
+                break
+            if t.is_alive():
+                log.warning(
+                    "Mapping batch %d/%d stalled past %.0fs (attempt %d/%d); abandoning",
+                    bi + 1, len(batches), per_batch_timeout_s, attempt, max_attempts,
+                )
+            elif "error" in box:
+                log.warning(
+                    "Mapping batch %d/%d errored (attempt %d/%d): %s",
+                    bi + 1, len(batches), attempt, max_attempts, repr(box["error"])[:200],
+                )
+        log.info("Mapped %d/%d batches (%d ids resolved so far)",
+                 bi + 1, len(batches), len(mapping))
+    return mapping
+
+
 def fetch_v117_region(
     bbox_nm: tuple,
     *,
@@ -224,7 +281,7 @@ def fetch_v117_region(
     # 4. Map v117 seg_ids → v1412 ground-truth labels
     # ------------------------------------------------------------------ #
     log.info("Mapping %d v%d seg_ids → v%d", len(unique_seg_ids), v117_version, v1412_version)
-    v117_to_v1412 = map_roots_between_versions(
+    v117_to_v1412 = _robust_map_roots(
         unique_seg_ids, v117_version, v1412_version, token=token,
     )
     gt_labels = np.array(
