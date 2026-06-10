@@ -218,6 +218,41 @@ class TestMaterializations:
         assert scores == sorted(scores, reverse=True)
 
 
+class TestCalibrateThreshold:
+    def test_returns_threshold_and_curve(self):
+        from neuronauts.coassign import calibrate_threshold
+
+        g = _small_graph(n=18, n_neurons=3)
+        # Edge probs that agree with true labels: high within-neuron, low across
+        same = (g.labels[g.edge_src] == g.labels[g.edge_dst]).astype(np.float32)
+        probs = np.where(same > 0, 0.9, 0.1).astype(np.float32)
+        t, f1, curve = calibrate_threshold(
+            g.n_nodes, g.edge_src, g.edge_dst, probs, g.labels,
+        )
+        assert 0.0 <= t <= 1.0
+        assert 0.0 <= f1 <= 1.0
+        assert len(curve) > 1
+        # With clean separable probs, the best F1 should be high
+        assert f1 > 0.8
+
+    def test_beats_or_matches_fixed_half(self):
+        from neuronauts.coassign import calibrate_threshold, greedy_cluster, pairwise_precision_recall
+
+        g = _small_graph(n=21, n_neurons=3)
+        rng = np.random.default_rng(1)
+        # Noisy-but-informative probs
+        same = (g.labels[g.edge_src] == g.labels[g.edge_dst]).astype(np.float32)
+        probs = np.clip(same * 0.6 + rng.uniform(0, 0.4, g.n_edges), 0, 1).astype(np.float32)
+        t, f1_cal, _ = calibrate_threshold(g.n_nodes, g.edge_src, g.edge_dst, probs, g.labels)
+        labels_half = greedy_cluster(
+            g.n_nodes, g.edge_src, g.edge_dst, probs, threshold=0.5,
+            rng=np.random.default_rng(0),
+        )
+        f1_half = pairwise_precision_recall(labels_half, g.labels)["f1"]
+        # Calibrated F1 is the max over the sweep, which includes ~0.5
+        assert f1_cal >= f1_half - 1e-6
+
+
 class TestPairwisePR:
     def test_perfect_partition(self):
         from neuronauts.coassign import pairwise_precision_recall

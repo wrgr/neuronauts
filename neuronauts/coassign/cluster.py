@@ -191,3 +191,52 @@ def coverage_at_k(
         if r["recall"] >= recall_threshold:
             return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# Threshold calibration
+# ---------------------------------------------------------------------------
+
+def calibrate_threshold(
+    n_nodes: int,
+    edge_src: np.ndarray,
+    edge_dst: np.ndarray,
+    edge_probs: np.ndarray,
+    true_labels: np.ndarray,
+    *,
+    thresholds: np.ndarray | None = None,
+    seed: int = 0,
+    ignore_label: int = 0,
+) -> tuple[float, float, list[tuple[float, float]]]:
+    """Pick the greedy-cluster threshold that maximises pairwise F1.
+
+    The model produces well-calibrated edge probabilities, but the partition
+    quality depends strongly on the cut point fed to ``greedy_cluster``. A
+    single fixed 0.5 is rarely optimal — denser graphs need a higher bar to
+    avoid over-merging, sparser ones a lower bar to avoid over-splitting.
+
+    This sweeps candidate thresholds, clusters at each, and scores the result
+    against ``true_labels``. Returns ``(best_threshold, best_f1, curve)`` where
+    ``curve`` is the list of ``(threshold, f1)`` pairs (useful for plotting).
+
+    Note: with a single region this is in-sample calibration of one scalar
+    parameter. For an unbiased estimate, calibrate on held-out graphs and apply
+    the chosen threshold to unseen data — a single threshold cannot meaningfully
+    overfit thousands of pairs, but the principle matters at scale.
+    """
+    if thresholds is None:
+        thresholds = np.linspace(0.30, 0.90, 25)
+    rng = np.random.default_rng(seed)
+
+    curve: list[tuple[float, float]] = []
+    best_t, best_f1 = 0.5, -1.0
+    for t in thresholds:
+        labels = greedy_cluster(
+            n_nodes, edge_src, edge_dst, edge_probs,
+            threshold=float(t), rng=np.random.default_rng(rng.integers(1 << 30)),
+        )
+        f1 = pairwise_precision_recall(labels, true_labels, ignore_label=ignore_label)["f1"]
+        curve.append((float(t), float(f1)))
+        if f1 > best_f1:
+            best_f1, best_t = f1, float(t)
+    return best_t, best_f1, curve

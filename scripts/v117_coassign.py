@@ -120,8 +120,25 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--epochs",
         type=int,
-        default=60,
+        default=120,
         help="Training epochs for SynapseCoassigner",
+    )
+    p.add_argument(
+        "--d-model",
+        type=int,
+        default=128,
+        help="Hidden dimension of the SynapseCoassigner GNN",
+    )
+    p.add_argument(
+        "--n-layers",
+        type=int,
+        default=4,
+        help="Number of message-passing layers",
+    )
+    p.add_argument(
+        "--no-calibrate",
+        action="store_true",
+        help="Skip threshold calibration (use fixed threshold=0.5)",
     )
     p.add_argument(
         "--k",
@@ -158,6 +175,7 @@ def main() -> None:
     from neuronauts.coassign import (
         SynapseCoassigner,
         build_synapse_graph,
+        calibrate_threshold,
         coverage_at_k,
         materializations,
         pairwise_precision_recall,
@@ -242,10 +260,12 @@ def main() -> None:
     # Step 4 — Train SynapseCoassigner
     # ------------------------------------------------------------------
     t2 = time.time()
-    model = SynapseCoassigner(node_dim=graph.node_dim)
+    model = SynapseCoassigner(
+        node_dim=graph.node_dim, d_model=args.d_model, n_layers=args.n_layers,
+    )
     n_params = sum(p.numel() for p in model.parameters())
-    log.info("Training SynapseCoassigner (%d parameters, %d epochs) ...",
-             n_params, args.epochs)
+    log.info("Training SynapseCoassigner (%d parameters, d_model=%d, n_layers=%d, %d epochs) ...",
+             n_params, args.d_model, args.n_layers, args.epochs)
 
     history = train(model, [graph], n_epochs=args.epochs, device=args.device, seed=args.seed)
 
@@ -271,9 +291,22 @@ def main() -> None:
     with torch.no_grad():
         probs = model.edge_probs(node_feat, edge_src_t, edge_dst_t, same_seg_t).numpy()
 
+    # Calibrate the clustering threshold: the model produces good edge scores,
+    # but a fixed 0.5 cut rarely yields the best partition. Sweep for the
+    # F1-maximising threshold on this region's labels.
+    threshold = 0.5
+    if not args.no_calibrate:
+        threshold, cal_f1, curve = calibrate_threshold(
+            graph.n_nodes, graph.edge_src, graph.edge_dst, probs, graph.labels,
+            seed=args.seed,
+        )
+        log.info("Calibrated threshold=%.3f (pairwise F1=%.3f); default 0.5 F1=%.3f",
+                 threshold, cal_f1,
+                 dict(curve).get(min(dict(curve), key=lambda t: abs(t - 0.5)), float("nan")))
+
     mats = materializations(
         graph.n_nodes, graph.edge_src, graph.edge_dst, probs,
-        K=args.k, seed=args.seed,
+        K=args.k, threshold=threshold, seed=args.seed,
     )
 
     # ------------------------------------------------------------------
@@ -288,6 +321,7 @@ def main() -> None:
     print(f"  Neurons:     {n_neurons} distinct v1412 root IDs")
     print(f"  Segments:    {region.n_segments} v117 segments")
     print(f"  Edges:       {graph.n_edges}")
+    print(f"  Threshold:   {threshold:.3f} {'(calibrated)' if not args.no_calibrate else '(fixed)'}")
     print(f"  Wall time:   {total_time:.1f} s")
     print()
     print("Top-K materializations (pairwise metrics on labeled synapses):")

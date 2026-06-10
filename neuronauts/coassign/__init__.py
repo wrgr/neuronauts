@@ -39,7 +39,13 @@ Quick start
 
 from .graph import SynapseGraph, build_synapse_graph
 from .model import SynapseCoassigner
-from .cluster import greedy_cluster, materializations, pairwise_precision_recall, coverage_at_k
+from .cluster import (
+    calibrate_threshold,
+    coverage_at_k,
+    greedy_cluster,
+    materializations,
+    pairwise_precision_recall,
+)
 from .train import train
 
 __all__ = [
@@ -51,4 +57,5 @@ __all__ = [
     "materializations",
     "pairwise_precision_recall",
     "coverage_at_k",
+    "calibrate_threshold",
 ]
