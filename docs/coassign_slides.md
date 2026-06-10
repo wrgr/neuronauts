@@ -490,28 +490,59 @@ These are interdigitated neurons that sit right next to each other. Forcing the 
 
 ---
 
-# Real v117 results
+# Real v117 results — it runs end-to-end
 
-<!-- RESULTS_PLACEHOLDER -->
+A 20 µm box of real mouse cortex, **actual CAVE data** (no synthetic splits):
+synapses at v117, ground truth via the real v117→v1412 map, DNA from
+`SkeletonGNN` on real v117 skeletons.
 
-`python scripts/v117_coassign.py --token YOUR_TOKEN --cache-dir /tmp/cache`
+<div class="columns">
+<div>
 
-This run uses **actual CAVE data**, not synthetic splits:
-- Synapses fetched from CAVE at materialization **v117**
-- Ground-truth labels from the real **v117 → v1412** mapping
-- DNA from `SkeletonGNN` on the **real v117 skeletons**
-
-<br>
-
-| Metric | Value |
+| Region fact | Value |
 |---|---|
-| Synapses fetched | *(populated from live run)* |
-| v117 segments | *(populated from live run)* |
-| Distinct v1412 neurons | *(populated from live run)* |
-| Pairwise precision / recall / F1 | *(populated from live run)* |
-| coverage@5 | *(populated from live run)* |
+| Synapses | **782** (782 labeled) |
+| v117 segments | **60** |
+| Distinct v1412 neurons | **60** |
+| Graph edges | **15,802** |
+| Same-seg / spatial | 60% / 40% |
+| Wall time | ~9.5 min |
 
-> This is the honest test: real splits, real frankenmerges, real morphology.
+</div>
+<div>
+
+**100% of synapses got a v1412 label** — the version mapping is reliable.
+
+The model **learns**: over 40 epochs the edge loss falls 0.69 → 0.44, and edge-level precision/recall climb to **0.76 / 0.88**.
+
+`python scripts/v117_coassign.py \`
+`  --token $TOK --max-segs 60`
+
+</div>
+</div>
+
+> This is the honest test: real splits, real frankenmerges, real morphology — and 60 distinct neurons interdigitated in one small box.
+
+---
+
+# Real v117 results — the honest gap
+
+Edge scoring is strong, but the **partition** is not yet:
+
+| Materialization | Pairwise P | Pairwise R | F1 |
+|---|---|---|---|
+| [1] best log-likelihood | 0.448 | 0.583 | **0.507** |
+| [2] | 0.375 | 0.588 | 0.458 |
+| [3] | 0.389 | 0.574 | 0.464 |
+| **coverage@5** | | | **False** (best R = 0.588) |
+
+**What this tells us** — and it's the central lesson:
+
+- **Edge-level learning works** (edge P/R = 0.76 / 0.88). The model can tell, for a given pair, whether they share a neuron.
+- **Greedy clustering loses that signal**: turning good edge probabilities into a good *partition* is the hard part. Errors compound across the greedy pivot, and the fixed threshold = 0.5 isn't calibrated for this denser, harder real-data regime.
+- This is exactly why **threshold calibration (#1)** and **prototype/EM assignment (#4)** are the top priorities — the bottleneck is the partition step, not the encoder.
+
+> Synthetic splits gave P=0.95; real, interdigitated v117 gives F1≈0.51. The gap *is* the research problem.
 
 ---
 
