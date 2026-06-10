@@ -74,6 +74,9 @@ from .assemble import (
     evaluate_partition_ari,
     partition_half_synapses,
     train_partition_gnn,
+    assemble_fragments,
+    build_fragment_graph,
+    score_edge,
 )
 
 __all__ = [
@@ -124,7 +127,7 @@ __all__ = [
     # Data stage: skeleton → Fragment
     "extract_fragments_for_region",
     "skeleton_to_fragment",
-    # Represent stage: Fragment → tree-DNA embedding
+    # Represent stage: Fragment → tree-DNA embedding (path-sampling)
     "TreeDNAEncoder",
     "encode_fragments",
     "featurize_fragment",
@@ -153,4 +156,8 @@ __all__ = [
     "evaluate_partition_ari",
     "partition_half_synapses",
     "train_partition_gnn",
+    # Assemble stage: fragment-proximity graph (endpoint-based stitching)
+    "assemble_fragments",
+    "build_fragment_graph",
+    "score_edge",
 ]
