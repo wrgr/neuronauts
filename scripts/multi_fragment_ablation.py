@@ -417,6 +417,9 @@ def main() -> int:
                    help="Min nucleus volume µm³ (cell-type proxy)")
     p.add_argument("--volume-max", type=float, default=None,
                    help="Max nucleus volume µm³ (cell-type proxy)")
+    p.add_argument("--encoder", choices=["path", "gnn"], default="path",
+                   help="path=TreeDNAEncoder (hand-crafted features), "
+                        "gnn=SkeletonGNN (data-driven, orientation-free)")
     args = p.parse_args()
 
     if args.n_splits < 2:
@@ -448,7 +451,7 @@ def main() -> int:
         vol_str = f"  volume filter: {lo}–{hi} µm³ (same-type proxy)\n"
 
     print(f"\n{'='*60}")
-    print(f"Multi-fragment ablation: {args.n_splits}-way split")
+    print(f"Multi-fragment ablation: {args.n_splits}-way split  (encoder={args.encoder})")
     print(f"  neurons: {args.n_neurons}  fragments: {len(fragments)}")
     print(vol_str, end="")
     print(f"{'='*60}")
@@ -465,6 +468,7 @@ def main() -> int:
         max_pairs=args.max_pairs,
         device=args.device,
         seed=args.seed,
+        encoder_type=args.encoder,
     )
     return 0
 
