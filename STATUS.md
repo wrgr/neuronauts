@@ -9,7 +9,7 @@ Delivered:
 - `CONTRIBUTING.md` + `docs/stage_ownership.md` — contributor docs and ownership map
 - `tests/test_schemas.py` — smoke tests for all contracts
 
-## Phase 1 — IN PROGRESS
+## Phase 1 — COMPLETE
 Branch: `claude/tree-dna-phase-1-G1DNn`
 
 **Architecture:** synapse-level global partitioning.  Nodes = synapses; node
@@ -77,6 +77,12 @@ Cell type table: `aibs_metamodel_celltypes_v661_merged.csv.gz` (19,735 L2/3 pyra
     individual morphological identity within a cell type. The bottleneck was the features,
     not the loss function.
 
+**Multi-fragment within-volume (50 neurons, 4-way split, volume 300–5000 µm³), `--encoder path` (TreeDNAEncoder):**
+  - Spatial baseline: **0.515** (chance — uniform synapse positions)
+  - DNA AUC random init: **0.617** — harder start than 2-half split (0.728), confirms narrower volume range is more challenging
+  - Trained AUC: **0.626** (+0.009) — near-zero improvement; pos_cos 0.943, neg_cos 0.939 at ep 80 — **collapsed** (same pattern as within-type 23P bisection)
+  - **Interpretation**: 4-way split with volume filter exposes same collapse as within-type 23P bisection — the path encoder's orientation-dependent features can't separate same-volume-range neurons with short quarter-skeleton fragments. SkeletonGNN needed.
+
 ### Summary table
 
 | Experiment | Encoder | Random init AUC | Trained AUC | Δ | neg_cos (final) |
@@ -85,6 +91,7 @@ Cell type table: `aibs_metamodel_celltypes_v661_merged.csv.gz` (19,735 L2/3 pyra
 | Within-type bisection (40 × 23P) | path | 0.740 | 0.725 | −0.015 | 0.993 ✗ collapsed |
 | Within-type 4-chunk (30 × 23P) | path | 0.599 | 0.687 | +0.089 | 0.822 (partial) |
 | Within-type bisection (40 × 23P) | **gnn** | **0.768** | **0.829** | **+0.061** | **0.345 ✓** |
+| Multi-fragment 4-way (50 neurons, vol-filter) | path | 0.617 | 0.626 | +0.009 | 0.939 ✗ collapsed |
 
 ### Why SkeletonGNN replaces TreeDNAEncoder
 
@@ -151,7 +158,10 @@ merge errors) but informative — used as a soft evidence channel, not as ground
   - Training signal: pos_sim 0.878→0.975, neg_sim 0.601→−0.161 — model genuinely learns
   - **Interpretation**: remaining gap is from missing cross-segment spatial edges (inter-segment
     distances exceed k-NN reach with current skeleton offsets); endpoint-adjacent edges will close this
-- [ ] Endpoint-adjacent edges in `build_half_synapse_graph` (Phase 2.2)
+- [x] `neuronauts/assemble/fragment_graph.py` — `build_fragment_graph`, `assemble_fragments`, `score_edge` (endpoint-proximity stitching, Phase 2.2 foundation)
+- [x] `tests/test_assemble_fragment_graph.py` — 22 tests (graph construction, scoring, union-find clustering, cross-region spans, pooled DNA, degree cap)
+- [x] `scripts/multi_fragment_ablation.py` — N-way volume-filtered ablation (`--volume-min/max` for same-type proxy, `--n-splits N`)
+- [ ] Endpoint-adjacent edges wired into `build_half_synapse_graph` using `fragment_graph.build_fragment_graph` (Phase 2.2)
 - [ ] Real-data ARI evaluation with CAVE v117 seg IDs
 
 ## See also
