@@ -97,6 +97,32 @@ Both encoders run on the *same* fetched skeletons (seed 42) for an apples-to-app
     granularity must stay at half-skeleton scale or coarser; the fix for finer fragments is a
     non-collapsing objective (InfoNCE/NT-Xent), not a different encoder.**
 
+**NT-Xent ablation (GNN encoder, 4-way 50-neuron vol-filter, seed 42):**
+  - NT-Xent loss (τ=0.1) also collapses: pos_cos = neg_cos ≈ 0.997, loss pinned at log(2N−1)=4.60
+  - Trained AUC: **0.604** (+0.008) — no meaningful improvement over triplet collapse
+  - **Root cause**: with all embeddings clustered near the same direction (cos≈0.997), NT-Xent
+    gradient ∝ (softmax − y) ≈ 1/N per pair → effectively zero. NT-Xent shares the same
+    uniform-collapse fixed point as triplet loss when morphological signal is insufficient.
+    This is a *data* limitation (within-type quarter-skeletons are genuinely indistinguishable),
+    not a loss-function limitation. NT-Xent does NOT fix data-induced collapse.
+
+**NT-Xent ablation (GNN encoder, 2-way 40-neuron diverse, seed 42):**
+  - Trained AUC: **0.740** (+0.001) vs triplet loss's **0.829** (+0.061) — significant regression
+  - Loss is driven by the *high initial cosine similarity* of GNN embeddings (cos≈0.97 at init):
+    NT-Xent gradient ∝ 1/N is too small to move the network when all embeddings are already
+    clustered; triplet loss has constant gradient regardless of embedding similarity.
+  - **Conclusion**: NT-Xent is worse than triplet/cosine contrastive for our GNN architecture.
+    The GNN emits high-cosine embeddings at initialization; triplet's constant gradient
+    is better suited. NT-Xent would benefit from much higher temperature (τ≥1.0) or explicit
+    variance regularization (VICReg) to prevent the high-cosine collapse at initialization.
+
+**NT-Xent ablation (path encoder, 2-way 40-neuron diverse, seed 42):**
+  - Trained AUC: **0.852** (+0.123) vs triplet loss's **0.897** (+0.169) — small regression
+  - The path encoder benefits from random path-sampling diversity at init (lower initial cos than GNN)
+    so NT-Xent gradient is stronger, but triplet still wins because triplet runs ~5 optimizer
+    steps/epoch vs. NT-Xent's ~2 steps/epoch (same batch_size=32).  Per-step training signal is
+    comparable; NT-Xent needs ~200 epochs to match triplet's 80 epochs.
+
 ### Summary table
 
 | Experiment | Encoder | Random init AUC | Trained AUC | Δ | neg_cos (final) |
@@ -126,12 +152,13 @@ representations rather than baked in as fixed features.
 ### Next steps for the training recipe (both encoders)
 - **Hard negative mining**: sample negatives with highest current cosine similarity instead
   of random — the encoder is never forced to push apart the nearby pairs it's confusing
-- **InfoNCE / NT-Xent loss** (SimCLR-style): normalised temperature-scaled cross-entropy
-  doesn't suffer from the same collapse mode as triplet loss; within-batch negatives provide
-  denser gradient signal
+- **VICReg** (variance-invariance-covariance regularization): adds an explicit variance term
+  that prevents dimensional collapse; complements triplet loss without replacing it; the right
+  lever for fine-grained (quarter-skeleton) fragments where data signal is weak
 - **Larger margin**: current margin=1.0 may be too loose; try margin=2.0 to enforce wider separation
 - **More paths** (n_paths=16 instead of 6): larger variance in path samples per fragment
   stabilises the training signal for within-type cases
+- ~~**InfoNCE / NT-Xent loss**~~ — tried and reverted; see NT-Xent ablation above for diagnosis
 
 ## Phase 2 — IN PROGRESS
 Branch: `claude/tree-dna-phase-1-G1DNn`
@@ -183,8 +210,11 @@ merge errors) but informative — used as a soft evidence channel, not as ground
 - [x] **Multi-fragment 4-way ablation, both encoders** (see Within-type summary table): isolates
       fragment *size* — not encoder choice — as the collapse driver. GNN beats path only at
       half-skeleton scale; both collapse on quarter-skeletons under triplet loss.
-- [ ] **Non-collapsing objective** (InfoNCE/NT-Xent) for fine-grained fragments — the
-      experimentally-identified next lever, now backed by two collapse rows in the table
+- [x] **NT-Xent ablation** — tried and reverted: NT-Xent collapses identically on 4-way within-type
+      (data limitation, not loss limitation) and gives worse AUC on 2-way diverse (GNN: 0.829→0.740,
+      path: 0.897→0.852). **Triplet/cosine contrastive is retained** — better gradient signal for our
+      initialization regime. VICReg (variance regularization) is the next lever if we need fine-grained
+      fragments; see summary above for diagnosis.
 - [ ] Endpoint-adjacent edges wired into `build_half_synapse_graph` using `fragment_graph.build_fragment_graph` (Phase 2.2)
 - [ ] Real-data ARI evaluation with CAVE v117 seg IDs
 
