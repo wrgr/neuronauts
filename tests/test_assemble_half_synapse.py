@@ -216,6 +216,160 @@ class TestBuildHalfSynapseGraph:
         assert np.all(cos_col >= -1.0 - 1e-5)
         assert np.all(cos_col <= 1.0 + 1e-5)
 
+    def test_endpoint_adj_absent_by_default(self):
+        """Default call (no endpoint_radius_nm) produces no type-2 edges."""
+        from neuronauts.assemble.half_synapse_graph import build_half_synapse_graph
+
+        region = _make_region(n_synapses=12)
+        frags = [_make_fragment(i, dna_dim=8) for i in range(1, 5)]
+        graph = build_half_synapse_graph(region, frags, side="pre")
+        assert 2 not in set(np.unique(graph.edge_type).tolist())
+
+    def test_endpoint_adj_edges_when_close(self):
+        """Two fragments with endpoints touching → type-2 edges between their synapse nodes."""
+        from neuronauts.assemble.half_synapse_graph import build_half_synapse_graph
+        from neuronauts.schemas import Fragment
+
+        rng = np.random.default_rng(77)
+        N = 6
+        # seg 10: synapses at positions [0,0,0]-region, seg 20: synapses elsewhere
+        anchor_a = np.array([10_000, 10_000, 10_000], dtype=np.float32)
+        anchor_b = np.array([80_000, 80_000, 80_000], dtype=np.float32)
+        pre_pt = np.concatenate([
+            anchor_a + rng.uniform(-500, 500, (3, 3)).astype(np.float32),
+            anchor_b + rng.uniform(-500, 500, (3, 3)).astype(np.float32),
+        ])
+        pre_seg = np.array([10, 10, 10, 20, 20, 20], dtype=np.int64)
+        pre_root = np.array([1, 1, 1, 2, 2, 2], dtype=np.int64)
+        post_pt = pre_pt.copy()
+
+        from neuronauts.schemas import Region
+        region = Region(
+            region_id="ep_test",
+            bbox_nm=((0,0,0),(100_000,100_000,100_000)),
+            voxel_size_nm=(8,8,40), seg_version=117, label_version=1412,
+            pre_pt_nm=pre_pt, post_pt_nm=post_pt,
+            pre_root_id=pre_root, post_root_id=pre_root,
+            synapse_id=np.arange(N, dtype=np.int64),
+            pre_seg_id=pre_seg, post_seg_id=pre_seg,
+        ).validate()
+
+        # Fragment 10 endpoint near fragment 20 endpoint — gap < 5000 nm
+        ep_a = np.array([[10_000, 10_000, 10_000], [12_000, 10_000, 10_000]], dtype=np.float32)
+        ep_b = np.array([[13_000, 10_000, 10_000], [80_000, 80_000, 80_000]], dtype=np.float32)
+
+        frag10 = Fragment(
+            fragment_id=10, region_id="ep_test", base_root_id=10,
+            vertices_nm=ep_a, edges=np.array([[0,1]], dtype=np.int64),
+            endpoints_nm=ep_a, radius_nm=np.ones(2, dtype=np.float32)*300,
+            synapse_indices=np.array([], dtype=np.int64),
+        ).validate()
+        frag20 = Fragment(
+            fragment_id=20, region_id="ep_test", base_root_id=20,
+            vertices_nm=ep_b, edges=np.array([[0,1]], dtype=np.int64),
+            endpoints_nm=ep_b, radius_nm=np.ones(2, dtype=np.float32)*300,
+            synapse_indices=np.array([], dtype=np.int64),
+        ).validate()
+
+        graph = build_half_synapse_graph(
+            region, [frag10, frag20], side="pre", k_spatial=0,
+            endpoint_radius_nm=5_000,
+        )
+        ep_mask = graph.edge_type == 2
+        # frag10 has 3 nodes, frag20 has 3 nodes → 3×3×2 = 18 directed endpoint edges
+        assert ep_mask.sum() == 18, f"expected 18 endpoint-adj edges, got {ep_mask.sum()}"
+
+    def test_endpoint_adj_edge_feat_shape(self):
+        """Edge features remain (n_edges, 3) even when endpoint edges are added."""
+        from neuronauts.assemble.half_synapse_graph import build_half_synapse_graph
+        from neuronauts.schemas import Fragment, Region
+
+        rng = np.random.default_rng(55)
+        N = 4
+        pre_pt = rng.uniform(0, 5_000, (N, 3)).astype(np.float32)
+        pre_seg = np.array([1, 1, 2, 2], dtype=np.int64)
+        region = Region(
+            region_id="t2", bbox_nm=((0,0,0),(10_000,10_000,10_000)),
+            voxel_size_nm=(8,8,40), seg_version=117, label_version=1412,
+            pre_pt_nm=pre_pt, post_pt_nm=pre_pt.copy(),
+            pre_root_id=np.array([1,1,2,2], dtype=np.int64),
+            post_root_id=np.ones(N, dtype=np.int64),
+            synapse_id=np.arange(N, dtype=np.int64),
+            pre_seg_id=pre_seg, post_seg_id=pre_seg,
+        ).validate()
+
+        ep1 = np.array([[0,0,0],[1_000,0,0]], dtype=np.float32)
+        ep2 = np.array([[1_500,0,0],[9_000,0,0]], dtype=np.float32)
+        frag1 = Fragment(
+            fragment_id=1, region_id="t2", base_root_id=1,
+            vertices_nm=ep1, edges=np.array([[0,1]], dtype=np.int64),
+            endpoints_nm=ep1, radius_nm=np.ones(2, dtype=np.float32)*300,
+            synapse_indices=np.array([], dtype=np.int64),
+        ).validate()
+        frag2 = Fragment(
+            fragment_id=2, region_id="t2", base_root_id=2,
+            vertices_nm=ep2, edges=np.array([[0,1]], dtype=np.int64),
+            endpoints_nm=ep2, radius_nm=np.ones(2, dtype=np.float32)*300,
+            synapse_indices=np.array([], dtype=np.int64),
+        ).validate()
+
+        graph = build_half_synapse_graph(
+            region, [frag1, frag2], side="pre", k_spatial=1,
+            endpoint_radius_nm=2_000,
+        )
+        # edge_feat must always be (n_edges, 3)
+        assert graph.edge_feat.shape == (graph.n_edges, 3)
+        assert 2 in set(np.unique(graph.edge_type).tolist())
+
+    def test_endpoint_adj_cos_sim_in_feat(self):
+        """Type-2 edge features: [0, 0, dna_cos_sim] — both type bits are 0."""
+        from neuronauts.assemble.half_synapse_graph import build_half_synapse_graph
+        from neuronauts.schemas import Fragment, Region
+
+        rng = np.random.default_rng(33)
+        N = 4
+        pre_pt = rng.uniform(0, 5_000, (N, 3)).astype(np.float32)
+        pre_seg = np.array([1, 1, 2, 2], dtype=np.int64)
+        region = Region(
+            region_id="t3", bbox_nm=((0,0,0),(10_000,10_000,10_000)),
+            voxel_size_nm=(8,8,40), seg_version=117, label_version=1412,
+            pre_pt_nm=pre_pt, post_pt_nm=pre_pt.copy(),
+            pre_root_id=np.array([1,1,2,2], dtype=np.int64),
+            post_root_id=np.ones(N, dtype=np.int64),
+            synapse_id=np.arange(N, dtype=np.int64),
+            pre_seg_id=pre_seg, post_seg_id=pre_seg,
+        ).validate()
+
+        ep1 = np.array([[0,0,0],[1_000,0,0]], dtype=np.float32)
+        ep2 = np.array([[1_500,0,0],[9_000,0,0]], dtype=np.float32)
+        dna1 = np.array([1,0,0,0,0,0,0,0], dtype=np.float32)
+        dna2 = np.array([0,1,0,0,0,0,0,0], dtype=np.float32)
+
+        frag1 = Fragment(
+            fragment_id=1, region_id="t3", base_root_id=1,
+            vertices_nm=ep1, edges=np.array([[0,1]], dtype=np.int64),
+            endpoints_nm=ep1, radius_nm=np.ones(2, dtype=np.float32)*300,
+            synapse_indices=np.array([], dtype=np.int64), dna=dna1,
+        ).validate()
+        frag2 = Fragment(
+            fragment_id=2, region_id="t3", base_root_id=2,
+            vertices_nm=ep2, edges=np.array([[0,1]], dtype=np.int64),
+            endpoints_nm=ep2, radius_nm=np.ones(2, dtype=np.float32)*300,
+            synapse_indices=np.array([], dtype=np.int64), dna=dna2,
+        ).validate()
+
+        graph = build_half_synapse_graph(
+            region, [frag1, frag2], side="pre", k_spatial=0,
+            endpoint_radius_nm=2_000,
+        )
+        ep_mask = graph.edge_type == 2
+        assert ep_mask.sum() > 0
+        # Both type bits must be 0 for type-2 edges
+        assert np.all(graph.edge_feat[ep_mask, 0] == 0)
+        assert np.all(graph.edge_feat[ep_mask, 1] == 0)
+        # dna1 ⊥ dna2 → cosine similarity = 0
+        np.testing.assert_allclose(graph.edge_feat[ep_mask, 2], 0.0, atol=1e-5)
+
 
 # ---------------------------------------------------------------------------
 # HalfSynapseGNN tests
@@ -271,6 +425,52 @@ class TestHalfSynapseGNN:
             out = gnn(nf, es, ed, et)
         norms = out.norm(dim=-1)
         np.testing.assert_allclose(norms.numpy(), np.ones(8), atol=1e-5)
+
+    def test_gnn_auto_detects_3_edge_types(self):
+        """train_partition_gnn adapts to n_edge_types=3 when graph has type-2 edges."""
+        pytest.importorskip("torch")
+        from neuronauts.assemble.half_synapse_graph import build_half_synapse_graph
+        from neuronauts.assemble.partition_gnn import train_partition_gnn
+        from neuronauts.schemas import Fragment, Region
+        import torch
+
+        rng = np.random.default_rng(99)
+        N = 8
+        pre_pt = rng.uniform(0, 5_000, (N, 3)).astype(np.float32)
+        pre_seg = np.array([1,1,1,1,2,2,2,2], dtype=np.int64)
+        pre_root = np.array([1,1,1,1,2,2,2,2], dtype=np.int64)
+        region = Region(
+            region_id="t4", bbox_nm=((0,0,0),(10_000,10_000,10_000)),
+            voxel_size_nm=(8,8,40), seg_version=117, label_version=1412,
+            pre_pt_nm=pre_pt, post_pt_nm=pre_pt.copy(),
+            pre_root_id=pre_root, post_root_id=pre_root,
+            synapse_id=np.arange(N, dtype=np.int64),
+            pre_seg_id=pre_seg, post_seg_id=pre_seg,
+        ).validate()
+
+        ep1 = np.array([[0,0,0],[1_000,0,0]], dtype=np.float32)
+        ep2 = np.array([[1_500,0,0],[9_000,0,0]], dtype=np.float32)
+        frag1 = Fragment(
+            fragment_id=1, region_id="t4", base_root_id=1,
+            vertices_nm=ep1, edges=np.array([[0,1]], dtype=np.int64),
+            endpoints_nm=ep1, radius_nm=np.ones(2)*300,
+            synapse_indices=np.array([], dtype=np.int64),
+        ).validate()
+        frag2 = Fragment(
+            fragment_id=2, region_id="t4", base_root_id=2,
+            vertices_nm=ep2, edges=np.array([[0,1]], dtype=np.int64),
+            endpoints_nm=ep2, radius_nm=np.ones(2)*300,
+            synapse_indices=np.array([], dtype=np.int64),
+        ).validate()
+
+        graph = build_half_synapse_graph(
+            region, [frag1, frag2], side="pre", k_spatial=2,
+            endpoint_radius_nm=2_000,
+        )
+        assert 2 in set(np.unique(graph.edge_type).tolist()), "expected type-2 edges"
+        _, history = train_partition_gnn(graph, n_epochs=3, log_every=0)
+        assert len(history["loss"]) == 3
+        assert all(np.isfinite(v) for v in history["loss"])
 
     def test_train_history_keys(self):
         pytest.importorskip("torch")

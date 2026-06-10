@@ -101,6 +101,8 @@ def build_half_synapse_graph(
     max_dist_nm: float | None = None,
     pos_scale_nm: float = 50_000.0,
     max_same_seg_pairs: int = 200,
+    endpoint_radius_nm: float | None = None,
+    max_endpoint_pairs: int = 200,
 ) -> HalfSynapseGraph:
     """Build a typed half-synapse graph with DNA-enriched node features.
 
@@ -123,6 +125,13 @@ def build_half_synapse_graph(
     max_same_seg_pairs:
         Cap on same-segment directed pairs *per segment* to avoid O(N²) blowup
         from frankenmerge segments with many synapses.
+    endpoint_radius_nm:
+        When set, adds edge type 2 (endpoint-adjacent) between synapse nodes
+        whose parent fragments have endpoints within this distance.  ``None``
+        (default) disables endpoint edges entirely.
+    max_endpoint_pairs:
+        Cap on directed endpoint-adjacent pairs *per fragment pair* to avoid
+        O(M²) blowup when both fragments have many synapses.
 
     Returns
     -------
@@ -228,6 +237,62 @@ def build_half_synapse_graph(
             spatial_dst.append(j)
 
     # -----------------------------------------------------------------
+    # Endpoint-adjacent edges (edge type 2)
+    # -----------------------------------------------------------------
+    endpoint_src: list[int] = []
+    endpoint_dst: list[int] = []
+
+    if endpoint_radius_nm is not None and fragments:
+        # Map base_root_id → node indices present on this side
+        seg_to_nodes: dict[int, list[int]] = {}
+        for i in range(N):
+            sid = int(seg_ids[i])
+            if sid != 0:
+                seg_to_nodes.setdefault(sid, []).append(i)
+
+        ep_positions_list: list[np.ndarray] = []
+        ep_frag_sids: list[int] = []
+        for frag in fragments:
+            sid = int(frag.base_root_id)
+            if sid not in seg_to_nodes:
+                continue
+            eps = np.asarray(frag.endpoints_nm, dtype=np.float32)
+            if len(eps) == 0:
+                continue
+            ep_positions_list.append(eps)
+            ep_frag_sids.extend([sid] * len(eps))
+
+        if ep_positions_list and len(ep_frag_sids) > 1:
+            all_ep = np.concatenate(ep_positions_list, axis=0)  # [P, 3]
+            ep_tree = cKDTree(all_ep)
+            pairs_raw = ep_tree.query_pairs(r=endpoint_radius_nm, output_type="ndarray")
+
+            seen_frag_pairs: set[tuple[int, int]] = set()
+            for pi, pj in pairs_raw:
+                fi_sid = ep_frag_sids[int(pi)]
+                fj_sid = ep_frag_sids[int(pj)]
+                if fi_sid == fj_sid:
+                    continue
+                key = (min(fi_sid, fj_sid), max(fi_sid, fj_sid))
+                if key in seen_frag_pairs:
+                    continue
+                seen_frag_pairs.add(key)
+
+                nodes_i = seg_to_nodes.get(fi_sid, [])
+                nodes_j = seg_to_nodes.get(fj_sid, [])
+                if not nodes_i or not nodes_j:
+                    continue
+
+                pairs_ij = [(u, v) for u in nodes_i for v in nodes_j]
+                if len(pairs_ij) > max_endpoint_pairs:
+                    rng_ep = np.random.default_rng((fi_sid ^ fj_sid) % (2**32))
+                    sel = rng_ep.choice(len(pairs_ij), max_endpoint_pairs, replace=False)
+                    pairs_ij = [pairs_ij[int(k)] for k in sel]
+                for u, v in pairs_ij:
+                    endpoint_src.extend([u, v])
+                    endpoint_dst.extend([v, u])
+
+    # -----------------------------------------------------------------
     # Assemble edges + compute edge features
     # -----------------------------------------------------------------
     def _cos_sim(srcs: list[int], dsts: list[int]) -> np.ndarray:
@@ -239,7 +304,8 @@ def build_half_synapse_graph(
 
     n_ss = len(same_seg_src)
     n_sp = len(spatial_src)
-    total = n_ss + n_sp
+    n_ep = len(endpoint_src)
+    total = n_ss + n_sp + n_ep
 
     if total == 0:
         edge_src = np.zeros(0, dtype=np.int64)
@@ -247,16 +313,18 @@ def build_half_synapse_graph(
         edge_type = np.zeros(0, dtype=np.int64)
         edge_feat = np.zeros((0, 3), dtype=np.float32)
     else:
-        edge_src = np.array(same_seg_src + spatial_src, dtype=np.int64)
-        edge_dst = np.array(same_seg_dst + spatial_dst, dtype=np.int64)
+        edge_src = np.array(same_seg_src + spatial_src + endpoint_src, dtype=np.int64)
+        edge_dst = np.array(same_seg_dst + spatial_dst + endpoint_dst, dtype=np.int64)
         edge_type = np.concatenate([
             np.zeros(n_ss, dtype=np.int64),
             np.ones(n_sp, dtype=np.int64),
+            np.full(n_ep, 2, dtype=np.int64),
         ])
 
         ss_cos = _cos_sim(same_seg_src, same_seg_dst)
         sp_cos = _cos_sim(spatial_src, spatial_dst)
-        cos_sim_all = np.concatenate([ss_cos, sp_cos])
+        ep_cos = _cos_sim(endpoint_src, endpoint_dst)
+        cos_sim_all = np.concatenate([ss_cos, sp_cos, ep_cos])
 
         type_onehot = np.column_stack([
             (edge_type == 0).astype(np.float32),

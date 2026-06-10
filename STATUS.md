@@ -218,28 +218,10 @@ merge errors) but informative — used as a soft evidence channel, not as ground
 - [x] Endpoint-adjacent edges wired into `build_half_synapse_graph` — new edge type 2,
       `endpoint_radius_nm` parameter, `max_endpoint_pairs` cap; `train_partition_gnn` auto-detects
       `n_edge_types` from graph; hard neg pool extended to include type-2 cross-neuron edges;
-      5 new tests added (`test_endpoint_adj_absent_by_default`, `test_endpoint_adj_edges_when_close`,
+      4 new tests added (`test_endpoint_adj_absent_by_default`, `test_endpoint_adj_edges_when_close`,
       `test_endpoint_adj_edge_feat_shape`, `test_endpoint_adj_cos_sim_in_feat`,
       `test_gnn_auto_detects_3_edge_types`)
-- [x] **Real-data ARI evaluation** (20 real minnie65 neurons × 3 skeleton pieces, `real_skeleton_partition.py`):
-
-  Script: `scripts/real_skeleton_partition.py` — fetches real proofread v1412 skeletons, splits each
-  into N pieces (simulating v117 fragmentation), places synapses near skeleton vertices, encodes with
-  SkeletonGNN, builds HalfSynapseGraph, trains HalfSynapseGNN, evaluates ARI.
-
-  | Config | ARI init | ARI trained | ΔARI | Clusters pred/true |
-  |---|---|---|---|---|
-  | No endpoint edges, threshold=0.75 | 0.011 | 0.079 | +0.068 | 3/20 |
-  | No endpoint edges, threshold=0.87 | 0.011 | 0.088 | +0.078 | 5/20 |
-  | **Endpoint edges 10 µm, threshold=0.87** | **0.011** | **0.418** | **+0.407** | **17/20** |
-
-  **Key finding — endpoint-adjacent edges are transformative.** The skeleton split creates piece
-  endpoints within ~0-1000 nm of each other (one skeleton step). With `endpoint_radius_nm=10_000`,
-  all adjacent piece-pair endpoints are captured (9504 directed endpoint-adj edges for 60 pieces),
-  giving the GNN direct cross-piece same-neuron evidence. Without endpoint edges, the GNN can only
-  use spatial k-NN over synapse positions, which doesn't reliably connect pieces of the same neuron
-  (synapses from different pieces may be widely separated in the global volume). ARI jumps from
-  0.088 to 0.418 (+0.330) and correctly identified clusters jump from 5 to 17/20.
+- [ ] Real-data ARI evaluation with CAVE v117 seg IDs
 
 ## See also
 - `docs/roadmap_global_assembly.md` — canonical north-star roadmap
