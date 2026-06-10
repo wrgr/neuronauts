@@ -215,7 +215,12 @@ merge errors) but informative — used as a soft evidence channel, not as ground
       path: 0.897→0.852). **Triplet/cosine contrastive is retained** — better gradient signal for our
       initialization regime. VICReg (variance regularization) is the next lever if we need fine-grained
       fragments; see summary above for diagnosis.
-- [ ] Endpoint-adjacent edges wired into `build_half_synapse_graph` using `fragment_graph.build_fragment_graph` (Phase 2.2)
+- [x] Endpoint-adjacent edges wired into `build_half_synapse_graph` — new edge type 2,
+      `endpoint_radius_nm` parameter, `max_endpoint_pairs` cap; `train_partition_gnn` auto-detects
+      `n_edge_types` from graph; hard neg pool extended to include type-2 cross-neuron edges;
+      4 new tests added (`test_endpoint_adj_absent_by_default`, `test_endpoint_adj_edges_when_close`,
+      `test_endpoint_adj_edge_feat_shape`, `test_endpoint_adj_cos_sim_in_feat`,
+      `test_gnn_auto_detects_3_edge_types`)
 - [ ] Real-data ARI evaluation with CAVE v117 seg IDs
 
 ## See also

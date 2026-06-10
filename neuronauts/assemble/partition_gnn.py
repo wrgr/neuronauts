@@ -319,7 +319,8 @@ def train_partition_gnn(
     torch.manual_seed(seed)
 
     input_dim = graph.node_dim
-    gnn = HalfSynapseGNN(input_dim).to(device)
+    n_edge_types = max(2, int(graph.edge_type.max()) + 1) if len(graph.edge_type) > 0 else 2
+    gnn = HalfSynapseGNN(input_dim, n_edge_types=n_edge_types).to(device)
     opt = torch.optim.Adam(gnn.parameters(), lr=lr)
 
     node_feat_t = torch.from_numpy(graph.node_feat).to(device)
@@ -337,12 +338,12 @@ def train_partition_gnn(
     pos_labels = [lbl for lbl, idxs in label_groups.items() if len(idxs) >= 2]
     all_labels = list(label_groups.keys())
 
-    # Hard negatives: spatial edges (type 1) connecting different-label nodes.
-    # These are the cases the GNN most needs to learn to separate — spatially
-    # close synapses that belong to different interdigitated neurons.
+    # Hard negatives: spatial (type 1) and endpoint-adjacent (type 2) edges
+    # connecting different-label nodes — the cases the GNN most needs to
+    # learn to separate.
     hard_neg_pool: list[tuple[int, int]] = []
     for i in range(len(graph.edge_src)):
-        if graph.edge_type[i] != 1:
+        if graph.edge_type[i] not in (1, 2):
             continue
         u, v = int(graph.edge_src[i]), int(graph.edge_dst[i])
         lu, lv = int(graph.labels[u]), int(graph.labels[v])
