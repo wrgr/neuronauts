@@ -77,11 +77,25 @@ Cell type table: `aibs_metamodel_celltypes_v661_merged.csv.gz` (19,735 L2/3 pyra
     individual morphological identity within a cell type. The bottleneck was the features,
     not the loss function.
 
-**Multi-fragment within-volume (50 neurons, 4-way split, volume 300–5000 µm³), `--encoder path` (TreeDNAEncoder):**
-  - Spatial baseline: **0.515** (chance — uniform synapse positions)
-  - DNA AUC random init: **0.617** — harder start than 2-half split (0.728), confirms narrower volume range is more challenging
-  - Trained AUC: **0.626** (+0.009) — near-zero improvement; pos_cos 0.943, neg_cos 0.939 at ep 80 — **collapsed** (same pattern as within-type 23P bisection)
-  - **Interpretation**: 4-way split with volume filter exposes same collapse as within-type 23P bisection — the path encoder's orientation-dependent features can't separate same-volume-range neurons with short quarter-skeleton fragments. SkeletonGNN needed.
+**Multi-fragment within-volume (50 neurons, 4-way split, volume 300–5000 µm³):**
+Both encoders run on the *same* fetched skeletons (seed 42) for an apples-to-apples comparison.
+
+  - `--encoder path` (TreeDNAEncoder):
+    - Spatial baseline: **0.515** (chance — uniform synapse positions)
+    - Random init AUC: **0.617**; Trained AUC: **0.626** (+0.009)
+    - pos_cos 0.943, neg_cos 0.939 at ep 80 — **collapsed**
+  - `--encoder gnn` (SkeletonGNN):
+    - Random init AUC: **0.600**; Trained AUC: **0.599** (−0.0004)
+    - loss pinned at **exactly 1.0 = the triplet margin** from epoch 10; pos_cos = neg_cos ≈ 0.998 — **total collapse to a single point**
+
+  - **Key finding — the bottleneck is fragment *size*, not encoder architecture.** SkeletonGNN
+    cleared the within-type bar on *half*-skeletons (0.768→0.829) but collapses just as hard as the
+    path encoder on *quarter*-skeletons (4-way split). Quarter-skeletons carry too little
+    morphological signal for individual identity: anchor/positive/negative distances all go to ~0,
+    so triplet loss saturates at the margin and produces no gradient. This matches the earlier
+    path-encoder result on within-type 4-chunk (partial, 0.599→0.687). **Conclusion: fragment
+    granularity must stay at half-skeleton scale or coarser; the fix for finer fragments is a
+    non-collapsing objective (InfoNCE/NT-Xent), not a different encoder.**
 
 ### Summary table
 
@@ -92,6 +106,11 @@ Cell type table: `aibs_metamodel_celltypes_v661_merged.csv.gz` (19,735 L2/3 pyra
 | Within-type 4-chunk (30 × 23P) | path | 0.599 | 0.687 | +0.089 | 0.822 (partial) |
 | Within-type bisection (40 × 23P) | **gnn** | **0.768** | **0.829** | **+0.061** | **0.345 ✓** |
 | Multi-fragment 4-way (50 neurons, vol-filter) | path | 0.617 | 0.626 | +0.009 | 0.939 ✗ collapsed |
+| Multi-fragment 4-way (50 neurons, vol-filter) | gnn | 0.600 | 0.599 | −0.000 | 0.998 ✗ collapsed (loss=margin) |
+
+**Reading the table:** GNN beats path only when fragments are large enough (half-skeleton). At
+quarter-skeleton granularity *both* encoders collapse under triplet loss — the two
+half→quarter rows bracket the size threshold where individual-identity signal runs out.
 
 ### Why SkeletonGNN replaces TreeDNAEncoder
 
@@ -160,7 +179,12 @@ merge errors) but informative — used as a soft evidence channel, not as ground
     distances exceed k-NN reach with current skeleton offsets); endpoint-adjacent edges will close this
 - [x] `neuronauts/assemble/fragment_graph.py` — `build_fragment_graph`, `assemble_fragments`, `score_edge` (endpoint-proximity stitching, Phase 2.2 foundation)
 - [x] `tests/test_assemble_fragment_graph.py` — 22 tests (graph construction, scoring, union-find clustering, cross-region spans, pooled DNA, degree cap)
-- [x] `scripts/multi_fragment_ablation.py` — N-way volume-filtered ablation (`--volume-min/max` for same-type proxy, `--n-splits N`)
+- [x] `scripts/multi_fragment_ablation.py` — N-way volume-filtered ablation (`--volume-min/max` for same-type proxy, `--n-splits N`, `--encoder [path|gnn]`)
+- [x] **Multi-fragment 4-way ablation, both encoders** (see Within-type summary table): isolates
+      fragment *size* — not encoder choice — as the collapse driver. GNN beats path only at
+      half-skeleton scale; both collapse on quarter-skeletons under triplet loss.
+- [ ] **Non-collapsing objective** (InfoNCE/NT-Xent) for fine-grained fragments — the
+      experimentally-identified next lever, now backed by two collapse rows in the table
 - [ ] Endpoint-adjacent edges wired into `build_half_synapse_graph` using `fragment_graph.build_fragment_graph` (Phase 2.2)
 - [ ] Real-data ARI evaluation with CAVE v117 seg IDs
 
