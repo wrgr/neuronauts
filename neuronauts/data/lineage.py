@@ -376,7 +376,7 @@ def fetch_region_synapses(
     }
     try:
         time.sleep(_REQUEST_SLEEP)
-        resp = requests.post(url, headers=_headers(token), json=body, timeout=120)
+        resp = requests.post(url, headers=_headers(token), json=body, timeout=300)
         if resp.status_code != 200:
             return None
         tbl = _read_arrow(resp.content)

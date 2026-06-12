@@ -454,6 +454,69 @@ and a calibrated/hard-mined edge classifier — not more inference machinery.
 (balanced batches + hard-neg pool, see `edge_partition.py`) but doesn't help on this
 graph structure — the fix there requires long-range cross-neuron edges.
 
+## Phase 2.4 — COMPLETE (Region-based sampling + frankenmerge awareness)
+Branch: `claude/tree-dna-phase-1-G1DNn`
+
+**Problem solved**: neuron-seeded sampling produced graphs with near-zero cross-neuron edges,
+starving edge_cc of training signal. Fix: spatial bounding-box synapse queries.
+
+### Deliverables
+- `neuronauts/data/lineage.py` — `fetch_region_synapses(bbox_nm, ...)` using CAVE materialization
+  v3 `filter_spatial_dict` with bbox in synapse-table voxels; retry logic for large limits
+- `treestitch/realworld.py` — `build_region_world(bbox_nm, ...)` — drop-in for `build_lineage_world`
+  using bbox fetch; sliver filter always applied with clear error; halving retry loop on API limit
+- `neuronauts/assemble/edge_partition.py` — `edge_merge_metrics` extended with
+  `frankenmerge_rate` (fraction of type-0 edges that are real merge errors) and
+  `frankenmerge_split_recall` (fraction of frankenmerge type-0 cut-edges correctly split)
+- `scripts/real_region_partition.py` — **NEW** bbox benchmark with Bar1/Bar2/Bar3 verdicts
+- `scripts/real_lineage_partition.py` — updated with `fk_split` column and viability bars
+
+### Key findings
+| Config | neurons | cross-neuron edge frac | edge_cc ARI | union-find ARI |
+|---|---|---|---|---|
+| Neuron-seeded (prev) | 8 | ~0 | 0.422 | 0.838 |
+| **Region-based** | 503 | 0.993 | **0.569** | 0.000 |
+
+Region sampling fixes the training-signal starvation (cross-neuron edge fraction 0 → 0.993).
+Union-find collapses on large graphs; edge_cc degrades gracefully.
+
+## Phase 2.5 — COMPLETE (Story, comparison, viability test)
+Branch: `claude/tree-dna-phase-1-G1DNn`
+
+**Deliverables:**
+- `docs/lineage_approach.md` — **NEW** positioning document: problem, core insight, architecture,
+  comparison table (vs NEURD/FFN/Guided Proofreading), viability bars with cost framing, empirical
+  results, expert peer review stress test, qualitative "looks like a neuron" checklist,
+  proofreading acceleration analysis
+- Viability bars defined and measured:
+
+| Bar | Threshold | Best result | Status |
+|---|---|---|---|
+| Bar 1: edge_cc beats union-find | ARI ≥ UF AND merge_P ≥ UF | +0.514 ARI, +0.381 merge_P (region 110n) | **PASS** |
+| Bar 2: merge_P > 0.95, merge_R > 0.70 | Both simultaneously | merge_P=0.999, merge_R=1.000 (neuron-seeded) | **PASS** |
+| Bar 3: frankenmerge_split_recall > 0.5 | > 0.5 | fk_split=0.000 on 5 real frankenmerges | **FAIL** |
+
+**Apples-to-apples neuron-seeded benchmark (15 neurons, 100 epochs):**
+```
+edge_cc:    ARI=0.880  merge_P=0.999  over=0.001  clusters=64/15   ← Bar1+Bar2 PASS
+union-find: ARI=0.572  merge_P=0.968  over=0.031  clusters=93/15
+ΔARI = +0.308
+```
+
+**Region benchmark (110 neurons, 5 frankenmerges, 10k synapses, 100 epochs):**
+```
+edge_cc:    ARI=0.521  merge_P=0.958  over=0.022  clusters=78/110  ← Bar1+Bar2 PASS, Bar3 FAIL
+union-find: ARI=0.007  merge_P=0.577  over=0.369  clusters=14/110
+ΔARI = +0.514; frankenmerge_split_recall=0.000 (both methods)
+```
+
+**Bar 3 diagnosis:** The model correctly learns to merge type-0 same-fragment edges (99.2% of
+them are correct merges) but cannot distinguish the 0.8% frankenmerge cut-edges from correct
+merges. Root cause: the edge feature set does not expose spatial separation or DNA heterogeneity
+within a fragment to the classifier. Fix: add `|src_pos - dst_pos|` and intra-fragment cos-sim
+as type-0 edge features. Supervision signal exists; discriminating features are not yet wired in.
+
 ## See also
 - `docs/roadmap_global_assembly.md` — canonical north-star roadmap
 - `docs/stage_ownership.md` — stage→module ownership map
+- `docs/lineage_approach.md` — positioning doc for the lineage-based approach (Phase 2.5)

@@ -152,35 +152,45 @@ Interpretation: unique capability no other method provides from lineage alone.
 
 ## Empirical Results
 
-| Run | neurons | frags | method | ARI | merge_P | over | fk_split | Bar1 | Bar2 | Bar3 |
-|---|---|---|---|---|---|---|---|---|---|---|
-| Neuron-seeded (8 neurons, 15 frags, 40 ep) | 8 | 15 | union-find | 0.838 | — | — | — | — | — | — |
-| Neuron-seeded (8 neurons, 15 frags, 40 ep) | 8 | 15 | edge_cc | 0.422 | — | — | — | undertrained | — | — |
-| Region (large bbox, 503 neurons, 100 ep) | 503 | 476 | union-find | 0.000 | 0.499 | 0.497 | — | — | — | — |
-| Region (large bbox, 503 neurons, 100 ep) | 503 | 476 | **edge_cc** | **0.569** | **0.976** | **0.012** | pending | **PASS** | **PASS** | pending |
+| Run | neurons | frags | fk | method | ARI | merge_P | over | fk_split | Bar1 | Bar2 | Bar3 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Neuron-seeded (15 n, 100 ep) | 15 | 15 | 0 | union-find | 0.572 | 0.968 | 0.031 | N/A | — | — | — |
+| Neuron-seeded (15 n, 100 ep) | 15 | 15 | 0 | **edge_cc** | **0.880** | **0.999** | **0.001** | N/A | **PASS** | **PASS** | N/A |
+| Region (10k syn, 110 n, 5 fk, 100 ep) | 110 | 104 | 5 | union-find | 0.007 | 0.577 | 0.369 | 0.000 | — | — | — |
+| Region (10k syn, 110 n, 5 fk, 100 ep) | 110 | 104 | 5 | **edge_cc** | **0.521** | **0.958** | **0.022** | **0.000** | **PASS** | **PASS** | **FAIL** |
+| Region (API-throttled, 24 n, 100 ep) | 24 | 24 | 0 | union-find | 0.119 | 0.706 | 0.208 | N/A | — | — | — |
+| Region (API-throttled, 24 n, 100 ep) | 24 | 24 | 0 | **edge_cc** | **0.950** | **0.996** | **0.002** | N/A | **PASS** | **PASS** | N/A |
+
+`fk` = number of real frankenmerge fragments (v117 roots spanning ≥2 v1718 neurons).
 
 **Key findings:**
-- At 100 epochs, edge_cc converges (loss 0.697→0.083, p_pos 0.528→0.946, p_neg 0.530→0.051)
-- merge_P=0.976, over=0.012: **Bar 2 passes** — operational precision threshold met
-- Union-find collapses to 7 mega-clusters on a 503-neuron region (not scalable)
-- edge_cc produces 381 clusters for 503 true neurons — reasonable under-segmentation
-- 17 real frankenmerges detected in the region; Bar 3 measurement pending
+- **Bar 1 PASS** consistently: edge_cc beats union-find at all problem sizes (ΔARI +0.308 neuron-seeded, +0.514 region-110, +0.831 region-24)
+- **Bar 2 PASS** consistently: merge_P ≥ 0.958 across all edge_cc runs
+- edge_cc produces **merge_P=0.999** on neuron-seeded data — essentially zero false merges
+- Union-find does NOT scale: collapses to 7-14 mega-clusters at 110+ neurons; ARI → 0
+- edge_cc degrades gracefully: ARI 0.950 (24 n dense region) → 0.880 (15 n isolated) → 0.521 (110 n interleaved)
+- Training curve: p_pos/p_neg need ~100 epochs to converge on real graphs (40-epoch plateau was misleading)
+- **Bar 3 FAIL**: `frankenmerge_split_recall=0.000` — both methods fail to split any of the 5 frankenmerges
 
-**Pending:**
-- Apples-to-apples: edge_cc 100-epoch run on the same 8-neuron neuron-seeded benchmark where union-find got 0.838
-- frankenmerge_split_recall measurement on the region data
+**Bar 3 diagnosis — why frankenmerge splitting fails:**
+The 5 frankenmerge fragments contribute ~35 same-fragment edges with `target=0` (cut-signals) out of 4166 total same-fragment edges (0.8%). The edge classifier correctly learns to merge type-0 edges (99.2% of them should be merged) and incorrectly also merges the 0.8% that should be cut. Without a distinguishing feature that separates frankenmerge-cut type-0 edges from correct-merge type-0 edges, the model cannot detect frankenmerges. The features that WOULD discriminate:
+- **Spatial separation within fragment**: the two synapse groups of a frankenmerge are spatially distant (different neurons have different soma positions)
+- **DNA heterogeneity**: if the fragment encoder embeds the two groups differently, their cos-sim is low
+- **Endpoint feature**: the fragment skeleton spans an unusually large region
+
+None of these are currently surfaced to the edge classifier as explicit features for type-0 edges. Adding `|src_pos - dst_pos|` and `dna_cos_sim(src, dst)` as features for same-fragment edges is the highest-leverage fix for Bar 3.
 
 ---
 
 ## Limitations and Next Steps
 
-1. **cc_bias tuning**: at cc_bias=0, edge_cc under-segments (381 vs 503 clusters). The model has high precision but GAEC creates chains through same-fragment edges. A small positive bias (`cc_bias=0.1–0.2`) may close the gap.
+1. **Frankenmerge detection (Bar 3)**: `fk_split=0.000` — the model achieves high merge precision but does not detect or split frankenmerge fragments. Root cause: same-fragment (type-0) edges for frankenmerges look identical to correct-merge type-0 edges in the current feature set. Fix: add spatial separation `|src_pos - dst_pos|` and intra-fragment DNA heterogeneity as features for type-0 edges. These would let the model detect "same v117 root, but synapses are in spatially different regions → cut."
 
-2. **Training scale**: 100 epochs is needed for convergence on 3k-node graphs. Larger regions will need more epochs or a faster training setup.
+2. **Under-segmentation at scale**: at 110 neurons, edge_cc produces 78/110 clusters. GAEC creates transitivity chains through same-fragment edges (A→B and B→C implies A→C) that extend clusters beyond true neuron boundaries. A second-pass: cut the weakest intra-cluster edge when cluster synapse count exceeds a plausible neuron maximum.
 
-3. **Generalization**: all results are from one spatial region of Minnie65. Cross-region and cross-version generalization is unmeasured.
+3. **Training scale**: 100 epochs needed for convergence on 675-node graphs. Larger regions will require more epochs or a faster training setup (GPU acceleration, gradient checkpointing).
 
-4. **Refinement**: the 381/503 cluster count suggests the model correctly identifies edges to merge but the GAEC transitivity creates over-merged clusters. A second-pass splitting step (e.g., cut the weakest intra-cluster edge) could recover the remaining neurons.
+4. **Generalization**: all results are from one spatial region of Minnie65 v117→v1718. Cross-region and cross-version generalization is unmeasured. Required experiment: train on one bbox, evaluate on a held-out bbox of the same dataset.
 
 ---
 
@@ -205,9 +215,9 @@ Interpretation: unique capability no other method provides from lineage alone.
 
 > Correct identification of the precision-recall tradeoff. The relevant counter: merge_R=1.000 — the model DOES merge every pair it should, with 97.6% precision. The under-segmentation (381 vs 503) comes from GAEC transitivity chains, not from the model failing to predict merges. The "make no merges" baseline would have merge_P=1.0 and ARI=~0.1 (each fragment its own cluster). Our method predicts 381 distinct clusters with high confidence merges.
 
-**"Frankenmerge detection is your key claim but you haven't measured it yet."**
+**"Frankenmerge detection is your key claim but Bar 3 fails."**
 
-> True — frankenmerge_split_recall is the pending Bar 3 metric. The measurement machinery is implemented; the next benchmark run will report it. 17 real frankenmerges in the test region provides sufficient statistical power for a preliminary estimate.
+> Correct — `fk_split=0.000` on 5 real frankenmerges in the region benchmark. The system correctly learns to merge type-0 same-fragment edges (99.2% of them are correct merges) but cannot distinguish the 0.8% that should be cut. This is a real limitation, not a measurement artifact: the current feature set does not expose spatial separation or DNA heterogeneity within a fragment to the edge classifier. The fix is concrete: add `|src_pos - dst_pos|` and intra-fragment cos-sim as features for type-0 edges. The supervision signal (same-fragment, different neuron → cut) is present in the training data; the features to exploit it are not yet wired in.
 
 **"Your 'free supervision' claim assumes the proofreading history is available. What if someone wants to apply this to a new, unproofread dataset?"**
 
