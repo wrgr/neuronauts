@@ -435,17 +435,24 @@ and a calibrated/hard-mined edge classifier — not more inference machinery.
   L2 skeleton has 2052.  The endpoint-adjacency signal is the critical missing piece.
 - edge_cc: **0.099 → 0.422** (+0.323); same cause — endpoint edges give the
   classifier cross-fragment same-neuron evidence it couldn't see before.
-- **edge_cc is still under-merging (5/8 clusters vs 8 true).**  Diagnosis: the
-  model outputs high positive logits for ALL edges (same-neuron AND different-neuron,
-  logit≈3.5 for both) due to class imbalance — most spatial/endpoint edges are
-  within-neuron.  GAEC then merges to a few large clusters.  Bias sweep (−3 to +3)
-  changes nothing because all logits are already strongly positive.  Fix: add
-  **hard-negative mining** to `train_edge_partition` (same as `train_partition`
-  already has), and add an explicit **pos_weight < 1** to rebalance BCE loss.
+- **edge_cc produces 5/8 clusters regardless of bias (−3 to +3) and regardless of
+  hard-negative mining.**  Root cause is architectural, not calibration:
+  with 8 spatially well-separated minnie65 neurons, the k-NN graph has essentially
+  NO cross-neuron edges (all k-NN neighbours of a synapse belong to the same neuron).
+  The `hard_neg_pool` (cross-neuron spatial/endpoint edges) is empty, so balanced
+  mini-batch training degrades to "2000 positives + ~10 negatives" — still dominated
+  by positives, still collapses to "predict everything as same-neuron."
+  Union-find avoids this because it learns global embeddings and applies a threshold
+  across ALL pairs — it doesn't need cross-neuron graph edges to train.
+- **Architectural fix required for edge_cc on real data:** the edge graph must
+  include explicit cross-region negative edges (long-range pairs from different
+  neurons) to give the classifier training signal. This is a known limitation of
+  pure graph-neighbor training on datasets with spatially separated neurons.
 
 **net result:** With L2 fragment skeletons, union-find is now a strong baseline
-(ARI 0.838 on 8-neuron real data).  edge_cc's structural over-merge-resistance
-advantage (13×) is still real but its default operating point needs calibration.
+(ARI 0.838 on 8-neuron real data).  Hard-negative mining added to `train_edge_partition`
+(balanced batches + hard-neg pool, see `edge_partition.py`) but doesn't help on this
+graph structure — the fix there requires long-range cross-neuron edges.
 
 ## See also
 - `docs/roadmap_global_assembly.md` — canonical north-star roadmap

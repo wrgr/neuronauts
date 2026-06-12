@@ -191,6 +191,8 @@ def train_edge_partition(
     n_layers: int = 3,
     dropout: float = 0.1,
     weight_decay: float = 0.0,
+    max_edges_per_epoch: int = 4000,
+    hard_neg_frac: float = 0.5,
     device: str = "cpu",
     seed: int = 42,
     log_every: int = 10,
@@ -202,6 +204,11 @@ def train_edge_partition(
     the probability that the two share a single parent object.  In the neuro
     domain this is exactly learning f(v117 seg → v1412 neuron) at the edge
     level.
+
+    Each training epoch uses a balanced mini-batch (``max_edges_per_epoch`` edges,
+    split 50/50 positives/negatives) with ``hard_neg_frac`` of negatives drawn
+    from spatially close cross-neuron edges.  This prevents the class-imbalance
+    collapse where the model predicts "same" for all edges.
 
     Returns
     -------
@@ -220,6 +227,8 @@ def train_edge_partition(
         n_layers=n_layers,
         dropout=dropout,
         weight_decay=weight_decay,
+        max_edges_per_epoch=max_edges_per_epoch,
+        hard_neg_frac=hard_neg_frac,
         device=device,
         seed=seed,
         log_every=log_every,

@@ -169,6 +169,8 @@ def train_edge_partition_gnn(
     dropout: float = 0.1,
     weight_decay: float = 0.0,
     pos_weight: float | None = 1.0,
+    max_edges_per_epoch: int = 4000,
+    hard_neg_frac: float = 0.5,
     device: str = "cpu",
     seed: int = 42,
     log_every: int = 10,
@@ -179,14 +181,17 @@ def train_edge_partition_gnn(
     connects two v117-seg observations, and the model learns whether they
     belong to the same v1412 neuron.  Loss is binary cross-entropy.
 
-    ``pos_weight`` scales the positive (same-object) class in the loss:
-      - ``1.0`` (default) — no reweighting.  Best for *recall* of merges, which
-        matters here because the merge-critical cross-fragment edges (endpoint /
-        spatial) are a minority of positives; down-weighting positives makes the
-        classifier reluctant to link pieces of one object.
-      - ``None`` — auto-balance to ``n_neg / n_pos`` (favours precision; the
-        same-segment edges that dominate the positive class get down-weighted).
-      - any float — explicit weight.
+    ``pos_weight`` scales the positive (same-object) class in the BCE loss:
+      - ``1.0`` (default) — no reweighting.
+      - ``None`` — auto-balance to ``n_neg / n_pos``.
+
+    ``max_edges_per_epoch``: max total edges per mini-batch, split evenly between
+    positives and negatives.  Prevents class-imbalance collapse (most graph edges
+    are within-neuron; without balancing the classifier predicts "same" for all edges).
+
+    ``hard_neg_frac``: fraction of sampled negatives taken from the hard-negative
+    pool (spatial/endpoint-adjacent edges crossing neuron boundaries — the confusable
+    negatives the model must actively learn to push apart).  The rest are random.
 
     Parameters
     ----------
@@ -227,55 +232,99 @@ def train_edge_partition_gnn(
     ).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
 
+    valid_np, target_np = _edge_targets(graph)
+    history: dict[str, list[float]] = {"loss": [], "p_pos": [], "p_neg": [], "edge_acc": []}
+
+    if valid_np.sum() == 0:
+        model.eval()
+        return model, history
+
+    valid_idx = np.where(valid_np)[0]
+    tgt_all = target_np[valid_idx]
+
+    pos_idx_valid = valid_idx[tgt_all > 0.5]   # indices into full edge array
+    neg_idx_valid = valid_idx[tgt_all < 0.5]
+
+    # Hard-negative pool: cross-neuron spatial (type 1) and endpoint-adj (type 2) edges
+    hard_neg_idx: list[int] = []
+    for i in range(len(graph.edge_src)):
+        if graph.edge_type[i] not in (1, 2):
+            continue
+        u, v = int(graph.edge_src[i]), int(graph.edge_dst[i])
+        lu, lv = int(graph.labels[u]), int(graph.labels[v])
+        if lu != 0 and lv != 0 and lu != lv:
+            hard_neg_idx.append(i)
+    hard_neg_arr = np.array(hard_neg_idx, dtype=np.int64) if hard_neg_idx else None
+
+    rng = np.random.default_rng(seed)
+    half = max(1, max_edges_per_epoch // 2)
+
+    n_all_pos = len(pos_idx_valid)
+    n_all_neg = len(neg_idx_valid)
+    n_all_valid = n_all_pos + n_all_neg
+    pw = (max(n_all_neg, 1.0) / max(n_all_pos, 1.0)) if pos_weight is None else float(pos_weight)
+    pos_weight_t = torch.tensor([pw], device=device)
+
     node_feat_t = torch.from_numpy(graph.node_feat).to(device)
     edge_src_t = torch.from_numpy(graph.edge_src).long().to(device)
     edge_dst_t = torch.from_numpy(graph.edge_dst).long().to(device)
     edge_type_t = torch.from_numpy(graph.edge_type).long().to(device)
+    edge_feat_dim = graph.edge_feat.shape[1] if graph.edge_feat.ndim == 2 else 0
     edge_feat_t = (
         torch.from_numpy(graph.edge_feat).float().to(device)
         if edge_feat_dim > 0
         else None
     )
+    target_t_full = torch.from_numpy(target_np.astype(np.float32)).to(device)
 
-    valid_np, target_np = _edge_targets(graph)
-    history: dict[str, list[float]] = {"loss": [], "p_pos": [], "p_neg": [], "edge_acc": []}
-
-    if valid_np.sum() == 0:
-        # No supervised edges — nothing to learn.
-        model.eval()
-        return model, history
-
-    valid_t = torch.from_numpy(valid_np).to(device)
-    target_t = torch.from_numpy(target_np).to(device)
-    tgt_valid = target_t[valid_t]
-
-    n_pos = float(tgt_valid.sum().item())
-    n_neg = float(valid_t.sum().item()) - n_pos
-    pw = (max(n_neg, 1.0) / max(n_pos, 1.0)) if pos_weight is None else float(pos_weight)
-    pos_weight_t = torch.tensor([pw], device=device)
-
-    pos_mask = tgt_valid > 0.5
-    neg_mask = ~pos_mask
+    # For full-eval metrics (reporting), build full valid mask
+    valid_t_full = torch.from_numpy(valid_np).to(device)
 
     for epoch in range(1, n_epochs + 1):
         model.train()
         opt.zero_grad()
 
+        # Sample balanced mini-batch
+        n_pos_batch = min(half, n_all_pos)
+        n_neg_batch = min(half, n_all_neg)
+
+        pos_sel = rng.choice(n_all_pos, n_pos_batch, replace=n_all_pos < n_pos_batch)
+        batch_pos = pos_idx_valid[pos_sel]
+
+        if hard_neg_arr is not None and n_neg_batch > 0:
+            n_hard = min(int(n_neg_batch * hard_neg_frac), len(hard_neg_arr))
+            n_rand = n_neg_batch - n_hard
+            hard_sel = rng.choice(len(hard_neg_arr), n_hard, replace=len(hard_neg_arr) < n_hard)
+            rand_sel = rng.choice(n_all_neg, n_rand, replace=n_all_neg < n_rand)
+            batch_neg = np.concatenate([hard_neg_arr[hard_sel], neg_idx_valid[rand_sel]])
+        else:
+            rand_sel = rng.choice(n_all_neg, n_neg_batch, replace=n_all_neg < n_neg_batch)
+            batch_neg = neg_idx_valid[rand_sel]
+
+        batch_idx = np.concatenate([batch_pos, batch_neg])
+        batch_t = torch.from_numpy(batch_idx).long().to(device)
+
         _, logits = model(node_feat_t, edge_src_t, edge_dst_t, edge_type_t, edge_feat_t)
-        logits_v = logits[valid_t]
+        logits_batch = logits[batch_t]
+        tgt_batch = target_t_full[batch_t]
 
         loss = F.binary_cross_entropy_with_logits(
-            logits_v, tgt_valid, pos_weight=pos_weight_t
+            logits_batch, tgt_batch, pos_weight=pos_weight_t
         )
         loss.backward()
         opt.step()
 
         with torch.no_grad():
-            probs = torch.sigmoid(logits_v)
-            p_pos = float(probs[pos_mask].mean().item()) if pos_mask.any() else 0.0
-            p_neg = float(probs[neg_mask].mean().item()) if neg_mask.any() else 0.0
-            pred_link = probs > 0.5
-            edge_acc = float((pred_link == (tgt_valid > 0.5)).float().mean().item())
+            # Report on the full valid set
+            logits_v = logits[valid_t_full].detach()
+            probs_v = torch.sigmoid(logits_v)
+            tgt_v = target_t_full[valid_t_full]
+            pos_full = tgt_v > 0.5
+            neg_full = ~pos_full
+            p_pos = float(probs_v[pos_full].mean().item()) if pos_full.any() else 0.0
+            p_neg = float(probs_v[neg_full].mean().item()) if neg_full.any() else 0.0
+            pred_link = probs_v > 0.5
+            edge_acc = float((pred_link == (tgt_v > 0.5)).float().mean().item())
 
         history["loss"].append(float(loss.item()))
         history["p_pos"].append(p_pos)
