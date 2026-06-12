@@ -64,10 +64,12 @@ def main() -> int:
     p.add_argument("--side", default="pre", choices=["pre", "post"])
     p.add_argument("--max-synapses", type=int, default=20_000)
     p.add_argument("--min-syn-per-fragment", type=int, default=5)
-    p.add_argument("--endpoint-radius-nm", type=float, default=10_000.0)
+    p.add_argument("--endpoint-radius-nm", type=float, default=0.0,
+                   help="radius for endpoint-adj edges in nm; 0 disables them (default). "
+                        "In dense regions, spatial k-NN already supplies cross-neuron signal "
+                        "and endpoint edges cause edge-count OOM with hundreds of fragments.")
     p.add_argument("--max-endpoint-pairs", type=int, default=10,
-                   help="cap on endpoint-adj edges per fragment pair (small default avoids "
-                        "OOM when hundreds of fragments share a dense region)")
+                   help="cap on endpoint-adj edges per fragment pair")
     p.add_argument("--k-spatial", type=int, default=8)
     p.add_argument("--embed-epochs", type=int, default=20)
     p.add_argument("--partition-epochs", type=int, default=40)
@@ -103,9 +105,10 @@ def main() -> int:
                                margin=1.0, device=args.device, root_label_map=label_map,
                                log_every=20)
     frags_enc = encode_fragments(encoder, fragments, device=args.device)
+    ep_radius = args.endpoint_radius_nm if args.endpoint_radius_nm > 0 else None
     graph = build_observation_graph(region, frags_enc, side="pre",
                                     k_spatial=args.k_spatial,
-                                    endpoint_radius_nm=args.endpoint_radius_nm,
+                                    endpoint_radius_nm=ep_radius,
                                     max_endpoint_pairs=args.max_endpoint_pairs)
 
     n_same = int((graph.edge_type == 0).sum())
