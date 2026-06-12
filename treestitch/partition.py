@@ -177,9 +177,100 @@ def evaluate_partition(
     return evaluate_partition_ari(pred_labels, true_labels, ignore_label=ignore_label)
 
 
+# ---------------------------------------------------------------------------
+# Edge-classification + correlation clustering: learn f(fragment -> object)
+# ---------------------------------------------------------------------------
+
+def train_edge_partition(
+    graph: ObservationGraph,
+    *,
+    n_epochs: int = 60,
+    lr: float = 1e-3,
+    d_model: int = 64,
+    output_dim: int = 32,
+    n_layers: int = 3,
+    dropout: float = 0.1,
+    weight_decay: float = 0.0,
+    device: str = "cpu",
+    seed: int = 42,
+    log_every: int = 10,
+) -> tuple[Any, dict]:
+    """Train an edge classifier that learns the fragment→object function.
+
+    This is the direct supervised formulation: for every edge (a pair of
+    observations joined by same-fragment / spatial / endpoint evidence), learn
+    the probability that the two share a single parent object.  In the neuro
+    domain this is exactly learning f(v117 seg → v1412 neuron) at the edge
+    level.
+
+    Returns
+    -------
+    (model, history)
+        model — trained EdgePartitionGNN (eval mode).
+        history — {"loss", "p_pos", "p_neg", "edge_acc"} per epoch.
+    """
+    from neuronauts.assemble.edge_partition import train_edge_partition_gnn
+
+    return train_edge_partition_gnn(
+        graph,  # type: ignore[arg-type]
+        n_epochs=n_epochs,
+        lr=lr,
+        d_model=d_model,
+        output_dim=output_dim,
+        n_layers=n_layers,
+        dropout=dropout,
+        weight_decay=weight_decay,
+        device=device,
+        seed=seed,
+        log_every=log_every,
+    )
+
+
+def partition_observations_cc(
+    model: Any,
+    graph: ObservationGraph,
+    *,
+    bias: float = 0.0,
+    device: str = "cpu",
+) -> np.ndarray:
+    """Partition observations with edge classifier + correlation clustering.
+
+    Lifts per-edge same-object log-odds to a global partition via greedy
+    additive edge contraction (GAEC).  Unlike threshold union-find, a single
+    spuriously-similar cross-object edge cannot force an irreversible merge —
+    the contraction respects the *net* evidence between clusters.
+
+    ``bias < 0`` clusters conservatively (lower over-merge rate); ``bias > 0``
+    merges more aggressively.
+    """
+    from neuronauts.assemble.edge_partition import partition_by_correlation
+
+    return partition_by_correlation(model, graph, bias=bias, device=device)  # type: ignore[arg-type]
+
+
+def merge_metrics(
+    graph: ObservationGraph,
+    pred_labels: np.ndarray,
+    *,
+    ignore_label: int = 0,
+) -> dict:
+    """Edge-level over/under-merge metrics for a predicted partition.
+
+    Returns merge_precision / merge_recall / merge_f1 plus over_merge_rate and
+    under_merge_rate.  Over-merge (false merge of two objects) is the costly,
+    hard-to-undo error; under-merge can be fixed by a later stitching pass.
+    """
+    from neuronauts.assemble.edge_partition import edge_merge_metrics
+
+    return edge_merge_metrics(graph, pred_labels, ignore_label=ignore_label)  # type: ignore[arg-type]
+
+
 __all__ = [
     "PartitionGNN",
     "train_partition",
     "partition_observations",
     "evaluate_partition",
+    "train_edge_partition",
+    "partition_observations_cc",
+    "merge_metrics",
 ]

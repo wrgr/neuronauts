@@ -40,6 +40,9 @@ from treestitch.partition import (
     train_partition,
     partition_observations,
     evaluate_partition,
+    train_edge_partition,
+    partition_observations_cc,
+    merge_metrics,
 )
 from treestitch.pipeline import run_pipeline, optimize
 
@@ -55,6 +58,9 @@ __all__ = [
     "train_partition",
     "partition_observations",
     "evaluate_partition",
+    "train_edge_partition",
+    "partition_observations_cc",
+    "merge_metrics",
     "run_pipeline",
     "optimize",
 ]
