@@ -155,27 +155,24 @@ def main() -> int:
     m_cc = merge_metrics(graph, pred_cc)
     print(f"  ARI={r_cc['ari']:.4f}  clusters={r_cc['n_clusters_pred']}/{r_cc['n_clusters_true']}  {_fmt_merge(m_cc)}")
 
-    # Frankenmerge diagnostics: fraction of same-fragment edges with a neuron boundary
-    # (ground-truth cut-signals in the graph, independent of prediction method).
-    labels_arr = graph.labels
-    type0_mask = graph.edge_type == 0
-    valid_t0 = type0_mask & (labels_arr[graph.edge_src] != 0) & (labels_arr[graph.edge_dst] != 0)
-    franken_cut = valid_t0 & (labels_arr[graph.edge_src] != labels_arr[graph.edge_dst])
-    frankenmerge_rate = float(franken_cut.sum()) / max(int(valid_t0.sum()), 1)
-
     print(f"\n{'='*64}")
     print(f"SUMMARY  (region v117→v{args.version}, {n_true} neurons, {n_frag} fragments)")
     print(f"{'='*64}")
-    print(f"  {'method':<12} {'ARI':>7} {'clusters':>10} {'merge_P':>9} {'over':>7}")
+    print(f"  {'method':<12} {'ARI':>7} {'clusters':>10} {'merge_P':>9} {'over':>7} {'fk_split':>9}")
     print(f"  {'union-find':<12} {r_uf['ari']:>7.4f} "
           f"{str(r_uf['n_clusters_pred'])+'/'+str(r_uf['n_clusters_true']):>10} "
-          f"{m_uf['merge_precision']:>9.3f} {m_uf['over_merge_rate']:>7.3f}")
+          f"{m_uf['merge_precision']:>9.3f} {m_uf['over_merge_rate']:>7.3f} "
+          f"{m_uf['frankenmerge_split_recall']:>9.3f}")
     print(f"  {'edge_cc':<12} {r_cc['ari']:>7.4f} "
           f"{str(r_cc['n_clusters_pred'])+'/'+str(r_cc['n_clusters_true']):>10} "
-          f"{m_cc['merge_precision']:>9.3f} {m_cc['over_merge_rate']:>7.3f}")
+          f"{m_cc['merge_precision']:>9.3f} {m_cc['over_merge_rate']:>7.3f} "
+          f"{m_cc['frankenmerge_split_recall']:>9.3f}")
     print(f"  ΔARI (edge_cc − union-find) = {r_cc['ari'] - r_uf['ari']:+.4f}")
     print(f"  cross-neuron edges = {cross_neuron_frac:.3f}  "
-          f"frankenmerge same-frag cuts = {frankenmerge_rate:.3f}")
+          f"frankenmerge same-frag cut rate = {m_cc['frankenmerge_rate']:.3f}")
+    print(f"  Bar1 {'PASS' if r_cc['ari'] >= r_uf['ari'] and m_cc['merge_precision'] >= m_uf['merge_precision'] else 'FAIL'}"
+          f"  Bar2 {'PASS' if m_cc['merge_precision'] > 0.95 and m_cc['merge_recall'] > 0.70 else 'FAIL'}"
+          f"  Bar3 {'PASS' if m_cc['frankenmerge_split_recall'] > 0.5 else 'FAIL (or N/A if no frankenmerges)'}")
     print(f"{'='*64}")
     return 0
 

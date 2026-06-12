@@ -572,8 +572,17 @@ def edge_merge_metrics(
     # These are the ground-truth frankenmerge cuts the edge classifier must learn.
     type0 = graph.edge_type == 0
     valid_t0 = type0 & valid
-    frankenmerge_rate = (float((valid_t0 & (lab_s != lab_d)).sum())
-                         / max(int(valid_t0.sum()), 1))
+    franken_cut_mask = valid_t0 & (lab_s != lab_d)
+    n_franken_edges = int(franken_cut_mask.sum())
+    frankenmerge_rate = n_franken_edges / max(int(valid_t0.sum()), 1)
+
+    # Among those frankenmerge same-fragment edges, what fraction does the
+    # predicted partition correctly split? (The "Bar 3" viability metric.)
+    # 1.0 = every frankenmerge pair lands in different predicted clusters.
+    frankenmerge_split_recall = (
+        float((franken_cut_mask & (pred[src] != pred[dst])).sum())
+        / max(n_franken_edges, 1)
+    )
 
     return {
         "merge_precision": precision,
@@ -583,6 +592,7 @@ def edge_merge_metrics(
         "under_merge_rate": fn / n,
         "n_edges_eval": n,
         "frankenmerge_rate": frankenmerge_rate,
+        "frankenmerge_split_recall": frankenmerge_split_recall,
     }
 
 

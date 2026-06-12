@@ -112,14 +112,19 @@ def main() -> int:
     print(f"  ARI={r_cc['ari']:.4f}  clusters={r_cc['n_clusters_pred']}/{r_cc['n_clusters_true']}  {_fmt_merge(m_cc)}")
 
     print(f"\n{'='*64}\nSUMMARY  (real v117→v{args.version}, {n_true} neurons, {n_frag} fragments)\n{'='*64}")
-    print(f"  {'method':<12} {'ARI':>7} {'clusters':>10} {'merge_P':>9} {'over':>7}")
+    print(f"  {'method':<12} {'ARI':>7} {'clusters':>10} {'merge_P':>9} {'over':>7} {'fk_split':>9}")
     print(f"  {'union-find':<12} {r_uf['ari']:>7.4f} "
           f"{str(r_uf['n_clusters_pred'])+'/'+str(r_uf['n_clusters_true']):>10} "
-          f"{m_uf['merge_precision']:>9.3f} {m_uf['over_merge_rate']:>7.3f}")
+          f"{m_uf['merge_precision']:>9.3f} {m_uf['over_merge_rate']:>7.3f} "
+          f"{m_uf['frankenmerge_split_recall']:>9.3f}")
     print(f"  {'edge_cc':<12} {r_cc['ari']:>7.4f} "
           f"{str(r_cc['n_clusters_pred'])+'/'+str(r_cc['n_clusters_true']):>10} "
-          f"{m_cc['merge_precision']:>9.3f} {m_cc['over_merge_rate']:>7.3f}")
+          f"{m_cc['merge_precision']:>9.3f} {m_cc['over_merge_rate']:>7.3f} "
+          f"{m_cc['frankenmerge_split_recall']:>9.3f}")
     print(f"  ΔARI (edge_cc − union-find) = {r_cc['ari'] - r_uf['ari']:+.4f}")
+    print(f"  Bar1 {'PASS' if r_cc['ari'] >= r_uf['ari'] and m_cc['merge_precision'] >= m_uf['merge_precision'] else 'FAIL'}"
+          f"  Bar2 {'PASS' if m_cc['merge_precision'] > 0.95 and m_cc['merge_recall'] > 0.70 else 'FAIL'}"
+          f"  Bar3 {'PASS' if m_cc['frankenmerge_split_recall'] > 0.5 else 'FAIL (or N/A)'}")
     print(f"{'='*64}")
     return 0
 
