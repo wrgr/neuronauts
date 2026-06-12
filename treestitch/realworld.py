@@ -377,13 +377,17 @@ def build_region_world(
     labels = v_labels[keep]
     n_obs_raw = len(pos)
 
-    # Discard slivers
+    # Discard slivers — always apply, error if threshold is too aggressive
     frag_uniq, frag_counts = np.unique(frag_ids, return_counts=True)
     keep_frags = {int(f) for f, c in zip(frag_uniq, frag_counts)
                   if c >= min_syn_per_fragment}
-    if keep_frags:
-        mask = np.array([int(f) in keep_frags for f in frag_ids])
-        pos, frag_ids, labels = pos[mask], frag_ids[mask], labels[mask]
+    mask = np.array([int(f) in keep_frags for f in frag_ids])
+    pos, frag_ids, labels = pos[mask], frag_ids[mask], labels[mask]
+    if len(pos) == 0:
+        raise RuntimeError(
+            f"No fragments with ≥{min_syn_per_fragment} synapses survived the sliver filter. "
+            f"Max observed was {int(frag_counts.max()) if len(frag_counts) else 0}. "
+            f"Try a lower --min-syn-per-fragment.")
 
     n_obs = len(pos)
     if verbose:
