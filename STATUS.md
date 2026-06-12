@@ -334,6 +334,72 @@ Parallel study: `docs/seg_117_to_1412.md` + `scripts/probe_seg_mapping.py`
 - v1412's materialization tables are **expired**; for synapse-anchored work use
   an available version (1300/1507/1621/1718) as the proofread target.
 
+## Phase 2.3 — IN PROGRESS (Real f(v117→v1718), no synthetic)
+Branch: `claude/abstract-tree-stitch`
+
+Synthetic worlds proved misleading (over-optimistic).  Moved to **real** lineage
+data anchored on the available **v1718** materialization (v1412 is expired;
+fall back = an earlier real version 1621/1507/1300, never synthetic).
+
+### Real data access (`neuronauts/data/lineage.py`)
+ChunkedGraph + materialization over plain HTTP (no caveclient), all verified 200:
+- `version_timestamp`, `list_versions` — `[117, 943, 1300, 1507, 1621, 1718]`.
+- `root_leaves` (root→supervoxels/L2), `roots_at` (supervoxels→root @ timestamp,
+  batched binary POST) — the v117↔v1718 lineage.
+- `root_at_version` (carry a nucleus soma forward to v1718).
+- `fragment_breakdown` (proofread neuron → its v117 roots + mass shares).
+- `fetch_synapses` — **real synapses** from `synapses_pni_2` via the
+  materialization **v3** query API (v2 has an `ipc_compress` server bug);
+  positions in nm, plus supervoxel ids for lineage assignment.
+
+### Real fragmentation structure (`scripts/characterize_v117_to_v1718.py`)
+n=40 somata, real v117→v1718:
+- **88% of somata are already a single v117 root**; only **10%** have ≥2
+  substantial v117 fragments.  Median fragments/neuron = 1 (mean 2.0 from the
+  sliver tail), dominant mass share median 1.000.
+- Confirms quantitatively: real soma split structure is **"one trunk + slivers"**,
+  not equal pieces.  The equal-thirds synthetic benchmark was unrealistically
+  hard; real soma partition is mostly trivial at the supervoxel level, but
+  non-trivial at the *synapse* level because synapses land on the sliver tail
+  (e.g. one neuron: 800 synapses → 90% on the trunk + 6 sliver fragments).
+
+### Real partition world (`treestitch/realworld.py`, `scripts/real_lineage_partition.py`)
+Fully real: observations = real synapses; fragment id = real v117 root of the
+synapse's supervoxel; label = real v1718 root; fragment shape = the fragment's
+real synapse point cloud.  Real frankenmerges (a v117 root spanning ≥2 neurons)
+arise from the data.
+
+**Morphology caveat:** the skeleton cache does **not** serve v117 fragment roots,
+and the existing CloudVolume+kimimaro self-skeletonization
+(`cell_graph.precompute_self_skeletons_for_cache`) can't run here (deps not
+installed).  Current fragment morphology = the real synapse cloud; the **L2
+cache** (`l2cache …/attributes` → `rep_coord_nm`, verified 200) is the finer
+real upgrade and the next step.
+
+### First fully-real benchmark (15 neurons, v117→v1718, real synapses)
+22 v117 fragments (1.5/neuron — real slivers present), 3926 synapse nodes.
+
+| Method | ARI | clusters | merge_P | over-merge |
+|---|---|---|---|---|
+| union-find | **0.305** | 27/15 | 0.962 | 0.038 |
+| edge_cc (bias 0) | 0.099 | 5/15 | 0.961 | 0.039 |
+
+**Honest findings (consistent with the franken real-data run):**
+1. **Both methods are weak on real data** (best ARI 0.31).  The binding
+   constraint is the **representation/evidence**, not the inference algorithm.
+2. **Endpoint-adjacency edges = 0** here, because synapse-cloud fragments have no
+   real skeleton endpoints.  Endpoint edges were *transformative* with real
+   skeletons (ARI 0.09→0.42 earlier).  **Restoring real fragment skeletons (L2
+   cache) to recover endpoint adjacency + DNA is the highest-value next step.**
+3. **edge_cc collapses at the default bias** (p_pos≈p_neg≈0.95, edge_acc pinned
+   at the base rate → merges to 5 clusters).  It needs bias auto-calibration and
+   hard-negative mining (the metric GNN has the latter, which is why union-find
+   is better behaved by default).
+
+**Direction:** the real-data evidence (here + the franken run) consistently says
+the lever is *evidence quality* — real fragment morphology (endpoint edges + DNA)
+and a calibrated/hard-mined edge classifier — not more inference machinery.
+
 ## See also
 - `docs/roadmap_global_assembly.md` — canonical north-star roadmap
 - `docs/stage_ownership.md` — stage→module ownership map
