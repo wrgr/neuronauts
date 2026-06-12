@@ -341,8 +341,16 @@ def build_region_world(
               f"[{x0:.0f},{y0:.0f},{z0:.0f}]–[{x1:.0f},{y1:.0f},{z1:.0f}] nm "
               f"side={side} …")
 
-    syn = L.fetch_region_synapses(bbox_nm, version=version, side=side,
-                                   limit=max_synapses * 3, token=tok)
+    syn = None
+    effective_limit = max_synapses
+    while effective_limit >= 1000:
+        syn = L.fetch_region_synapses(bbox_nm, version=version, side=side,
+                                       limit=effective_limit, token=tok)
+        if syn is not None:
+            break
+        if verbose:
+            print(f"  limit={effective_limit} failed, retrying at {effective_limit // 2} …")
+        effective_limit //= 2
     if syn is None or len(syn["positions_nm"]) == 0:
         raise RuntimeError(
             "No synapses returned for bbox — check network/token/version/bbox")

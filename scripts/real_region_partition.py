@@ -65,6 +65,9 @@ def main() -> int:
     p.add_argument("--max-synapses", type=int, default=20_000)
     p.add_argument("--min-syn-per-fragment", type=int, default=5)
     p.add_argument("--endpoint-radius-nm", type=float, default=10_000.0)
+    p.add_argument("--max-endpoint-pairs", type=int, default=10,
+                   help="cap on endpoint-adj edges per fragment pair (small default avoids "
+                        "OOM when hundreds of fragments share a dense region)")
     p.add_argument("--k-spatial", type=int, default=8)
     p.add_argument("--embed-epochs", type=int, default=20)
     p.add_argument("--partition-epochs", type=int, default=40)
@@ -102,7 +105,8 @@ def main() -> int:
     frags_enc = encode_fragments(encoder, fragments, device=args.device)
     graph = build_observation_graph(region, frags_enc, side="pre",
                                     k_spatial=args.k_spatial,
-                                    endpoint_radius_nm=args.endpoint_radius_nm)
+                                    endpoint_radius_nm=args.endpoint_radius_nm,
+                                    max_endpoint_pairs=args.max_endpoint_pairs)
 
     n_same = int((graph.edge_type == 0).sum())
     n_sp = int((graph.edge_type == 1).sum())
