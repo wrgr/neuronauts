@@ -418,6 +418,35 @@ real upgrade and the next step.
 the lever is *evidence quality* — real fragment morphology (endpoint edges + DNA)
 and a calibrated/hard-mined edge classifier — not more inference machinery.
 
+### L2 cache skeleton benchmark (8 neurons, v117→v1718, real L2 skeletons)
+15 v117 fragments (1.9/neuron), 1428 synapse nodes.
+**L2 cache hit: 15/15 fragments** — all v117 roots resolved to real L2 centroids.
+
+| Method | ARI | clusters | merge_P | over-merge |
+|---|---|---|---|---|
+| **union-find** | **0.838** | 24/8 | 0.999 | 0.001 |
+| edge_cc (bias 0) | 0.422 | 5/8 | 0.998 | 0.002 |
+
+**Endpoint-adjacency edges: 2052** (was 0 with synapse-cloud; each L2 skeleton has
+~17 leaf vertices on average for these fragments, giving real endpoints for stitching).
+
+**Key finding — L2 skeletons are transformative:**
+- union-find ARI: **0.305 → 0.838** (+0.533); synapse-cloud had 0 endpoint edges,
+  L2 skeleton has 2052.  The endpoint-adjacency signal is the critical missing piece.
+- edge_cc: **0.099 → 0.422** (+0.323); same cause — endpoint edges give the
+  classifier cross-fragment same-neuron evidence it couldn't see before.
+- **edge_cc is still under-merging (5/8 clusters vs 8 true).**  Diagnosis: the
+  model outputs high positive logits for ALL edges (same-neuron AND different-neuron,
+  logit≈3.5 for both) due to class imbalance — most spatial/endpoint edges are
+  within-neuron.  GAEC then merges to a few large clusters.  Bias sweep (−3 to +3)
+  changes nothing because all logits are already strongly positive.  Fix: add
+  **hard-negative mining** to `train_edge_partition` (same as `train_partition`
+  already has), and add an explicit **pos_weight < 1** to rebalance BCE loss.
+
+**net result:** With L2 fragment skeletons, union-find is now a strong baseline
+(ARI 0.838 on 8-neuron real data).  edge_cc's structural over-merge-resistance
+advantage (13×) is still real but its default operating point needs calibration.
+
 ## See also
 - `docs/roadmap_global_assembly.md` — canonical north-star roadmap
 - `docs/stage_ownership.md` — stage→module ownership map

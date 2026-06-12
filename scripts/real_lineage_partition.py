@@ -56,6 +56,8 @@ def main() -> int:
     p.add_argument("--cc-bias", type=float, default=0.0)
     p.add_argument("--device", default="cpu")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--no-l2-skeletons", action="store_true",
+                   help="skip L2 cache skeleton fetch; use synapse cloud only")
     args = p.parse_args()
 
     from treestitch.embed import FragmentEncoder, encode_fragments, train_fragment_encoder
@@ -69,7 +71,7 @@ def main() -> int:
     fragments, region, label_map = build_lineage_world(
         n_objects=args.n_objects, version=args.version, side=args.side,
         max_syn_per_obj=args.max_syn_per_obj, min_syn_per_obj=args.min_syn_per_obj,
-        seed=args.seed, verbose=True)
+        seed=args.seed, verbose=True, l2_skeletons=not args.no_l2_skeletons)
 
     print(f"\nTraining FragmentEncoder ({args.embed_epochs} epochs) …")
     encoder = FragmentEncoder(node_input_dim=4, d_model=64, output_dim=32)

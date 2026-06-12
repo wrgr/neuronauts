@@ -323,10 +323,127 @@ def fetch_synapses(
     }
 
 
+# ---------------------------------------------------------------------------
+# L2 cache: real skeleton from L2-node representative coordinates
+# ---------------------------------------------------------------------------
+
+L2_CACHE_SERVER = "https://minnie.microns-daf.com"
+L2_TABLE = "minnie65_public"
+_L2_BATCH = 500  # max L2 ids per attribute fetch
+
+
+def l2_skeleton(
+    root_id: int,
+    *,
+    token: str = DEFAULT_TOKEN,
+    max_l2_nodes: int = 2000,
+    seed: int = 0,
+) -> Optional[dict]:
+    """Fetch a real skeleton for a v117 fragment root via the L2 attribute cache.
+
+    Retrieves ``rep_coord_nm`` (representative nm coordinates) for each L2 node
+    in the root, then builds a skeleton using a minimum spanning tree on
+    pairwise Euclidean distances.
+
+    Returns
+    -------
+    dict with keys:
+        vertices_nm : [V, 3] float32 — one vertex per L2 node
+        edges       : [E, 2] int64  — MST edges (symmetric, undirected)
+        radii_nm    : [V] float32   — proxy radius from L2 count (constant 200)
+        l2_ids      : [V] uint64    — L2 node ids aligned with vertices
+    or ``None`` on any failure (network error, too few nodes).
+    """
+    # 1. Get L2 nodes for this root
+    l2ids = root_leaves(root_id, stop_layer=2, token=token)
+    if l2ids is None or len(l2ids) < 2:
+        return None
+
+    rng = np.random.default_rng(seed)
+    if len(l2ids) > max_l2_nodes:
+        l2ids = l2ids[rng.choice(len(l2ids), max_l2_nodes, replace=False)]
+
+    # 2. Fetch rep_coord_nm from L2 attribute cache in batches
+    url = f"{L2_CACHE_SERVER}/l2cache/api/v1/table/{L2_TABLE}/attributes"
+    hdr = {**_headers(token), "Content-Type": "application/json"}
+    coords: dict[int, np.ndarray] = {}
+    try:
+        for start in range(0, len(l2ids), _L2_BATCH):
+            chunk = l2ids[start:start + _L2_BATCH].tolist()
+            body = {"l2_ids": chunk, "attribute_names": ["rep_coord_nm"]}
+            time.sleep(_REQUEST_SLEEP)
+            resp = requests.post(url, headers=hdr, json=body, timeout=120)
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            for id_str, attrs in data.items():
+                coord = attrs.get("rep_coord_nm")
+                if coord is not None and len(coord) == 3:
+                    coords[int(id_str)] = np.asarray(coord, dtype=np.float32)
+    except Exception:
+        return None
+
+    if len(coords) < 2:
+        return None
+
+    # 3. Build skeleton: vertices = L2 centroids, edges = MST
+    ids_out = np.array(list(coords.keys()), dtype=np.uint64)
+    verts = np.stack([coords[int(i)] for i in ids_out], axis=0).astype(np.float32)
+    n = len(verts)
+
+    # MST via Kruskal on a proximity graph (k-NN to limit edge count)
+    from scipy.spatial import cKDTree as _KDTree
+    k = min(6, n - 1)
+    tree = _KDTree(verts)
+    dists, nbrs = tree.query(verts, k=k + 1)  # includes self at index 0
+
+    # Build edge list with weights
+    edge_set: dict[tuple[int, int], float] = {}
+    for i in range(n):
+        for slot in range(1, k + 1):
+            j = int(nbrs[i, slot])
+            key = (min(i, j), max(i, j))
+            d = float(dists[i, slot])
+            if key not in edge_set or edge_set[key] > d:
+                edge_set[key] = d
+
+    # Kruskal MST using union-find
+    parent = list(range(n))
+
+    def _find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    sorted_edges = sorted(edge_set.items(), key=lambda kv: kv[1])
+    mst: list[tuple[int, int]] = []
+    for (u, v), _ in sorted_edges:
+        pu, pv = _find(u), _find(v)
+        if pu != pv:
+            parent[pu] = pv
+            mst.append((u, v))
+            if len(mst) == n - 1:
+                break
+
+    if not mst:
+        return None
+
+    edges = np.array(mst, dtype=np.int64)
+    return {
+        "vertices_nm": verts,
+        "edges": edges,
+        "radii_nm": np.full(n, 200.0, dtype=np.float32),
+        "l2_ids": ids_out,
+    }
+
+
 __all__ = [
     "DATASTACK",
     "V117_TIMESTAMP",
     "SYNAPSE_TABLE",
+    "L2_CACHE_SERVER",
+    "L2_TABLE",
     "version_timestamp",
     "list_versions",
     "root_leaves",
@@ -334,4 +451,5 @@ __all__ = [
     "root_at_version",
     "fragment_breakdown",
     "fetch_synapses",
+    "l2_skeleton",
 ]

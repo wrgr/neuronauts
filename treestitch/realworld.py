@@ -6,7 +6,7 @@ Everything here is real — no synthetic fragments or synthetic splits:
   - fragment id   = the real **v117** root the synapse's supervoxel belongs to
                     (chunkedgraph lineage at the v117 timestamp)
   - label         = the real **v1718** (proofread) root the synapse sits on
-  - fragment shape= the real point cloud of that fragment's synapses
+  - fragment shape= real L2-cache skeleton when available, synapse cloud fallback
 
 The partition task is then exactly f(v117 → v1718): group the real v117
 fragments back into their proofread neurons.  Real "trunk + slivers" splits and
@@ -16,10 +16,10 @@ arise from the data, not from a generator.
     from treestitch.realworld import build_lineage_world
     fragments, region, label_map = build_lineage_world(n_objects=12, version=1718)
 
-The v117 skeleton cache does NOT serve v117 fragment roots, so fragment
-morphology is taken from the fragment's own synapse cloud (real positions).
-The L2 cache (``lineage.l2_rep_coords``) is a finer morphology source and is the
-natural enhancement.
+Fragment morphology priority:
+  1. L2 cache skeleton (``lineage.l2_skeleton``) — real L2-node rep_coord_nm
+     centroids → MST skeleton; real endpoints enabling endpoint-adjacency edges.
+  2. Synapse point cloud fallback — used when the L2 cache request fails.
 """
 
 from __future__ import annotations
@@ -27,6 +27,48 @@ from __future__ import annotations
 from typing import Optional
 
 import numpy as np
+
+
+def _skeleton_endpoints(vertices_nm: np.ndarray, edges: np.ndarray) -> np.ndarray:
+    """Return leaf vertices (degree ≤ 1) of a skeleton tree as [K, 3] float32."""
+    if len(vertices_nm) == 0:
+        return vertices_nm.copy()
+    if len(edges) == 0:
+        return vertices_nm.copy()
+    degree = np.zeros(len(vertices_nm), dtype=np.int32)
+    for u, v in edges:
+        degree[u] += 1
+        degree[v] += 1
+    leaf_mask = degree <= 1
+    leaves = vertices_nm[leaf_mask]
+    if len(leaves) == 0:
+        return vertices_nm[[0]]
+    return leaves
+
+
+def _l2_fragment(frag_id: int, region_id: str, skel: dict,
+                 syn_indices: np.ndarray):
+    """Make a Fragment from a real L2-cache skeleton.
+
+    ``skel`` is the dict returned by ``lineage.l2_skeleton``:
+    ``{"vertices_nm", "edges", "radii_nm", "l2_ids"}``.
+    """
+    from neuronauts.schemas import Fragment
+    verts = skel["vertices_nm"]  # [V, 3]
+    edges = skel["edges"]        # [E, 2]
+    radii = skel["radii_nm"]     # [V]
+    endpoints = _skeleton_endpoints(verts, edges)
+    return Fragment(
+        fragment_id=frag_id,
+        region_id=region_id,
+        base_root_id=frag_id,
+        vertices_nm=verts,
+        edges=edges,
+        endpoints_nm=endpoints,
+        radius_nm=radii,
+        synapse_indices=np.asarray(syn_indices, dtype=np.int64),
+        dna=None,
+    ).validate()
 
 
 def _cloud_fragment(frag_id: int, region_id: str, points: np.ndarray,
@@ -82,8 +124,19 @@ def build_lineage_world(
     token: Optional[str] = None,
     seed: int = 0,
     verbose: bool = True,
+    l2_skeletons: bool = True,
 ) -> tuple:
     """Assemble a real f(v117→v{version}) partition world.
+
+    Parameters
+    ----------
+    l2_skeletons:
+        If ``True`` (default), attempt to fetch real L2-cache skeletons for each
+        v117 fragment root (``lineage.l2_skeleton``).  These give real MST
+        skeletons with real leaf endpoints, enabling endpoint-adjacency edges in
+        the observation graph.  Falls back to the synapse point-cloud when the
+        L2 request fails.  Set ``False`` to always use the synapse cloud (faster,
+        no extra network calls).
 
     Returns
     -------
@@ -157,14 +210,27 @@ def build_lineage_world(
     labels = np.asarray(obs_label, dtype=np.int64)
     n_obs = len(all_pos)
 
-    # Build one fragment per distinct v117 root from its synapse cloud.
+    # Build one fragment per distinct v117 root: L2 skeleton if available, else synapse cloud.
     fragments = []
     root_label_map: dict[int, set[int]] = {}
+    n_l2_ok = 0
+    n_l2_fail = 0
     for fr in np.unique(frag_ids):
         mask = frag_ids == fr
         idxs = np.where(mask)[0]
-        fragments.append(_cloud_fragment(int(fr), f"minnie65_v{version}",
-                                         all_pos[idxs], idxs))
+        frag = None
+        if l2_skeletons:
+            from neuronauts.data.lineage import l2_skeleton
+            skel = l2_skeleton(int(fr), token=tok)
+            if skel is not None:
+                frag = _l2_fragment(int(fr), f"minnie65_v{version}", skel, idxs)
+                n_l2_ok += 1
+            else:
+                n_l2_fail += 1
+        if frag is None:
+            frag = _cloud_fragment(int(fr), f"minnie65_v{version}",
+                                   all_pos[idxs], idxs)
+        fragments.append(frag)
         root_label_map.setdefault(int(fr), set()).update(
             int(x) for x in np.unique(labels[mask]))
 
@@ -191,9 +257,11 @@ def build_lineage_world(
     ).validate()
 
     if verbose:
+        skel_str = (f", L2 skeletons: {n_l2_ok}/{n_l2_ok + n_l2_fail} ok"
+                    if l2_skeletons else "")
         print(f"\n  → {n_obj} neurons, {len(fragments)} v117 fragments, "
-              f"{n_obs} synapses, {n_franken} real frankenmerges "
-              f"(v117 root spanning ≥2 neurons)")
+              f"{n_obs} synapses, {n_franken} real frankenmerges"
+              f"{skel_str}")
 
     return fragments, region, root_label_map
 
