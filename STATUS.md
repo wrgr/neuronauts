@@ -223,6 +223,72 @@ merge errors) but informative — used as a soft evidence channel, not as ground
       `test_gnn_auto_detects_3_edge_types`)
 - [ ] Real-data ARI evaluation with CAVE v117 seg IDs
 
+## Phase 2.2 — IN PROGRESS (Edge classification + correlation clustering)
+Branch: `claude/abstract-tree-stitch`
+
+**Reformulation:** learn f(v117 seg → v1412 neuron) *directly* as an edge
+function instead of a per-node embedding + cosine threshold.  For every edge
+(a pair of observations joined by same-fragment / spatial / endpoint evidence)
+an edge classifier predicts P(same v1412 neuron), supervised by the v1412
+co-membership of the endpoints.  Inference lifts the per-edge log-odds to a
+global partition with **correlation clustering** (greedy additive edge
+contraction, GAEC).
+
+**Why this beats threshold union-find.** Union-find is greedy and
+irreversible: one spuriously-similar cross-neuron edge fuses two neurons for
+good.  Correlation clustering contracts on *net* evidence between clusters, so
+a high-similarity edge can be cut when the rest of the graph disagrees — the
+v117 merge-error (frankenmerge) case.  The edge head also sees the **spatial
+separation of the two endpoints**, the franken discriminator: a same-segment
+edge spanning a large distance is almost certainly a merge error, not a true
+within-neuron link.
+
+### Modules
+- [x] `neuronauts/assemble/edge_partition.py` — `EdgePartitionGNN` (embedding
+      backbone + edge-classification head), `train_edge_partition_gnn`
+      (BCE on v1412 co-membership = learn f(117→1412)), `correlation_cluster`
+      (GAEC), `partition_by_correlation` (with `bias` knob for the
+      precision/recall tradeoff), `edge_merge_metrics` (over/under-merge)
+- [x] `tests/test_edge_partition.py` — 13 tests (GAEC cut/merge cases, model
+      forward/training, ARI recovery, merge metrics)
+- [x] `treestitch/synthetic.py` — offline world generator with
+      `frankenmerge_frac` (fuses cross-object pieces into bad v117 segments)
+- [x] `treestitch` wrappers: `train_edge_partition`, `partition_observations_cc`,
+      `merge_metrics`
+- [x] `scripts/compare_partition_methods.py` — head-to-head on one shared graph
+
+### Synthetic ablation (20 objects × 3 pieces, frankenmerge_frac=0.25)
+Both methods consume the *same* fragment embeddings and the *same* typed graph;
+only the inference algorithm differs.  Over-merge rate = fraction of labelled
+edges that are false merges (the costly, irreversible error).
+
+| Method | ARI | clusters | merge_P | over-merge |
+|---|---|---|---|---|
+| union-find (cosine threshold) | 0.855 | 19/20 | 0.908 | **0.080** |
+| **edge_cc (correlation clustering)** | **0.948** | 19/20 | **1.000** | **0.000** |
+
+**Spatial-overlap stress test** (decreasing object spacing → spatial proximity
+becomes misleading, the regime that breaks threshold union-find):
+
+| Object spacing | union-find ARI / over-merge | edge_cc ARI / over-merge |
+|---|---|---|
+| 60 µm (separated) | 0.748 / 0.106 | **0.948 / 0.000** |
+| 25 µm (overlap)   | 0.473 / 0.360 | **0.695 / 0.036** |
+| 12 µm (heavy overlap) | 0.000 / 0.716 | **0.583 / 0.049** |
+
+**Key finding — correlation clustering is structurally robust to over-merge.**
+As objects overlap, union-find collapses (ARI → 0, false-merge rate → 72%: it
+fuses everything spatial proximity touches).  edge_cc holds ARI ≥ 0.58 with the
+false-merge rate under 5% throughout — a ~15× reduction in the irreversible
+error at the hardest setting.  The `bias` knob trades the remaining
+under-merge against over-merge on a controllable curve.
+
+**Caveat / next step:** the synthetic frankenmerges fuse spatially-separated
+pieces, so the endpoint-distance feature carries strong signal.  Real v117
+merges occur between *adjacent* neurons; the overlap stress test partially
+covers this, but a real-data run (proofread v1412 skeletons with injected
+adjacent-neuron merges) is the honest validation and the next task.
+
 ## See also
 - `docs/roadmap_global_assembly.md` — canonical north-star roadmap
 - `docs/stage_ownership.md` — stage→module ownership map
