@@ -193,6 +193,7 @@ def train_edge_partition(
     weight_decay: float = 0.0,
     max_edges_per_epoch: int = 4000,
     hard_neg_frac: float = 0.5,
+    franken_hard_frac: float = 0.1,
     device: str = "cpu",
     seed: int = 42,
     log_every: int = 10,
@@ -207,8 +208,10 @@ def train_edge_partition(
 
     Each training epoch uses a balanced mini-batch (``max_edges_per_epoch`` edges,
     split 50/50 positives/negatives) with ``hard_neg_frac`` of negatives drawn
-    from spatially close cross-neuron edges.  This prevents the class-imbalance
-    collapse where the model predicts "same" for all edges.
+    from spatially close cross-neuron edges.  ``franken_hard_frac`` of negatives
+    are drawn from frankenmerge cut edges (type-0 same-fragment edges that cross
+    a neuron boundary), explicitly oversampling the rarest but most important
+    training signal.
 
     Returns
     -------
@@ -229,6 +232,7 @@ def train_edge_partition(
         weight_decay=weight_decay,
         max_edges_per_epoch=max_edges_per_epoch,
         hard_neg_frac=hard_neg_frac,
+        franken_hard_frac=franken_hard_frac,
         device=device,
         seed=seed,
         log_every=log_every,
@@ -240,6 +244,7 @@ def partition_observations_cc(
     graph: ObservationGraph,
     *,
     bias: float = 0.0,
+    abstain_threshold: float = 0.0,
     device: str = "cpu",
 ) -> np.ndarray:
     """Partition observations with edge classifier + correlation clustering.
@@ -251,10 +256,19 @@ def partition_observations_cc(
 
     ``bias < 0`` clusters conservatively (lower over-merge rate); ``bias > 0``
     merges more aggressively.
+
+    ``abstain_threshold > 0`` enables uncertainty-based abstention: observations
+    where max_same_cluster_prob − max_diff_cluster_prob < threshold are left
+    unassigned (label -k) rather than forced into a potentially-wrong cluster.
+    Frankenmerge boundary synapses are the primary target — their type-0 edges
+    claim one cluster while their spatial k-NN edges point toward another.
     """
     from neuronauts.assemble.edge_partition import partition_by_correlation
 
-    return partition_by_correlation(model, graph, bias=bias, device=device)  # type: ignore[arg-type]
+    return partition_by_correlation(
+        model, graph,  # type: ignore[arg-type]
+        bias=bias, abstain_threshold=abstain_threshold, device=device,
+    )
 
 
 def merge_metrics(

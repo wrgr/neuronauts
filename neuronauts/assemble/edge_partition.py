@@ -171,6 +171,7 @@ def train_edge_partition_gnn(
     pos_weight: float | None = 1.0,
     max_edges_per_epoch: int = 4000,
     hard_neg_frac: float = 0.5,
+    franken_hard_frac: float = 0.1,
     device: str = "cpu",
     seed: int = 42,
     log_every: int = 10,
@@ -192,6 +193,12 @@ def train_edge_partition_gnn(
     ``hard_neg_frac``: fraction of sampled negatives taken from the hard-negative
     pool (spatial/endpoint-adjacent edges crossing neuron boundaries — the confusable
     negatives the model must actively learn to push apart).  The rest are random.
+
+    ``franken_hard_frac``: fraction of sampled negatives taken from the frankenmerge
+    cut pool (type-0 same-fragment edges that cross a neuron boundary).  These are
+    the rarest negatives in the graph (typically < 1% of type-0 edges) but the most
+    important for frankenmerge detection.  Explicit oversampling ensures the classifier
+    sees enough "same fragment, different neuron → cut" examples despite their rarity.
 
     Parameters
     ----------
@@ -256,6 +263,20 @@ def train_edge_partition_gnn(
             hard_neg_idx.append(i)
     hard_neg_arr = np.array(hard_neg_idx, dtype=np.int64) if hard_neg_idx else None
 
+    # Frankenmerge cut pool: type-0 same-fragment edges that cross a neuron boundary.
+    # These are the rarest negatives (~0.8% of type-0 edges) but the critical signal
+    # for detecting and splitting frankenmerge fragments.  Explicit oversampling via
+    # franken_hard_frac ensures the classifier sees them despite their rarity.
+    franken_cut_idx: list[int] = []
+    for i in range(len(graph.edge_src)):
+        if graph.edge_type[i] != 0:
+            continue
+        u, v = int(graph.edge_src[i]), int(graph.edge_dst[i])
+        lu, lv = int(graph.labels[u]), int(graph.labels[v])
+        if lu != 0 and lv != 0 and lu != lv:
+            franken_cut_idx.append(i)
+    franken_cut_arr = np.array(franken_cut_idx, dtype=np.int64) if franken_cut_idx else None
+
     rng = np.random.default_rng(seed)
     half = max(1, max_edges_per_epoch // 2)
 
@@ -291,15 +312,27 @@ def train_edge_partition_gnn(
         pos_sel = rng.choice(n_all_pos, n_pos_batch, replace=n_all_pos < n_pos_batch)
         batch_pos = pos_idx_valid[pos_sel]
 
-        if hard_neg_arr is not None and n_neg_batch > 0:
-            n_hard = min(int(n_neg_batch * hard_neg_frac), len(hard_neg_arr))
-            n_rand = n_neg_batch - n_hard
-            hard_sel = rng.choice(len(hard_neg_arr), n_hard, replace=len(hard_neg_arr) < n_hard)
-            rand_sel = rng.choice(n_all_neg, n_rand, replace=n_all_neg < n_rand)
-            batch_neg = np.concatenate([hard_neg_arr[hard_sel], neg_idx_valid[rand_sel]])
+        if n_neg_batch > 0:
+            parts = []
+            remaining = n_neg_batch
+            if hard_neg_arr is not None:
+                n_hard = min(int(n_neg_batch * hard_neg_frac), len(hard_neg_arr))
+                hard_sel = rng.choice(len(hard_neg_arr), n_hard,
+                                      replace=len(hard_neg_arr) < n_hard)
+                parts.append(hard_neg_arr[hard_sel])
+                remaining -= n_hard
+            if franken_cut_arr is not None:
+                n_franken = min(int(n_neg_batch * franken_hard_frac), len(franken_cut_arr))
+                franken_sel = rng.choice(len(franken_cut_arr), n_franken,
+                                         replace=len(franken_cut_arr) < n_franken)
+                parts.append(franken_cut_arr[franken_sel])
+                remaining -= n_franken
+            rand_sel = rng.choice(n_all_neg, max(remaining, 0),
+                                  replace=n_all_neg < max(remaining, 0))
+            parts.append(neg_idx_valid[rand_sel])
+            batch_neg = np.concatenate(parts) if parts else np.array([], dtype=np.int64)
         else:
-            rand_sel = rng.choice(n_all_neg, n_neg_batch, replace=n_all_neg < n_neg_batch)
-            batch_neg = neg_idx_valid[rand_sel]
+            batch_neg = np.array([], dtype=np.int64)
 
         batch_idx = np.concatenate([batch_pos, batch_neg])
         batch_t = torch.from_numpy(batch_idx).long().to(device)
@@ -452,11 +485,61 @@ def correlation_cluster(
 # Inference
 # ---------------------------------------------------------------------------
 
+def _abstain_uncertain(
+    pred: np.ndarray,
+    edge_src: np.ndarray,
+    edge_dst: np.ndarray,
+    probs: np.ndarray,
+    threshold: float,
+) -> np.ndarray:
+    """Reassign low-confidence observations to unique abstain IDs (-1, -2, ...).
+
+    For each observation, compute a confidence margin:
+        confidence = max_same_cluster_prob - max_diff_cluster_prob
+
+    where max_same_cluster_prob is the highest co-membership probability among
+    edges connecting this observation to any other observation in the same
+    predicted cluster, and max_diff_cluster_prob is the highest among edges to
+    any other cluster.
+
+    Low confidence signals conflicting evidence: the observation belongs to one
+    cluster by fragment identity (type-0 edges predict "merge") but evidence
+    from spatial neighbors suggests it belongs somewhere else.  Frankenmerge
+    boundary synapses are the canonical case — they have type-0 edges pulling
+    them into the wrong fragment's cluster AND spatial k-NN edges pointing toward
+    their true cluster.  Rather than forcing a wrong assignment, return -k
+    (unique negative per abstained node) so downstream users can treat it as
+    unassigned.
+
+    threshold=0.0 disables abstention (default, backward-compatible).
+    """
+    N = len(pred)
+    max_same_p = np.zeros(N, dtype=np.float32)
+    max_diff_p = np.zeros(N, dtype=np.float32)
+
+    same_mask = pred[edge_src] == pred[edge_dst]
+    diff_mask = ~same_mask
+    p32 = probs.astype(np.float32)
+
+    np.maximum.at(max_same_p, edge_src[same_mask], p32[same_mask])
+    np.maximum.at(max_same_p, edge_dst[same_mask], p32[same_mask])
+    np.maximum.at(max_diff_p, edge_src[diff_mask], p32[diff_mask])
+    np.maximum.at(max_diff_p, edge_dst[diff_mask], p32[diff_mask])
+
+    confidence = max_same_p - max_diff_p
+    uncertain_idx = np.where(confidence < threshold)[0]
+    result = pred.copy()
+    if len(uncertain_idx) > 0:
+        result[uncertain_idx] = -np.arange(1, len(uncertain_idx) + 1, dtype=np.int64)
+    return result
+
+
 def partition_by_correlation(
     model: Any,
     graph: HalfSynapseGraph,
     *,
     bias: float = 0.0,
+    abstain_threshold: float = 0.0,
     device: str = "cpu",
 ) -> np.ndarray:
     """Partition observations via edge-classifier + correlation clustering.
@@ -475,12 +558,22 @@ def partition_by_correlation(
         clustering conservative (fewer, purer merges → lower over-merge rate);
         ``bias > 0`` merges more aggressively.  Default 0 = decision boundary at
         predicted probability 0.5.
+    abstain_threshold:
+        Confidence margin below which an observation is left unassigned (label -k)
+        rather than kept in its GAEC-assigned cluster.  Confidence is defined as
+        ``max_same_cluster_prob − max_diff_cluster_prob`` over the observation's edges.
+        Low confidence signals conflicting evidence — the canonical case is a
+        frankenmerge boundary synapse whose type-0 edges pull it into the wrong
+        fragment's cluster while its spatial k-NN edges point toward its true cluster.
+        Default 0.0 = no abstention (backward-compatible).  Values in [0.1, 0.5]
+        are reasonable starting points; higher values abstain more aggressively.
     device:
         ``"cpu"`` or ``"cuda"``.
 
     Returns
     -------
-    ndarray [N] int64 — cluster IDs.
+    ndarray [N] int64 — cluster IDs.  Abstained observations have unique negative
+    IDs (-1, -2, ...) and are treated as singletons by downstream metrics.
     """
     import torch
 
@@ -500,8 +593,15 @@ def partition_by_correlation(
         )
         _, logits = model(node_feat_t, edge_src_t, edge_dst_t, edge_type_t, edge_feat_t)
 
-    weights = logits.cpu().numpy().astype(np.float64) + float(bias)
-    return correlation_cluster(graph.n_nodes, graph.edge_src, graph.edge_dst, weights)
+    logits_np = logits.cpu().numpy().astype(np.float64)
+    weights = logits_np + float(bias)
+    pred = correlation_cluster(graph.n_nodes, graph.edge_src, graph.edge_dst, weights)
+
+    if abstain_threshold > 0.0:
+        probs = (1.0 / (1.0 + np.exp(-logits_np))).astype(np.float32)
+        pred = _abstain_uncertain(pred, graph.edge_src, graph.edge_dst, probs,
+                                   abstain_threshold)
+    return pred
 
 
 # ---------------------------------------------------------------------------
@@ -584,6 +684,9 @@ def edge_merge_metrics(
         / max(n_franken_edges, 1)
     )
 
+    # Abstain rate: fraction of observations with negative predicted label (unassigned)
+    abstain_rate = float((pred < 0).sum()) / max(len(pred), 1)
+
     return {
         "merge_precision": precision,
         "merge_recall": recall,
@@ -593,6 +696,7 @@ def edge_merge_metrics(
         "n_edges_eval": n,
         "frankenmerge_rate": frankenmerge_rate,
         "frankenmerge_split_recall": frankenmerge_split_recall,
+        "abstain_rate": abstain_rate,
     }
 
 
@@ -601,5 +705,6 @@ __all__ = [
     "train_edge_partition_gnn",
     "correlation_cluster",
     "partition_by_correlation",
+    "_abstain_uncertain",
     "edge_merge_metrics",
 ]

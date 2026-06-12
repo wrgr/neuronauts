@@ -75,6 +75,17 @@ def main() -> int:
     p.add_argument("--partition-epochs", type=int, default=40)
     p.add_argument("--threshold", type=float, default=0.90)
     p.add_argument("--cc-bias", type=float, default=0.0)
+    p.add_argument("--abstain-threshold", type=float, default=0.0,
+                   help="uncertainty abstention: observations with "
+                        "max_same_cluster_p - max_diff_cluster_p < threshold "
+                        "are left unassigned instead of forced into a cluster. "
+                        "0 = no abstention (default). Try 0.2-0.4 to surface "
+                        "frankenmerge boundary synapses.")
+    p.add_argument("--franken-hard-frac", type=float, default=0.1,
+                   help="fraction of training negatives drawn from the frankenmerge "
+                        "cut pool (type-0 edges crossing a neuron boundary). "
+                        "Explicit oversampling of the rarest but most informative "
+                        "training signal for frankenmerge detection.")
     p.add_argument("--device", default="cpu")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--no-l2-skeletons", action="store_true",
@@ -149,8 +160,11 @@ def main() -> int:
     print(f"[B] edge_cc  (learn f(117→{args.version}) per edge + correlation clustering)")
     print(f"{'='*64}")
     model, _ = train_edge_partition(graph, n_epochs=args.partition_epochs, lr=1e-3,
+                                    franken_hard_frac=args.franken_hard_frac,
                                     device=args.device, seed=args.seed, log_every=20)
-    pred_cc = partition_observations_cc(model, graph, bias=args.cc_bias, device=args.device)
+    pred_cc = partition_observations_cc(model, graph, bias=args.cc_bias,
+                                        abstain_threshold=args.abstain_threshold,
+                                        device=args.device)
     r_cc = evaluate_partition(pred_cc, graph.labels)
     m_cc = merge_metrics(graph, pred_cc)
     print(f"  ARI={r_cc['ari']:.4f}  clusters={r_cc['n_clusters_pred']}/{r_cc['n_clusters_true']}  {_fmt_merge(m_cc)}")
@@ -158,15 +172,15 @@ def main() -> int:
     print(f"\n{'='*64}")
     print(f"SUMMARY  (region v117→v{args.version}, {n_true} neurons, {n_frag} fragments)")
     print(f"{'='*64}")
-    print(f"  {'method':<12} {'ARI':>7} {'clusters':>10} {'merge_P':>9} {'over':>7} {'fk_split':>9}")
+    print(f"  {'method':<12} {'ARI':>7} {'clusters':>10} {'merge_P':>9} {'over':>7} {'fk_split':>9} {'abstain':>8}")
     print(f"  {'union-find':<12} {r_uf['ari']:>7.4f} "
           f"{str(r_uf['n_clusters_pred'])+'/'+str(r_uf['n_clusters_true']):>10} "
           f"{m_uf['merge_precision']:>9.3f} {m_uf['over_merge_rate']:>7.3f} "
-          f"{m_uf['frankenmerge_split_recall']:>9.3f}")
+          f"{m_uf['frankenmerge_split_recall']:>9.3f} {m_uf.get('abstain_rate', 0.0):>8.3f}")
     print(f"  {'edge_cc':<12} {r_cc['ari']:>7.4f} "
           f"{str(r_cc['n_clusters_pred'])+'/'+str(r_cc['n_clusters_true']):>10} "
           f"{m_cc['merge_precision']:>9.3f} {m_cc['over_merge_rate']:>7.3f} "
-          f"{m_cc['frankenmerge_split_recall']:>9.3f}")
+          f"{m_cc['frankenmerge_split_recall']:>9.3f} {m_cc.get('abstain_rate', 0.0):>8.3f}")
     print(f"  ΔARI (edge_cc − union-find) = {r_cc['ari'] - r_uf['ari']:+.4f}")
     print(f"  cross-neuron edges = {cross_neuron_frac:.3f}  "
           f"frankenmerge same-frag cut rate = {m_cc['frankenmerge_rate']:.3f}")
