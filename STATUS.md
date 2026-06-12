@@ -283,11 +283,56 @@ false-merge rate under 5% throughout — a ~15× reduction in the irreversible
 error at the hardest setting.  The `bias` knob trades the remaining
 under-merge against over-merge on a controllable curve.
 
-**Caveat / next step:** the synthetic frankenmerges fuse spatially-separated
-pieces, so the endpoint-distance feature carries strong signal.  Real v117
-merges occur between *adjacent* neurons; the overlap stress test partially
-covers this, but a real-data run (proofread v1412 skeletons with injected
-adjacent-neuron merges) is the honest validation and the next task.
+**Caveat:** the synthetic frankenmerges fuse spatially-separated pieces, so the
+endpoint-distance feature carries strong signal.  Real v117 merges occur between
+*adjacent* neurons — see the real-data validation below.
+
+### Real-data validation (adjacent-neuron merges)
+Script: `scripts/real_franken_partition.py` (fetches real proofread skeletons,
+splits into pieces, fuses *spatially adjacent* cross-neuron pieces into shared
+v117 segments via `treestitch.worldbuild.frankenmerge_adjacent`).  20 neurons ×
+3 pieces, 8 adjacent-neuron merges (≤6 µm), shared encoder + graph.
+
+Best-vs-best (sweep union-find threshold and edge_cc bias — both knobs tuned):
+
+| Method | best ARI | over-merge | regime |
+|---|---|---|---|
+| union-find (thr 0.95) | 0.248 | 0.126 | 15/20 clusters |
+| **edge_cc (bias −3.0)** | **0.385** | **0.010** | 208/20 clusters (over-fragmented) |
+
+**Honest findings:**
+1. **Both methods are weak on real data** (best ARI ≤ 0.39 vs 0.95 synthetic).
+   The binding constraint is the **fragment representation**, not the inference
+   algorithm: the FragmentEncoder barely separates thirds of real neurons
+   (pos_cos 0.71 vs neg_cos 0.52) — the documented small-fragment collapse
+   (Phase 1).  Adjacent franken pieces also defeat the endpoint-distance cue
+   that made the synthetic case easy.
+2. **edge_cc's over-merge advantage holds everywhere** — false-merge rate 0.010
+   vs 0.126 (~13×) on real data.  Correlation clustering structurally refuses to
+   over-merge, the consistent, defensible win across all regimes.
+3. **edge_cc's default operating point is miscalibrated.** At `bias=0` the
+   classifier's `p_neg` sits above 0.5 on real data, so GAEC merges everything
+   (2 clusters).  It only wins after sweeping `bias` strongly negative, landing
+   in a heavily over-fragmented regime.  **Next lever:** auto-calibrate `bias`
+   from labelled training edges, and add hard-negative mining to the edge
+   trainer (the metric GNN already has it — that is why union-find's default is
+   better behaved).
+
+### What the real v117→v1412 structure actually looks like
+Parallel study: `docs/seg_117_to_1412.md` + `scripts/probe_seg_mapping.py`
+(chunkedgraph lineage over plain HTTP, no caveclient).  Key intuition:
+- **v117 and v1412 are materialization *versions* (timestamped snapshots) of one
+  graphene segmentation**, not separate segmentations.  The mapping is supervoxel
+  lineage: resolve the same supervoxels to their root at a chosen timestamp.
+- **Real split structure is "one dominant trunk + a tail of slivers", not equal
+  pieces.** 7/8 sampled soma neurons were *already a single v117 root*; the one
+  split-fix stitched 10 roots but ~93% of mass was one trunk.  **This means our
+  equal-thirds benchmark is unrealistically hard on the split side** — real
+  soma-cell assembly is mostly "attach slivers to a trunk".  The merge/split
+  action concentrates in *non-soma* roots, which the nucleus-table sample misses
+  and which is the next sampling target.
+- v1412's materialization tables are **expired**; for synapse-anchored work use
+  an available version (1300/1507/1621/1718) as the proofread target.
 
 ## See also
 - `docs/roadmap_global_assembly.md` — canonical north-star roadmap
