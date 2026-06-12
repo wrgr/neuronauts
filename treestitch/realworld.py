@@ -1,4 +1,4 @@
-"""Build a fully real f(v117 → v1718) partition world from CAVE lineage.
+"""Build fully real f(v117 → v1718) partition worlds from CAVE lineage.
 
 Everything here is real — no synthetic fragments or synthetic splits:
 
@@ -13,8 +13,28 @@ fragments back into their proofread neurons.  Real "trunk + slivers" splits and
 real frankenmerges (a v117 root whose synapses belong to two v1718 neurons)
 arise from the data, not from a generator.
 
+Two world builders are provided:
+
+``build_lineage_world`` — neuron-seeded sampling
+    Seeds from isolated neurons.  Good for studying per-neuron structure but
+    produces graphs with near-zero cross-neuron edges, starving edge_cc of the
+    training signal it needs to learn merge errors.
+
     from treestitch.realworld import build_lineage_world
-    fragments, region, label_map = build_lineage_world(n_objects=12, version=1718)
+    fragments, region, label_map = build_lineage_world(n_objects=12)
+
+``build_region_world`` — spatial region sampling
+    Fetches ALL synapses in a bounding box.  Neurons are spatially interleaved,
+    so the k-NN synapse graph naturally contains cross-neuron edges.  Real
+    frankenmerge v117 roots appear in every spatial slice and contribute
+    same-fragment cut-signals.  This is the correct sampler for edge_cc training.
+
+    from treestitch.realworld import build_region_world
+    fragments, region, label_map = build_region_world(
+        bbox_nm=((1.15e6, 9.3e5, 7.8e5), (1.20e6, 9.5e5, 8.2e5)))
+
+Both return the same ``(fragments, region, root_label_map)`` tuple and are
+compatible with ``build_observation_graph`` unchanged.
 
 Fragment morphology priority:
   1. L2 cache skeleton (``lineage.l2_skeleton``) — real L2-node rep_coord_nm
@@ -266,4 +286,161 @@ def build_lineage_world(
     return fragments, region, root_label_map
 
 
-__all__ = ["build_lineage_world"]
+def build_region_world(
+    bbox_nm: tuple,
+    *,
+    version: int = 1718,
+    side: str = "pre",
+    max_synapses: int = 20_000,
+    min_syn_per_fragment: int = 5,
+    v117_timestamp: Optional[int] = None,
+    token: Optional[str] = None,
+    seed: int = 0,
+    verbose: bool = True,
+    l2_skeletons: bool = True,
+) -> tuple:
+    """Assemble a real f(v117→v{version}) partition world from a spatial bbox.
+
+    Unlike ``build_lineage_world`` (which seeds from isolated neurons), this
+    fetches every synapse in a spatial region. Because neurons are spatially
+    interleaved, the resulting k-NN synapse graph contains cross-neuron edges
+    naturally — the training signal the edge classifier needs.
+
+    Real frankenmerge v117 roots appear in every spatial slice.
+    ``root_label_map`` entries with ``len > 1`` are frankenmerges; each one
+    contributes same-fragment edges with ``target=0`` (cut-signals) that teach
+    the model to detect and split merge errors.
+
+    Parameters
+    ----------
+    bbox_nm:
+        ``((x0, y0, z0), (x1, y1, z1))`` in nm.
+    max_synapses:
+        Subsample to this many synapses when the region has more.
+    min_syn_per_fragment:
+        Discard v117 roots with fewer synapses (sliver noise).
+    l2_skeletons:
+        Fetch real L2-cache skeletons (True) or use synapse point clouds.
+
+    Returns
+    -------
+    (fragments, region, root_label_map)
+        Identical contract to ``build_lineage_world`` — drop-in replacement.
+    """
+    from neuronauts.data import lineage as L
+    from neuronauts.data.loaders import DEFAULT_TOKEN
+    from neuronauts.schemas import Region
+
+    tok = token or DEFAULT_TOKEN
+    v117_ts = v117_timestamp if v117_timestamp is not None else L.V117_TIMESTAMP
+    rng = np.random.default_rng(seed)
+
+    (x0, y0, z0), (x1, y1, z1) = bbox_nm
+    if verbose:
+        print(f"Building region world v117→v{version}: "
+              f"[{x0:.0f},{y0:.0f},{z0:.0f}]–[{x1:.0f},{y1:.0f},{z1:.0f}] nm "
+              f"side={side} …")
+
+    syn = L.fetch_region_synapses(bbox_nm, version=version, side=side,
+                                   limit=max_synapses * 3, token=tok)
+    if syn is None or len(syn["positions_nm"]) == 0:
+        raise RuntimeError(
+            "No synapses returned for bbox — check network/token/version/bbox")
+
+    pos = syn["positions_nm"]
+    sv_ids = syn["supervoxel_ids"]
+    v_labels = syn["root_ids"].astype(np.int64)
+
+    if verbose:
+        n_neurons = len(np.unique(v_labels[v_labels > 0]))
+        print(f"  fetched {len(pos)} synapses from {n_neurons} v{version} neurons")
+
+    if len(pos) > max_synapses:
+        sel = rng.choice(len(pos), max_synapses, replace=False)
+        pos, sv_ids, v_labels = pos[sel], sv_ids[sel], v_labels[sel]
+
+    v117_roots = L.roots_at(sv_ids, v117_ts, token=tok)
+    if v117_roots is None:
+        raise RuntimeError("roots_at failed for v117 — check network/token")
+
+    keep = (v117_roots > 0) & (v_labels > 0)
+    pos = pos[keep].astype(np.float32)
+    frag_ids = v117_roots[keep].astype(np.int64)
+    labels = v_labels[keep]
+    n_obs_raw = len(pos)
+
+    # Discard slivers
+    frag_uniq, frag_counts = np.unique(frag_ids, return_counts=True)
+    keep_frags = {int(f) for f, c in zip(frag_uniq, frag_counts)
+                  if c >= min_syn_per_fragment}
+    if keep_frags:
+        mask = np.array([int(f) in keep_frags for f in frag_ids])
+        pos, frag_ids, labels = pos[mask], frag_ids[mask], labels[mask]
+
+    n_obs = len(pos)
+    if verbose:
+        n_frags = len(np.unique(frag_ids))
+        n_neurons_kept = len(np.unique(labels[labels > 0]))
+        print(f"  {n_obs} synapses, {n_frags} v117 fragments "
+              f"(≥{min_syn_per_fragment} syn), {n_neurons_kept} v{version} neurons "
+              f"(sliver filter dropped {n_obs_raw - n_obs} synapses)")
+
+    if len(np.unique(labels[labels > 0])) < 2:
+        raise RuntimeError("Fewer than 2 neurons in region — try a larger bbox")
+
+    fragments = []
+    root_label_map: dict[int, set[int]] = {}
+    n_l2_ok = n_l2_fail = 0
+    for fr in np.unique(frag_ids):
+        mask = frag_ids == fr
+        idxs = np.where(mask)[0]
+        frag = None
+        if l2_skeletons:
+            from neuronauts.data.lineage import l2_skeleton
+            skel = l2_skeleton(int(fr), token=tok)
+            if skel is not None:
+                frag = _l2_fragment(int(fr), f"minnie65_v{version}", skel, idxs)
+                n_l2_ok += 1
+            else:
+                n_l2_fail += 1
+        if frag is None:
+            frag = _cloud_fragment(int(fr), f"minnie65_v{version}",
+                                   pos[idxs], idxs)
+        fragments.append(frag)
+        root_label_map.setdefault(int(fr), set()).update(
+            int(x) for x in np.unique(labels[mask]))
+
+    n_franken = sum(1 for v in root_label_map.values() if len(v) > 1)
+
+    post_pts = pos + rng.normal(0, 2000, pos.shape).astype(np.float32)
+    mins, maxs = pos.min(0), pos.max(0)
+    pad = 5000.0
+    region_bbox = (tuple(float(v) for v in mins - pad),
+                   tuple(float(v) for v in maxs + pad))
+
+    region = Region(
+        region_id=f"minnie65_v{version}",
+        bbox_nm=region_bbox,
+        voxel_size_nm=(8.0, 8.0, 40.0),
+        seg_version=117,
+        label_version=version,
+        pre_pt_nm=pos,
+        post_pt_nm=post_pts,
+        pre_root_id=labels,
+        post_root_id=np.zeros(n_obs, dtype=np.int64),
+        synapse_id=np.arange(n_obs, dtype=np.int64),
+        pre_seg_id=frag_ids,
+        post_seg_id=np.zeros(n_obs, dtype=np.int64),
+    ).validate()
+
+    if verbose:
+        skel_str = (f", L2 skeletons: {n_l2_ok}/{n_l2_ok + n_l2_fail} ok"
+                    if l2_skeletons else "")
+        n_neurons_final = len(np.unique(labels[labels > 0]))
+        print(f"\n  → {n_neurons_final} neurons, {len(fragments)} v117 fragments, "
+              f"{n_obs} synapses, {n_franken} frankenmerges{skel_str}")
+
+    return fragments, region, root_label_map
+
+
+__all__ = ["build_lineage_world", "build_region_world"]

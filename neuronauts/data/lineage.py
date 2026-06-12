@@ -323,6 +323,90 @@ def fetch_synapses(
     }
 
 
+def fetch_region_synapses(
+    bbox_nm: tuple,
+    *,
+    version: int = 1718,
+    side: str = "pre",
+    limit: int = 50_000,
+    token: str = DEFAULT_TOKEN,
+) -> Optional[dict]:
+    """Fetch all synapses whose pre/post point falls within a 3-D bounding box.
+
+    Unlike ``fetch_synapses`` (single root ID), this returns ALL neurons in the
+    region. Useful for building region-based training graphs where spatially
+    interleaved neurons provide cross-neuron edges — the training signal the
+    edge classifier needs to learn to cut merge errors and recognize frankenmerges.
+
+    Parameters
+    ----------
+    bbox_nm:
+        ``((x0, y0, z0), (x1, y1, z1))`` in nm — the spatial bounding box.
+        Coordinates are converted to 4×4×40 nm synapse-table voxels internally.
+    version:
+        Materialization version for root ID resolution.
+    side:
+        ``"pre"`` or ``"post"`` — which synapse end must lie in the bbox.
+    limit:
+        Maximum synapses returned (server-side cap).
+
+    Returns
+    -------
+    dict with keys (all length-N, aligned):
+        positions_nm   : [N, 3] float32 in nm
+        supervoxel_ids : [N] uint64
+        root_ids       : [N] uint64 — v{version} root id (ground-truth label)
+    or ``None`` on failure.
+    """
+    if side not in ("pre", "post"):
+        raise ValueError("side must be 'pre' or 'post'")
+
+    (x0, y0, z0), (x1, y1, z1) = bbox_nm
+    vx, vy, vz = SYNAPSE_VOXEL_NM
+    lo = [x0 / vx, y0 / vy, z0 / vz]
+    hi = [x1 / vx, y1 / vy, z1 / vz]
+
+    url = (f"{MAT_SERVER}/materialize/api/v3/datastack/{DATASTACK}"
+           f"/version/{version}/table/{SYNAPSE_TABLE}/query")
+    body = {
+        "filter_spatial_dict": {
+            SYNAPSE_TABLE: {f"{side}_pt_position": [lo, hi]}
+        },
+        "limit": int(limit),
+    }
+    try:
+        time.sleep(_REQUEST_SLEEP)
+        resp = requests.post(url, headers=_headers(token), json=body, timeout=120)
+        if resp.status_code != 200:
+            return None
+        tbl = _read_arrow(resp.content)
+    except Exception:
+        return None
+
+    cols = tbl.schema.names
+    px, py, pz = (f"{side}_pt_position_{a}" for a in "xyz")
+    if px not in cols or f"{side}_pt_supervoxel_id" not in cols:
+        return None
+    d = tbl.to_pydict()
+    n = tbl.num_rows
+    if n == 0:
+        return {
+            "positions_nm": np.zeros((0, 3), dtype=np.float32),
+            "supervoxel_ids": np.zeros(0, dtype=np.uint64),
+            "root_ids": np.zeros(0, dtype=np.uint64),
+        }
+    pos = np.stack([
+        np.asarray(d[px], dtype=np.float64) * vx,
+        np.asarray(d[py], dtype=np.float64) * vy,
+        np.asarray(d[pz], dtype=np.float64) * vz,
+    ], axis=1).astype(np.float32)
+    return {
+        "positions_nm": pos,
+        "supervoxel_ids": np.asarray(d[f"{side}_pt_supervoxel_id"], dtype=np.uint64),
+        "root_ids": np.asarray(d[f"{side}_pt_root_id"], dtype=np.uint64),
+    }
+
+
 # ---------------------------------------------------------------------------
 # L2 cache: real skeleton from L2-node representative coordinates
 # ---------------------------------------------------------------------------
@@ -442,6 +526,7 @@ __all__ = [
     "DATASTACK",
     "V117_TIMESTAMP",
     "SYNAPSE_TABLE",
+    "SYNAPSE_VOXEL_NM",
     "L2_CACHE_SERVER",
     "L2_TABLE",
     "version_timestamp",
@@ -451,5 +536,6 @@ __all__ = [
     "root_at_version",
     "fragment_breakdown",
     "fetch_synapses",
+    "fetch_region_synapses",
     "l2_skeleton",
 ]

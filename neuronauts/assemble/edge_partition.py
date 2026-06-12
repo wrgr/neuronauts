@@ -568,6 +568,13 @@ def edge_merge_metrics(
     recall = tp / (tp + fn) if (tp + fn) > 0 else 1.0
     f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
 
+    # Fraction of same-fragment (type-0) edges that cross a neuron boundary.
+    # These are the ground-truth frankenmerge cuts the edge classifier must learn.
+    type0 = graph.edge_type == 0
+    valid_t0 = type0 & valid
+    frankenmerge_rate = (float((valid_t0 & (lab_s != lab_d)).sum())
+                         / max(int(valid_t0.sum()), 1))
+
     return {
         "merge_precision": precision,
         "merge_recall": recall,
@@ -575,6 +582,7 @@ def edge_merge_metrics(
         "over_merge_rate": fp / n,
         "under_merge_rate": fn / n,
         "n_edges_eval": n,
+        "frankenmerge_rate": frankenmerge_rate,
     }
 
 
