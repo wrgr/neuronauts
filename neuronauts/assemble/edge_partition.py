@@ -604,6 +604,148 @@ def partition_by_correlation(
     return pred
 
 
+def soft_partition(
+    model: Any,
+    graph: HalfSynapseGraph,
+    *,
+    bias: float = 0.0,
+    abstain_threshold: float = 0.0,
+    device: str = "cpu",
+) -> dict:
+    """Probabilistic connectome readout: hard clusters + per-observation confidence.
+
+    Runs the full partition pipeline (GAEC + optional abstention) and additionally
+    computes, for each observation, a soft membership distribution over predicted
+    clusters.  This is the foundation for a probabilistic connectome where
+    uncertain slivers and frankenmerge fragments contribute fractional edge
+    weights rather than hard assignments.
+
+    Probabilistic connectome construction
+    --------------------------------------
+    The connection probability between neuron A and neuron B via a particular
+    synapse (pre_obs, post_obs) is:
+
+        P(A→B via this synapse) = P(pre_obs in A) × P(post_obs in B)
+
+    Summing over all synapse pairs gives the weighted adjacency matrix where
+    high-confidence synapses contribute near-1.0 weight and uncertain slivers
+    contribute partial weights proportional to their assignment confidence.
+
+    Expert contribution
+    -------------------
+    Observations ranked by entropy of ``membership_probs[i]`` are the highest-
+    value targets for human review.  A single expert decision (obs i → cluster k)
+    propagates via the edge predictions to update neighboring uncertainties.
+
+    Parameters
+    ----------
+    model, graph, bias, abstain_threshold, device:
+        Same as ``partition_by_correlation``.
+
+    Returns
+    -------
+    dict with keys:
+        pred          [N] int64  — hard cluster IDs (same as partition_by_correlation)
+        cluster_conf  [N] float32 — confidence in hard assignment
+                                    = max_same_cluster_prob − max_diff_cluster_prob
+        membership_probs [N, K] float32 — row-normalised probability over K clusters
+                                           (K = number of distinct non-abstain clusters)
+        cluster_ids   [K] int64  — cluster ID corresponding to each column
+        entropy       [N] float32 — Shannon entropy of membership_probs[i];
+                                    high = uncertain, low = confident
+        abstain_mask  [N] bool   — True for observations that were abstained
+    """
+    import torch
+
+    if graph.n_edges == 0:
+        pred = np.arange(graph.n_nodes, dtype=np.int64)
+        N = graph.n_nodes
+        K = N
+        return {
+            "pred": pred,
+            "cluster_conf": np.ones(N, dtype=np.float32),
+            "membership_probs": np.eye(N, dtype=np.float32),
+            "cluster_ids": pred.copy(),
+            "entropy": np.zeros(N, dtype=np.float32),
+            "abstain_mask": np.zeros(N, dtype=bool),
+        }
+
+    model.eval()
+    with torch.no_grad():
+        node_feat_t = torch.from_numpy(graph.node_feat).to(device)
+        edge_src_t = torch.from_numpy(graph.edge_src).long().to(device)
+        edge_dst_t = torch.from_numpy(graph.edge_dst).long().to(device)
+        edge_type_t = torch.from_numpy(graph.edge_type).long().to(device)
+        edge_feat_t = (
+            torch.from_numpy(graph.edge_feat).float().to(device)
+            if graph.edge_feat.ndim == 2 and graph.edge_feat.shape[1] > 0
+            else None
+        )
+        _, logits = model(node_feat_t, edge_src_t, edge_dst_t, edge_type_t, edge_feat_t)
+
+    logits_np = logits.cpu().numpy().astype(np.float64)
+    probs = (1.0 / (1.0 + np.exp(-logits_np))).astype(np.float32)
+    weights = logits_np + float(bias)
+    pred = correlation_cluster(graph.n_nodes, graph.edge_src, graph.edge_dst, weights)
+
+    if abstain_threshold > 0.0:
+        pred = _abstain_uncertain(pred, graph.edge_src, graph.edge_dst, probs,
+                                   abstain_threshold)
+
+    abstain_mask = pred < 0
+    N = graph.n_nodes
+
+    # Per-observation confidence: max_same_cluster_p - max_diff_cluster_p
+    max_same_p = np.zeros(N, dtype=np.float32)
+    max_diff_p = np.zeros(N, dtype=np.float32)
+    same_mask = pred[graph.edge_src] == pred[graph.edge_dst]
+    diff_mask = ~same_mask
+    np.maximum.at(max_same_p, graph.edge_src[same_mask], probs[same_mask])
+    np.maximum.at(max_same_p, graph.edge_dst[same_mask], probs[same_mask])
+    np.maximum.at(max_diff_p, graph.edge_src[diff_mask], probs[diff_mask])
+    np.maximum.at(max_diff_p, graph.edge_dst[diff_mask], probs[diff_mask])
+    cluster_conf = max_same_p - max_diff_p
+
+    # Soft membership: for each observation i, P(i in cluster k) ∝ mean edge
+    # prediction to neighbours already in cluster k.  For confident observations
+    # this collapses to a delta; for uncertain ones it spreads across candidates.
+    non_abstain_ids = sorted(set(int(x) for x in pred if x >= 0))
+    cluster_id_to_col = {cid: col for col, cid in enumerate(non_abstain_ids)}
+    K = len(non_abstain_ids)
+    membership = np.zeros((N, K), dtype=np.float32)
+
+    for e_idx in range(len(graph.edge_src)):
+        s = int(graph.edge_src[e_idx])
+        d = int(graph.edge_dst[e_idx])
+        p_e = float(probs[e_idx])
+        # Edge (s, d): update soft evidence of s toward d's cluster and vice versa
+        d_cluster = int(pred[d])
+        s_cluster = int(pred[s])
+        if d_cluster >= 0 and d_cluster in cluster_id_to_col:
+            membership[s, cluster_id_to_col[d_cluster]] += p_e
+        if s_cluster >= 0 and s_cluster in cluster_id_to_col:
+            membership[d, cluster_id_to_col[s_cluster]] += p_e
+
+    # Row-normalise; fall back to uniform for isolated nodes
+    row_sums = membership.sum(axis=1, keepdims=True)
+    row_sums = np.where(row_sums > 0, row_sums, 1.0)
+    membership /= row_sums
+
+    # Shannon entropy H = -sum(p log p), clipped at log(K) for normalisation
+    eps = 1e-9
+    log_p = np.log(membership + eps)
+    entropy = -(membership * log_p).sum(axis=1).astype(np.float32)
+
+    return {
+        "pred": pred,
+        "cluster_conf": cluster_conf,
+        "membership_probs": membership,
+        "cluster_ids": np.array(non_abstain_ids, dtype=np.int64),
+        "entropy": entropy,
+        "abstain_mask": abstain_mask,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Edge-level merge metrics (the over/under-merge asymmetry)
 # ---------------------------------------------------------------------------
@@ -706,5 +848,6 @@ __all__ = [
     "correlation_cluster",
     "partition_by_correlation",
     "_abstain_uncertain",
+    "soft_partition",
     "edge_merge_metrics",
 ]

@@ -271,6 +271,49 @@ def partition_observations_cc(
     )
 
 
+def partition_observations_soft(
+    model: Any,
+    graph: ObservationGraph,
+    *,
+    bias: float = 0.0,
+    abstain_threshold: float = 0.0,
+    device: str = "cpu",
+) -> dict:
+    """Probabilistic connectome readout: hard clusters + per-observation confidence.
+
+    Extends ``partition_observations_cc`` with a soft membership distribution
+    over predicted clusters for each observation.  Uncertain slivers and
+    frankenmerge fragments get fractional membership rather than forced hard
+    assignments.
+
+    Probabilistic connectome construction
+    --------------------------------------
+    Connection probability between neuron A and neuron B via synapse (pre, post):
+
+        P(A→B via synapse) = P(pre_obs in A) × P(post_obs in B)
+
+    Summing over all synapse pairs gives a weighted adjacency matrix where
+    high-confidence synapses contribute near-1.0 weight and uncertain slivers
+    contribute partial weights proportional to their assignment confidence.
+
+    Returns
+    -------
+    dict with keys:
+        pred             [N] int64   — hard cluster IDs
+        cluster_conf     [N] float32 — max_same_p − max_diff_p (confidence margin)
+        membership_probs [N, K] float32 — row-normalised soft assignment
+        cluster_ids      [K] int64   — cluster ID per column
+        entropy          [N] float32 — Shannon entropy (high = uncertain)
+        abstain_mask     [N] bool    — True for abstained observations
+    """
+    from neuronauts.assemble.edge_partition import soft_partition
+
+    return soft_partition(
+        model, graph,  # type: ignore[arg-type]
+        bias=bias, abstain_threshold=abstain_threshold, device=device,
+    )
+
+
 def merge_metrics(
     graph: ObservationGraph,
     pred_labels: np.ndarray,
@@ -295,5 +338,6 @@ __all__ = [
     "evaluate_partition",
     "train_edge_partition",
     "partition_observations_cc",
+    "partition_observations_soft",
     "merge_metrics",
 ]
