@@ -391,12 +391,79 @@ def neuron_shape_metrics(neuron: Any) -> dict:
     return _nsm(neuron)
 
 
+def train_edge_partition_multi_region(
+    graphs: list,
+    *,
+    n_epochs: int = 150,
+    lr: float = 1e-3,
+    d_model: int = 64,
+    output_dim: int = 32,
+    n_layers: int = 3,
+    dropout: float = 0.1,
+    weight_decay: float = 0.0,
+    max_edges_per_epoch: int = 4000,
+    hard_neg_frac: float = 0.5,
+    franken_hard_frac: float = 0.3,
+    device: str = "cpu",
+    seed: int = 42,
+    log_every: int = 10,
+) -> tuple:
+    """Train an EdgePartitionGNN on multiple spatial regions simultaneously.
+
+    Concatenates the per-region ObservationGraphs into a single mega-graph
+    (edges remain intra-region — no spurious cross-region connections) and
+    calls the standard single-graph training loop.  This forces the model to
+    learn transferable features (e.g. the abstract synaptic signature of a
+    frankenmerge) rather than memorising which root IDs are frankenmerges in
+    one specific spatial region.
+
+    Parameters
+    ----------
+    graphs:
+        List[ObservationGraph] — one per training bbox.  Must all have the
+        same ``node_dim`` (identical FragmentEncoder output dimension).
+
+    Returns
+    -------
+    (model, history)  — same as ``train_edge_partition``.
+    """
+    from treestitch.graph import concat_observation_graphs
+    from treestitch.schemas import ObservationGraph
+
+    typed = [g if isinstance(g, ObservationGraph) else ObservationGraph.from_half_synapse_graph(g)
+             for g in graphs]
+    mega = concat_observation_graphs(typed)
+    n_regions = len(graphs)
+    n_nodes = [g.n_nodes for g in typed]
+    n_edges = [g.n_edges for g in typed]
+    print(f"Multi-region training: {n_regions} regions, "
+          f"{mega.n_nodes} nodes ({n_nodes}), {mega.n_edges} edges ({n_edges})")
+
+    return train_edge_partition(
+        mega,
+        n_epochs=n_epochs,
+        lr=lr,
+        d_model=d_model,
+        output_dim=output_dim,
+        n_layers=n_layers,
+        dropout=dropout,
+        weight_decay=weight_decay,
+        max_edges_per_epoch=max_edges_per_epoch,
+        hard_neg_frac=hard_neg_frac,
+        franken_hard_frac=franken_hard_frac,
+        device=device,
+        seed=seed,
+        log_every=log_every,
+    )
+
+
 __all__ = [
     "PartitionGNN",
     "train_partition",
     "partition_observations",
     "evaluate_partition",
     "train_edge_partition",
+    "train_edge_partition_multi_region",
     "partition_observations_cc",
     "partition_observations_soft",
     "merge_metrics",
