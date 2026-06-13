@@ -158,7 +158,7 @@ def main() -> int:
     print(f"  {_fmt_merge(mm_te)}")
 
     # Shape assembly on test bbox
-    shapes = assemble_partition_shapes(frags_te, pred_te, graph_te.seg_id,
+    shapes = assemble_partition_shapes(frags_te, pred_te, graph_te.fragment_id,
                                         stitch_radius_nm=5_000.0)
     m_list = [neuron_shape_metrics(s) for s in shapes.values()]
     is_tree_frac = np.mean([m['is_tree'] for m in m_list])

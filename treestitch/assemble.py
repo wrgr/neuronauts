@@ -12,7 +12,7 @@ Pipeline
 --------
     # After partitioning:
     pred = partition_observations_cc(model, graph, bias=-1.0)
-    shapes = assemble_partition_shapes(fragments, pred, graph.seg_id)
+    shapes = assemble_partition_shapes(fragments, pred, graph.fragment_id)
     for neuron_id, neuron_frag in shapes.items():
         m = neuron_shape_metrics(neuron_frag)
         print(neuron_id, m["cable_length_um"], m["is_tree"])
