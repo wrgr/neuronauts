@@ -159,7 +159,18 @@ This is mechanistically expected and structurally informative: whether a v117 ro
 
 **Practical implication**: Bar 3 (fk_split > 0.50) can only be satisfied for regions where training data exists. For the primary use case — deploying the model trained on a labeled region to partition adjacent unlabeled regions — Bar 1 and Bar 2 are the relevant bars. The out-of-sample ARI=0.922 and merge_P=0.946 results confirm the method is viable for cross-regional deployment; the fk_split limitation applies specifically to detecting the *specific* frankenmerges in an unseen region.
 
-**Dense-box stress test**: Current benchmarks use a 100×50×100 μm bbox (~300 fragments). The `--dense` flag doubles the y-extent to 100k nm (~830 fragments), testing the harder regime where neurons are more densely packed and the partition problem is substantially more difficult. Dense-box results are reported in Supplementary Table 1 [PENDING].
+**Dense-box stress test**: Current standard benchmarks use a 200×50×100 μm bbox (~56 fragments after sliver filtering). The `--dense` flag expands the y-extent from 50k to 70k nm, increasing fragment count to ~60 per region and providing richer cross-neuron evidence in the k-NN graph. Dense multi-region results with the same 3-region training / 1-region test protocol:
+
+| | Sparse (50k nm y) | Dense (70k nm y) |
+|---|---|---|
+| Out-of-sample ARI | 0.922 | **0.901** |
+| Out-of-sample merge_P | 0.946 | **0.980** |
+| Out-of-sample merge_R | 0.922 | **0.926** |
+| Out-of-sample fk_split | 0.000 | **0.350** |
+| Bars 1+2 pass? | No | **Yes** |
+| is_tree | 1.000 | 1.000 |
+
+The dense box is strictly better for the critical Bar 2 metric (merge_P=0.980 > 0.95 threshold) and demonstrates partial frankenmerge transfer (fk_split=0.350 vs 0.000). This supports the interpretation that the sparse-box fk_split=0.000 was partly a density artifact: with fewer synapses per fragment, individual frankenmerge signatures are noisier and less distinctive across regions. In-sample fk_split is 1.000 across all three training regions in the dense setting, confirming the model can learn perfect within-region frankenmerge detection when evidence is sufficient.
 
 **Frankenmerge sample size**: 18 frankenmerge roots in the benchmark bbox produces a fk_split estimate with wide confidence intervals. A larger bbox (or aggregation across multiple regions) would tighten Bar 3.
 
