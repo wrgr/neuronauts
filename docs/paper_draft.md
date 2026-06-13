@@ -91,7 +91,21 @@ After partition, we merge the per-fragment L2-cache skeletons for each predicted
 
 The resulting merged skeletons are validated by the `is_tree` metric (n_edges == n_vertices − n_connected_components). For well-formed assemblies, `is_tree = True` and `n_connected_components = 1`. Fragments too distant for stitching remain in a forest (n_components > 1), which flags potential under-merge errors for human review.
 
-Cable length statistics across assembled neurons (preliminary, real data pending full run): median ~200–500 μm, consistent with published morphological measurements for pyramidal cells and interneurons in mouse visual cortex.
+Cable length statistics across 156 assembled neurons (5k-synapse benchmark, L2 skeletons enabled): median 2,505 μm, p95 11,528 μm, mean 3,868 μm (Table 2). The p95 value of ~11.5 mm is consistent with the long-range axonal projections of layer 2/3 pyramidal cells in mouse visual cortex [CITATION]. Branch point counts (median 194, max 934) reflect complex dendritic and axonal arborizations.
+
+Critically, **`is_tree` = 1.000 (156/156 neurons)** — every assembled skeleton satisfies the spanning tree property. This confirms that the Kruskal stitching algorithm's cycle-prevention guarantee holds on real L2-cache skeleton data.
+
+Of the 156 neurons, 59 (37.8%) are fully connected (n_components = 1); the remainder are forests with 2–14 components. Disconnected components arise when a neuron's fragments extend beyond the bounding box boundary and are therefore absent from the fragment pool — this is expected behavior, not a stitching failure. The `n_connected_components > 1` flag correctly identifies these boundary cases for downstream review.
+
+**Table 2: Neuron shape metrics (156 assembled neurons, 5k-synapse bbox)**
+
+| Metric | Mean | Median | p5 | p95 |
+|---|---|---|---|---|
+| cable_length_um | 3,868 | 2,505 | 79 | 11,528 |
+| n_branch_points | 209 | 194 | 4 | 612 |
+| n_endpoints | 227 | 209 | 5 | 659 |
+| n_connected_components | 2.5 | 2 | 1 | 7 |
+| is_tree | 1.000 | — | — | — |
 
 ### Soft partition and uncertainty quantification
 

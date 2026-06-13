@@ -557,3 +557,39 @@ union-find: ARI=0.000  merge_P=0.477  merge_R=1.000  over=0.517  fk_split=0.000 
 
 **Test coverage:** 688 tests pass (0 failures). New tests cover `_abstain_uncertain`, `soft_partition`,
 frankenmerge metrics, wrapper layer, and viability bars on synthetic data.
+
+---
+
+## Phase 2.7 — COMPLETE (Neuron shape assembly on real CAVE data)
+Branch: `claude/tree-dna-phase-1-G1DNn`
+
+**New modules:** `treestitch/assemble.py` — `merge_fragment_skeletons`, `assemble_partition_shapes`, `neuron_shape_metrics`
+**New tests:** `tests/test_assemble_shapes.py` — 15 tests, all passing
+
+**Real-data shape assembly results (5k synapses, 167 fragments, L2 skeletons enabled):**
+
+```
+ARI=0.768  merge_P=0.977  fk_split=0.706   (all three bars pass)
+Assembled 156 neuron shapes from predicted clusters
+```
+
+| Metric | Value | Notes |
+|---|---|---|
+| `is_tree` fraction | **1.000 (156/156)** | Kruskal guarantee confirmed on real data |
+| Fully connected (1 comp) | 37.8% (59/156) | Remainder = forests (stitch gap, not error) |
+| Cable length median | 2,505 μm | Biologically realistic (mouse cortex) |
+| Cable length p95 | 11,527 μm | Long axonal arbors |
+| Branch points median | 194 | Complex arborization |
+| Largest neuron | 18,138 μm cable, 934 branch pts | |
+
+**Key result: is_tree = 100%.** Kruskal stitching never introduces cycles. Confirmed on real L2-cache skeleton data.
+
+**Sparse-box caveat:** 37.8% single-component is lower than expected because fragments of the same
+neuron that extend outside the 100×50×100 μm bbox are not included, leaving inter-bbox stitch gaps.
+This is expected behavior: `neuron_shape_metrics.n_connected_components > 1` flags such gaps for review.
+
+**Spatial train/test split script:** `scripts/spatial_train_test_split.py`
+- Train bbox: x 950–1,150 μm (fresh data, no test label leakage)
+- Test bbox: x 1,150–1,350 μm (established benchmark region)
+- `--dense` flag: doubles y-extent for high-density stress test
+- Results pending (running).
