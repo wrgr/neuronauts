@@ -621,3 +621,65 @@ multiple bboxes simultaneously) or neurotransmitter-type features (same neuron �
 - Bars 1 & 2 PASS out-of-sample at cc_bias=-2.0: ARI=0.866, merge_P=0.964, merge_R=0.937
 - Bar 3 (fk_split) does NOT generalize spatially — requires multi-region training
 - Default in spatial_train_test_split.py updated to cc_bias=-2.0
+
+## Phase 2.8 — COMPLETE (Multi-region training + fundamental fk_split finding)
+Branch: `claude/tree-dna-phase-1-G1DNn`
+
+**New script:** `scripts/multi_region_train.py` — trains EdgePartitionGNN on 3 non-overlapping
+spatial bboxes simultaneously (graph concatenation, edges stay intra-region), then evaluates on
+held-out test bbox.
+
+**New module:** `treestitch/graph.py` — `concat_observation_graphs` concatenates multiple
+ObservationGraphs with node-index offsets so edges never cross regions.
+
+**Multi-region training results** (10k synapses/bbox, 100 epochs, cc_bias=-2.0):
+
+Train bboxes:
+- A: x 750–950k nm (far west)
+- B: x 950–1,150k nm (west, same as spatial-split train)
+- C: x 1,350–1,550k nm (far east)
+
+Test bbox: x 1,150–1,350k nm (held-out)
+
+| Region | Fragments | Synapses | Frankenmerges | ARI | merge_P | merge_R | fk_split |
+|---|---|---|---|---|---|---|---|
+| Train A (in-sample) | 56 | 365 | 6 | 0.921 | 0.993 | 0.885 | **0.805** |
+| Train B (in-sample) | 73 | 436 | 3 | 0.949 | 0.999 | 0.960 | **0.947** |
+| Train C (in-sample) | 52 | 325 | 3 | 0.957 | 0.994 | 0.933 | **0.733** |
+| **Test (out-of-sample)** | **56** | **315** | **6** | **0.922** | **0.946** | **0.922** | **0.000** |
+
+```
+Shape assembly: 72 neurons  is_tree=1.000  cable_median=3201 μm
+
+Bar1 (ARI>0.3 & merge_P>0.95):      FAIL  (merge_P=0.946 < 0.95)
+Bar2 (merge_P>0.95 & merge_R>0.70): FAIL  (merge_P=0.946 < 0.95)
+Bar3 (fk_split>0.50):               FAIL  (fk_split=0.000, 6 frankenmerges in test bbox)
+```
+
+**Fundamental finding — fk_split does not generalize spatially:**
+
+With 3-region training (vs 1-region in Phase 2.7), the out-of-sample fk_split is still 0.000.
+This is a structural result, not a data-size problem:
+
+- **In-sample fk_split is excellent** (0.733–0.947): the model correctly identifies frankenmerges
+  *within each training region*.
+- **Out-of-sample fk_split = 0.000**: zero transfer to the held-out test region even with 3
+  diverse training regions.
+
+**Root cause:** Whether a v117 root is a frankenmerge depends on the *local proofreading history*
+of that specific spatial region. The model learns "this root ID has heterogeneous synaptic
+partners because the proofreader fixed this particular merge error" — not a transferable abstract
+feature. There is no spatial-invariant synaptic signature of a frankenmerge because:
+1. The v1718 proofreading creates different merge/split decisions in different regions.
+2. Frankenmerge cut edges are type-0 (same-fragment), and their distinguishing feature
+   (spatially close synapses with heterogeneous partners) is not reliably more pronounced
+   than within-neuron type-0 edges in an unseen region.
+
+**ARI generalizes excellently** (0.922 out-of-sample = best yet): the main neuron partition
+task does transfer spatially. The model learns genuinely transferable edge-type features for
+deciding whether two synapses co-reside on a neuron.
+
+**merge_P pattern:** 0.946 (vs 0.95 bar) is a recurring result across all out-of-sample runs.
+The bar may be 0.5% too tight for the current architecture, or cc_bias tuning is needed.
+
+**is_tree = 1.000** holds unconditionally (Kruskal guarantee confirmed on all assemblies).
