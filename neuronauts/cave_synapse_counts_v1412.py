@@ -4,7 +4,11 @@ from collections import Counter
 from typing import Dict, Tuple
 
 import pandas as pd
-from caveclient import CAVEclient
+
+try:
+    from caveclient import CAVEclient
+except ImportError:
+    CAVEclient = object  # type: ignore[assignment,misc]
 
 
 def get_client(version: int = 1412) -> CAVEclient:

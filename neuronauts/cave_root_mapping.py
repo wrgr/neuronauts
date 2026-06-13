@@ -3,7 +3,11 @@ import time
 from typing import Dict, Iterable, List
 
 import numpy as np
-from caveclient import CAVEclient
+
+try:
+    from caveclient import CAVEclient
+except ImportError:
+    CAVEclient = object  # type: ignore[assignment,misc]
 
 
 def get_client(version: int) -> CAVEclient:
