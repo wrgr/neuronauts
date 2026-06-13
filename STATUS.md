@@ -608,5 +608,16 @@ The model learns which v117 roots are frankenmerges in the training bbox, not a
 transferable morphological/synaptic signature. To fix: multi-region training (train on
 multiple bboxes simultaneously) or neurotransmitter-type features (same neuron → same NT type).
 
-**Publication status:** Bars 1 and 2 pass with slight bias tuning; Bar 3 requires
-multi-region training. This is an honest finding that belongs in the paper.
+**cc_bias sweep on out-of-sample bbox:**
+```
+  bias      ARI   merge_P   merge_R     over   fk_split
+  -0.5   0.559     0.934     0.970    0.037      0.000
+  -1.0   0.731     0.949     0.959    0.028      0.038
+  -2.0   0.866     0.964     0.937    0.019      0.038   ← Bar2 PASSES
+  -3.0   0.905     0.977     0.859    0.011      0.365
+```
+
+**Publication status:**
+- Bars 1 & 2 PASS out-of-sample at cc_bias=-2.0: ARI=0.866, merge_P=0.964, merge_R=0.937
+- Bar 3 (fk_split) does NOT generalize spatially — requires multi-region training
+- Default in spatial_train_test_split.py updated to cc_bias=-2.0

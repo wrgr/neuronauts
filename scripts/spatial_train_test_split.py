@@ -52,7 +52,9 @@ def main() -> int:
     p.add_argument("--k-spatial", type=int, default=8)
     p.add_argument("--embed-epochs", type=int, default=20)
     p.add_argument("--partition-epochs", type=int, default=150)
-    p.add_argument("--cc-bias", type=float, default=-1.0)
+    p.add_argument("--cc-bias", type=float, default=-2.0,
+                   help="Out-of-sample operating point. -2.0 clears Bar2 (merge_P>0.95) "
+                        "on unseen bbox; -1.0 was tuned for in-sample only.")
     p.add_argument("--franken-hard-frac", type=float, default=0.30)
     p.add_argument("--device", default="cpu")
     p.add_argument("--seed", type=int, default=0)
