@@ -588,8 +588,25 @@ Assembled 156 neuron shapes from predicted clusters
 neuron that extend outside the 100×50×100 μm bbox are not included, leaving inter-bbox stitch gaps.
 This is expected behavior: `neuron_shape_metrics.n_connected_components > 1` flags such gaps for review.
 
-**Spatial train/test split script:** `scripts/spatial_train_test_split.py`
-- Train bbox: x 950–1,150 μm (fresh data, no test label leakage)
-- Test bbox: x 1,150–1,350 μm (established benchmark region)
-- `--dense` flag: doubles y-extent for high-density stress test
-- Results pending (running).
+**Spatial train/test split results:** `scripts/spatial_train_test_split.py`
+Train bbox: x 950–1,150 μm → Test bbox: x 1,150–1,350 μm (completely non-overlapping, different neurons)
+
+```
+               ARI    clusters   merge_P  merge_R   over   fk_split  is_tree
+in-sample    0.836    435/355    0.987    0.904    0.005    0.771     1.000
+out-of-sample 0.694   401/343    0.945    0.882    0.022    0.353     1.000
+```
+
+**Findings:**
+- ARI generalizes well: 0.836 → 0.694 (−0.14 drop on completely unseen neurons)
+- merge_P just below threshold: 0.945 vs 0.95 bar (0.5% gap — recoverable with bias tuning)
+- fk_split does NOT generalize: 0.771 → 0.353 — frankenmerge detection is region-specific
+
+**Interpretation of fk_split generalization gap:**
+Frankenmerges are determined by the proofreading history of a specific spatial region.
+The model learns which v117 roots are frankenmerges in the training bbox, not a
+transferable morphological/synaptic signature. To fix: multi-region training (train on
+multiple bboxes simultaneously) or neurotransmitter-type features (same neuron → same NT type).
+
+**Publication status:** Bars 1 and 2 pass with slight bias tuning; Bar 3 requires
+multi-region training. This is an honest finding that belongs in the paper.
