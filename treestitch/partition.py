@@ -331,6 +331,66 @@ def merge_metrics(
     return edge_merge_metrics(graph, pred_labels, ignore_label=ignore_label)  # type: ignore[arg-type]
 
 
+def assemble_partition_shapes(
+    fragment_list: list,
+    pred_labels: np.ndarray,
+    seg_ids: np.ndarray,
+    *,
+    stitch_radius_nm: float = 5_000.0,
+    min_fragments: int = 1,
+) -> dict:
+    """Build a dict of {cluster_id → merged neuron Fragment} from a partition.
+
+    Takes the output of ``partition_observations_cc`` and the Fragment objects
+    from world-building to produce whole-neuron skeleton geometries.  Each
+    merged Fragment is a tree (or forest) produced by Kruskal stitching of the
+    constituent fragment skeletons — no cycles can be introduced.
+
+    Parameters
+    ----------
+    fragment_list:
+        List[Fragment] from ``build_region_world`` or ``build_lineage_world``.
+    pred_labels:
+        [N] int64 per-synapse cluster IDs (negative = abstained, ignored).
+    seg_ids:
+        [N] int64 per-synapse v117 root IDs — ``graph.fragment_id`` from ObservationGraph.
+    stitch_radius_nm:
+        Max endpoint gap in nm for bridging adjacent fragment skeletons.
+    min_fragments:
+        Skip clusters with fewer than this many distinct fragments.
+
+    Returns
+    -------
+    dict[int, Fragment]
+        One merged-skeleton Fragment per predicted neuron cluster.
+    """
+    from treestitch.assemble import assemble_partition_shapes as _aps
+
+    return _aps(
+        fragment_list, pred_labels, seg_ids,
+        stitch_radius_nm=stitch_radius_nm,
+        min_fragments=min_fragments,
+    )
+
+
+def neuron_shape_metrics(neuron: Any) -> dict:
+    """Morphological sanity metrics for an assembled neuron skeleton Fragment.
+
+    Returns
+    -------
+    dict with keys:
+        cable_length_um        — total edge length in micrometres
+        n_branch_points        — degree-≥3 vertices
+        n_endpoints            — degree-≤1 vertices (leaves)
+        n_connected_components — 1 = fully connected; >1 = stitch gap or merge error
+        is_tree                — True iff no cycles (n_edges == n_verts − n_components)
+        bbox_volume_um3        — axis-aligned bounding-box volume in μm³
+    """
+    from treestitch.assemble import neuron_shape_metrics as _nsm
+
+    return _nsm(neuron)
+
+
 __all__ = [
     "PartitionGNN",
     "train_partition",
@@ -340,4 +400,6 @@ __all__ = [
     "partition_observations_cc",
     "partition_observations_soft",
     "merge_metrics",
+    "assemble_partition_shapes",
+    "neuron_shape_metrics",
 ]
