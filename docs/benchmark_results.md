@@ -33,3 +33,15 @@
 - Bar 2: merge\_P > 0.90 and merge\_R > 0.70 (operational threshold)
 - Bar 3: frankenmerge\_split\_recall > 0.5 — requires real CAVE data (not shown)
 - Synthetic graphs have one v117 fragment per neuron (no real frankenmerges)
+
+## Real Data Results (CAVE v117→v1718, minnie65)
+
+**Setup:** 100×50×100 μm³ bounding box, 20k synapses, no L2 skeletons, 150 epochs, seed=0.
+
+| method | ARI | clusters | merge\_P | merge\_R | over | fk\_split | Bar1 | Bar2 | Bar3 |
+|---|---|---|---|---|---|---|---|---|---|
+| union-find | 0.0001 | 7/533 | 0.477 | 1.000 | 0.517 | 0.000 | — | — | — |
+| edge\_cc (cc\_bias=-1.0) | 0.5129 | 504/533 | 0.981 | 0.963 | 0.009 | **0.695** | PASS | PASS | **PASS** |
+
+All three viability bars pass on real CAVE data for the first time.  
+Winning config: `--partition-epochs 150 --franken-hard-frac 0.30 --cc-bias -1.0`

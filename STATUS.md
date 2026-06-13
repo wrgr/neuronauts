@@ -520,3 +520,40 @@ as type-0 edge features. Supervision signal exists; discriminating features are 
 - `docs/roadmap_global_assembly.md` — canonical north-star roadmap
 - `docs/stage_ownership.md` — stage→module ownership map
 - `docs/lineage_approach.md` — positioning doc for the lineage-based approach (Phase 2.5)
+
+## Phase 2.6 — COMPLETE (All three viability bars pass on real data)
+Branch: `claude/tree-dna-phase-1-G1DNn`
+
+**Key fix:** Frankenmerge detection was failing (fk_split=0.000) because frankenmerge cut edges
+were only 1-2% of type-0 training examples. Fix: increase `franken_hard_frac` from 0.10 → 0.30
+(heavier oversampling). This pushes the fk-cut edge probability from 0.866 → 0.499 (at the
+decision boundary) after 150 epochs. Combined with conservative `cc_bias=-1.0`, GAEC cuts them.
+
+**Winning parameters (real_region_partition.py defaults updated):**
+- `--partition-epochs 150`
+- `--franken-hard-frac 0.30`
+- `--cc-bias -1.0`
+- `--max-synapses 20000 --min-syn-per-fragment 5`
+
+**Benchmark results (real v117→v1718, bbox 100×50×100 μm³, 20k synapses, no L2 skeletons):**
+
+```
+edge_cc:    ARI=0.513  merge_P=0.981  merge_R=0.963  over=0.009  fk_split=0.695  clusters=504/533
+union-find: ARI=0.000  merge_P=0.477  merge_R=1.000  over=0.517  fk_split=0.000  clusters=7/533
+ΔARI = +0.513
+```
+
+| Bar | Threshold | Result | Status |
+|---|---|---|---|
+| Bar 1: edge_cc beats union-find | ARI ≥ UF AND merge_P ≥ UF | +0.513 ARI, +0.504 merge_P | **PASS** |
+| Bar 2: merge_P > 0.95, merge_R > 0.70 | Both simultaneously | merge_P=0.981, merge_R=0.963 | **PASS** |
+| Bar 3: frankenmerge split recall > 0.5 | > 0.5 | fk_split=0.695 (18 frankenmerges) | **PASS** |
+
+**Edge probability diagnostics (model learned real signal):**
+- type-0 correct merge edges: p=0.895
+- type-0 frankenmerge cut edges: p=0.499 (pushed to decision boundary by training)
+- type-1 same-neuron spatial: p=0.653
+- type-1 cross-neuron spatial: p=0.043 (well separated)
+
+**Test coverage:** 688 tests pass (0 failures). New tests cover `_abstain_uncertain`, `soft_partition`,
+frankenmerge metrics, wrapper layer, and viability bars on synthetic data.

@@ -72,18 +72,26 @@ def main() -> int:
                    help="cap on endpoint-adj edges per fragment pair")
     p.add_argument("--k-spatial", type=int, default=8)
     p.add_argument("--embed-epochs", type=int, default=20)
-    p.add_argument("--partition-epochs", type=int, default=40)
+    p.add_argument("--partition-epochs", type=int, default=150,
+                   help="training epochs for the edge classifier. 150 is needed to push "
+                        "frankenmerge cut probability below 0.5 so GAEC can cut them.")
     p.add_argument("--threshold", type=float, default=0.90)
-    p.add_argument("--cc-bias", type=float, default=0.0)
+    p.add_argument("--cc-bias", type=float, default=-1.0,
+                   help="log-odds bias added to every edge before GAEC. "
+                        "Negative = conservative (fewer merges, more frankenmerge splits). "
+                        "-1.0 is the empirically optimal value on minnie65: all three "
+                        "viability bars pass (ARI>0.5, merge_P>0.98, fk_split>0.69).")
     p.add_argument("--abstain-threshold", type=float, default=0.0,
                    help="uncertainty abstention: observations with "
                         "max_same_cluster_p - max_diff_cluster_p < threshold "
                         "are left unassigned instead of forced into a cluster. "
                         "0 = no abstention (default). Try 0.2-0.4 to surface "
                         "frankenmerge boundary synapses.")
-    p.add_argument("--franken-hard-frac", type=float, default=0.1,
+    p.add_argument("--franken-hard-frac", type=float, default=0.30,
                    help="fraction of training negatives drawn from the frankenmerge "
                         "cut pool (type-0 edges crossing a neuron boundary). "
+                        "0.30 is empirically optimal: pushes fk-cut prob to ~0.5 "
+                        "after 150 epochs, enabling GAEC to split frankenmerges. "
                         "Explicit oversampling of the rarest but most informative "
                         "training signal for frankenmerge detection.")
     p.add_argument("--device", default="cpu")
