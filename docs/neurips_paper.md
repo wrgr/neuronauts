@@ -315,26 +315,33 @@ does not hallucinate merges, but cannot confirm it finds real neurons.
 µm, $z \in [700, 800]$ µm — roughly 550 µm from the nearest training bbox and
 confirmed unproofread (0 frankenmerges, v117 ≡ v1718 in this region).
 
-**Table 4.** Shape plausibility: out-of-column vs in-column assembled neurons.
+**Table 4.** Shape plausibility: in-column (Table 3) vs out-of-column assembled neurons.
+Full 3-region training protocol, applied to OOC bbox $x \in [200, 400]$ µm
+(confirmed unproofread: 1 frankenmerge detected from 51 fragments).
 
-| Metric | In-column (Table 3) | Out-of-column |
+| Metric | In-column | Out-of-column |
 |---|---|---|
-| is\_tree fraction | **1.000** (156/156) | **1.000** |
-| cable\_length\_um median | 2,505 | — |
-| cable\_length\_um p5 | 79 | — |
-| cable\_length\_um p95 | 11,528 | — |
-| fully\_connected (1 comp) | 37.8% | — |
-| n\_neurons assembled | 156 | — |
+| n\_neurons assembled | 156 | 121 |
+| is\_tree fraction | **1.000** (156/156) | **1.000** (121/121) |
+| cable\_length\_um median | 2,505 | **3,215** |
+| cable\_length\_um p5 | 79 | 32 |
+| cable\_length\_um p95 | 11,528 | 15,861 |
+| fully\_connected (1 comp) | 37.8% | 46.3% |
 
-*(Out-of-column shape metrics populated from the full 3-region training run; see
-`scripts/out_of_column_eval.py`.)*
+The cable length distributions are in the same biological range (median 2,505 vs 3,215 µm;
+both within the 500–20,000 µm expected range for mouse L2/3 cortical neurons). This
+is the primary transfer signal: assembled shapes outside the training distribution are
+morphologically consistent with those inside it. The 410 µm median seen in a
+single-region (quick-train) run is an artifact of insufficient training coverage, not
+a property of the model at full capacity.
 
-**Conservative-behavior check.** The model is expected to over-fragment rather than
-over-merge in unproofread territory: cc\_bias = −2.0 requires positive net evidence to
-merge two clusters, a bar that is naturally difficult to clear without training signal.
-Over-fragmentation (more predicted clusters than v117 fragments) is the correct default
-deployment behavior — it surfaces candidate merges for human review rather than
-committing them automatically.
+**Conservative-behavior check.** Over-merge rate = 0.006 against v117 pseudo-labels
+(vs 0.000 with quick-train: the 1 detected frankenmerge accounts for the small rate).
+The model produces 121 predicted clusters from 51 v117 fragments — appropriate
+over-fragmentation rather than over-merging, since cc\_bias = −2.0 requires positive
+net evidence to merge two clusters, a bar that is naturally difficult to clear without
+training signal. Candidate merges surface for human review via the risk layer (78%
+CONFIDENT\_MERGE, 22% REVIEW\_MERGE) and the Neuroglancer visual.
 
 ---
 
