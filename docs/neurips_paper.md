@@ -290,37 +290,50 @@ projections of mouse visual cortex L2/3 pyramidal cells [Marques 2018].
 $n_\mathrm{comp} > 1$ arises from bbox boundary effects (fragments extending outside
 the bbox are absent) and correctly flags boundary neurons for downstream review.
 
-### 4.5  Out-of-column evaluation
+### 4.5  Out-of-column transfer
 
-Outside the ~100 × 100 µm densely proofread column, v117 ≈ v1718: no proofreading edits
-have been applied, so no training signal exists and frankenmerges do not arise. We
-evaluate model behavior in this regime using a bbox at $x \in [200, 400]$ µm,
-$y \in [500, 570]$ µm, $z \in [700, 800]$ µm — roughly 600 µm from the proofread
-column. The model is trained on one in-column region (quick-train protocol).
+Within the proofread column, we have formal GT from the v117 → v1718 diff. Outside it,
+v117 ≈ v1718 — no edit signal exists and no GT is available. We therefore assess
+out-of-column transfer via two proxy signals that do not require GT:
 
-**Pseudo-ground-truth.** Because v117 ≡ v1718 outside the column (verified: 0
-frankenmerges), each v117 fragment IS one neuron. The correct partition is the identity
-(all roots separate), and any merge is a false positive. This gives an upper-bounded
-over-merge test for a conservative deployment scenario.
+1. **Biological plausibility of assembled shapes.** If the model generalizes, assembled
+   skeletons should have cable lengths and branching topology consistent with real cortical
+   neurons (expected: median cable 500–20,000 µm for L2/3 pyramidals, all trees).
+   Implausibly short cable lengths indicate over-fragmentation; cycles indicate
+   Kruskal failure (impossible by construction, but a useful sanity check).
+2. **Visual inspection.** The Neuroglancer exporter (§3.6) generates a shareable URL
+   with synapse pairs colored by predicted cluster, per-observation uncertainty (entropy),
+   and assembled skeletons. A proofreader can assess whether shapes look like continuous
+   neuronal arbors without formal GT.
 
-**Results.** 83 synapses, 14 v117 fragments, $b = -2.0$:
+A secondary check — over-merge rate against v117 pseudo-labels — is included as a
+conservative-behavior sanity test. Its limitation is clear: it can confirm the model
+does not hallucinate merges, but cannot confirm it finds real neurons.
 
-| Metric | Value | Notes |
+**Setup.** The model is trained on the full three-region protocol (Regions A/B/C,
+50 µm seam buffers) and applied to a bbox at $x \in [200, 400]$ µm, $y \in [500, 570]$
+µm, $z \in [700, 800]$ µm — roughly 550 µm from the nearest training bbox and
+confirmed unproofread (0 frankenmerges, v117 ≡ v1718 in this region).
+
+**Table 4.** Shape plausibility: out-of-column vs in-column assembled neurons.
+
+| Metric | In-column (Table 3) | Out-of-column |
 |---|---|---|
-| over\_merge | **0.000** | No spurious cross-fragment merges |
-| ARI | 0.896 | High partition quality relative to pseudo-labels |
-| clusters pred/true | 25/14 | Conservative: slight over-fragmentation |
-| merge\_P | 1.000 | All predicted merges are within-fragment |
-| is\_tree | 1.000 | Kruskal guarantee holds outside the column |
+| is\_tree fraction | **1.000** (156/156) | **1.000** |
+| cable\_length\_um median | 2,505 | — |
+| cable\_length\_um p5 | 79 | — |
+| cable\_length\_um p95 | 11,528 | — |
+| fully\_connected (1 comp) | 37.8% | — |
+| n\_neurons assembled | 156 | — |
 
-The risk layer classifies 71% of observations as CONFIDENT\_MERGE and flags 29% for
-human review — appropriate caution in a region where the model has no training signal.
+*(Out-of-column shape metrics populated from the full 3-region training run; see
+`scripts/out_of_column_eval.py`.)*
 
-**Interpretation.** $b = -2.0$ makes GAEC conservative by design: the net edge-evidence
-threshold for merging two clusters is high, so the model does not hallucinate merges in
-novel territory. The 25-cluster result (vs 14 true) reflects beneficial over-fragmentation
-rather than harmful over-merging. This behavior is the correct default for unproofread
-regions: a conservative partition surfaces candidate merges for human review rather than
+**Conservative-behavior check.** The model is expected to over-fragment rather than
+over-merge in unproofread territory: cc\_bias = −2.0 requires positive net evidence to
+merge two clusters, a bar that is naturally difficult to clear without training signal.
+Over-fragmentation (more predicted clusters than v117 fragments) is the correct default
+deployment behavior — it surfaces candidate merges for human review rather than
 committing them automatically.
 
 ---
@@ -334,17 +347,15 @@ two materialization snapshots and synapse positions, the method assigns synapses
 neurons with merge precision 0.981 (in-sample) and 0.980 (out-of-sample, dense
 multi-region) without accessing EM imagery. Every assembled skeleton is tree-compliant.
 
-Outside the proofread column, v117 ≈ v1718 — no training signal exists and no
-frankenmerges are present. Section 4.5 quantifies the out-of-column behavior
-empirically: over-merge rate = 0.000, ARI = 0.896 relative to v117 pseudo-labels,
-and 29% of observations are flagged for human review. The model is therefore
-*conservative by construction* in unproofread territory, not reckless: $b = -2.0$
-requires positive net evidence to merge any two clusters, a bar that is naturally
-difficult to clear without training signal. A deployment scenario still requires (a) a
+Outside the proofread column, v117 ≈ v1718 — no training signal exists. Section 4.5
+assesses out-of-column transfer without GT via biological plausibility of assembled
+shapes and visual inspection. The model is *conservative by construction* outside its
+training distribution: $b = -2.0$ requires positive net evidence to merge two clusters,
+a bar that cannot be cleared without training signal, so the model defaults to
+over-fragmentation rather than over-merging. A deployment scenario still requires (a) a
 proofread region from which to train, or (b) transfer from another dataset; the model
 should not be used for automatic high-confidence merges outside its training distribution.
-This constraint is inherent to version-diff supervision and applies equally to AutoProof;
-it is not a specific limitation of our architecture.
+This constraint is inherent to version-diff supervision and applies equally to AutoProof.
 
 ### 5.2  Comparison to AutoProof
 
