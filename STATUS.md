@@ -792,4 +792,67 @@ correctly flags 29% of observations for human review in the uncertain unproofrea
 **Seam buffer + root dedup (leak fixes):** committed to `scripts/multi_region_train.py` and
 `scripts/spatial_train_test_split.py` — `--seam-buffer 50000` (default) creates a 50µm physical
 gap at train/test boundaries; root dedup removes cross-boundary v117 roots from the encoder's
-supervision set. Results from leak-fixed dense multi-region rerun pending (task bijxa8j2r).
+supervision set. See Phase 2.11 for the quantified impact.
+
+## Phase 2.11 — COMPLETE (Leak-fixed dense multi-region rerun)
+Branch: `claude/tree-dna-phase-1-G1DNn`
+
+**Protocol:** Same as Phase 2.9 dense run + `--seam-buffer 50000` (50 µm gap at seams) + root
+dedup (any v117 root in the test label map excluded from encoder supervision). Only 1 root was
+excluded by dedup; the primary effect is the 50k nm smaller Train B.
+
+| Region | Fragments | Synapses | Frankenmerges | ARI | merge_P | merge_R | fk_split |
+|---|---|---|---|---|---|---|---|
+| Train A (in-sample) | 52 | 339 | 7 | 0.918 | 0.997 | 0.853 | **0.942** |
+| Train B (in-sample) | 69 | 411 | 6 | 0.914 | 0.997 | 0.846 | **0.970** |
+| Train C (in-sample) | 70 | 492 | 1 | 0.807 | 0.997 | 0.981 | **1.000** |
+| **Test (out-of-sample)** | **64** | **386** | **4** | **0.752** | **0.951** | **0.865** | **0.000** |
+
+```
+Shape assembly: 95 neurons  is_tree=1.000  cable_median=3579 µm
+
+Bar1 (ARI>0.3 & merge_P>0.95):      PASS ✓
+Bar2 (merge_P>0.95 & merge_R>0.70): PASS ✓  (merge_P=0.951, right at threshold)
+Bar3 (fk_split>0.50):               FAIL  (4 frankenmerges, 0 detected)
+```
+
+**Comparison: Phase 2.9 (no leak fix) vs Phase 2.11 (leak-fixed):**
+
+| Metric | Phase 2.9 (pre-fix) | Phase 2.11 (leak-fixed) | Δ |
+|---|---|---|---|
+| Out-of-sample ARI | 0.901 | 0.752 | −0.149 |
+| Out-of-sample merge_P | 0.980 | 0.951 | −0.029 |
+| Out-of-sample merge_R | 0.926 | 0.865 | −0.061 |
+| Out-of-sample fk_split | 0.350 | 0.000 | −0.350 |
+| Bar1+2 pass? | Yes | **Yes** | — |
+| is_tree | 1.000 | 1.000 | 0 |
+
+**Interpretation:**
+
+1. **The leak was real and measurable.** ARI drops 0.149 after removing boundary fragments
+   from training. The 50k nm seam buffer cut Train B's coverage near the test boundary —
+   exactly the data most similar to the test region. The 1 excluded root (dedup) accounts for
+   a small fraction of the drop; the buffer accounts for most.
+
+2. **Bars 1+2 still pass at the leak-fixed threshold.** merge_P=0.951 clears the 0.95 bar
+   (by 0.001). The core claim — the method achieves high-precision merging out-of-sample —
+   holds even under the stricter evaluation protocol.
+
+3. **fk_split collapses from 0.350 → 0.000.** The Phase 2.9 frankenmerge partial
+   generalization was entirely an artifact: the boundary region contained frankenmerge roots
+   that appeared in both train and test label maps, giving the encoder spurious in-advance
+   knowledge of which test-region roots were problematic. With the buffer in place,
+   fk_split = 0.000 is the honest estimate of frankenmerge detection outside the training
+   distribution. This confirms the Phase 2.8 structural finding: frankenmerge detection
+   is region-specific and does not transfer spatially.
+
+4. **Paper impact:** The honest out-of-sample numbers for the NeurIPS paper are ARI=0.752,
+   merge_P=0.951. The abstract should be updated accordingly. Bars 1+2 pass; Bar 3 is
+   diagnostic (not a viability bar).
+
+**Root cause of the ARI drop:**
+The seam buffer removes 50k nm of training coverage at the east edge of Train B. These
+fragments are spatially closest to the test bbox, so their removal disproportionately
+reduces the model's familiarity with the synaptic and morphological statistics of the
+test region. This is the correct tradeoff: valid out-of-sample evaluation requires
+this gap.

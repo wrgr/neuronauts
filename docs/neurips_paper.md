@@ -16,10 +16,11 @@ applies Greedy Additive Edge Contraction (GAEC), a globally-consistent correlati
 clustering algorithm that tolerates individual edge errors. On MICrONS Minnie65
 (v117 → v1718, four years of human annotation, 533 ground-truth neurons), the method
 achieves merge precision 0.981, merge recall 0.963, and ARI 0.513 in-sample;
-in a dense multi-region protocol (train on three non-overlapping bounding boxes, evaluate
-on a fourth), merge precision reaches 0.980 and ARI 0.901 out-of-sample. Every assembled
-skeleton satisfies the spanning-tree property (is_tree = 1.000, 156/156). Code and
-benchmark data are made public at [anonymous repository].
+in a rigorously leak-free dense multi-region protocol (train on three non-overlapping
+bounding boxes with 50 µm seam buffers, evaluate on a fourth), merge precision reaches
+0.951 and ARI 0.752 out-of-sample. Every assembled skeleton satisfies the spanning-tree
+property (is_tree = 1.000, 156/156). Code and benchmark data are made public at
+[anonymous repository].
 
 ---
 
@@ -52,8 +53,8 @@ infrastructure [Dorkenwald 2023].
    observation graph (same-fragment / spatial k-NN / endpoint-adjacent edges) solved
    by GAEC, not as a sequence of local pairwise decisions.
 3. Demonstrates that this is sufficient for spatial generalization within the
-   proofreaded region: out-of-sample merge precision 0.980, ARI 0.901 (dense multi-region
-   protocol, MICrONS Minnie65).
+   proofreaded region: out-of-sample merge precision 0.951, ARI 0.752 (leak-free dense
+   multi-region protocol, MICrONS Minnie65).
 4. Provides a *tree-compliant skeleton assembler* (Kruskal stitching) that converts
    the partition into whole-neuron geometries with a provable no-cycle guarantee.
 5. Surfaces the key limitation of the approach: training signal is concentrated in the
@@ -243,25 +244,31 @@ connections exist during training; the encoder is trained exclusively on the thr
 regions.
 
 **Table 2.** Spatial generalization, dense boxes ($y$-extent = 70 µm), $b = -2.0$.
+All out-of-sample results use 50 µm seam buffers and root deduplication to prevent
+train/test leakage (see §5.3).
 
 | Protocol | ARI | merge\_P | merge\_R | over\_merge | fk\_split | is\_tree |
 |---|---|---|---|---|---|---|
-| In-sample | 0.836 | 0.987 | 0.904 | 0.005 | 0.771 | 1.000 |
+| In-sample (single-region) | 0.836 | 0.987 | 0.904 | 0.005 | 0.771 | 1.000 |
 | Out-of-sample (single-region split) | 0.866 | 0.964 | 0.937 | 0.019 | 0.038 | 1.000 |
-| **Out-of-sample (multi-region, dense)** | **0.901** | **0.980** | **0.926** | **0.009** | **0.350** | **1.000** |
+| **Out-of-sample (multi-region, leak-fixed)** | **0.752** | **0.951** | **0.865** | **0.024** | **0.000** | **1.000** |
 
-Multi-region training improves both ARI and merge precision out-of-sample, consistent
-with training on multiple spatial contexts regularizing against region-specific
-memorization. Merge precision 0.980 exceeds our 0.95 operational threshold.
+Multi-region training maintains merge precision above the 0.95 operational threshold
+out-of-sample. The seam buffer (50 µm gap between train B and the test bbox) removes the
+data most similar to the test region; this is the honest evaluation cost.
 
-**Frankenmerge split recall does not fully generalize.** In-sample fk\_split reaches
-0.771–1.000 (per-region, dense); out-of-sample = 0.000–0.350 depending on density.
+**Leak impact.** Without the seam buffer, the same multi-region run yields ARI = 0.901
+and merge\_P = 0.980. The 0.149 ARI gap and the fk\_split drop from 0.350 → 0.000
+quantify how much boundary proximity inflated the earlier results. The seam-buffered
+numbers are the correct citation for the out-of-sample claim.
+
+**Frankenmerge split recall does not generalize.** In-sample fk\_split reaches
+0.942–1.000 per training region; out-of-sample = 0.000 under the honest protocol.
 Whether a v117 root is a frankenmerge is a property of the local proofreading history,
-not a transferable synaptic signature. We emphasize that high ARI already subsumes
-frankenmerge handling implicitly: synapses on each side of a frankenmerge receive
-different predicted cluster labels, contributing directly to ARI regardless of whether
-the root is explicitly flagged. fk\_split is therefore a useful diagnostic for
-generating reviewer queues rather than a prerequisite for correct partition.
+not a transferable synaptic signature. High ARI already subsumes frankenmerge handling
+implicitly — synapses on each side of a frankenmerge receive different predicted cluster
+labels regardless of whether the root is explicitly flagged. fk\_split is a useful
+diagnostic for reviewer queues, not a prerequisite for correct partition.
 
 ### 4.4  Skeleton assembly
 
@@ -368,12 +375,15 @@ strengthen the generalization claim.
 benchmark operates on ~56 fragments per bbox. Fetching a complete synapse table for a
 smaller, fully-covered bbox would produce a more representative benchmark.
 
-**Boundary leakage.** Train/test bboxes share boundary planes; v117 fragments whose
-supervoxels straddle those planes appear in both label maps. We address this with a 50 µm
-inter-bbox seam buffer (physical gap between train and test planes) plus root deduplication
-(any v117 root appearing in the test label map is excluded from encoder supervision).
-Dense multi-region results in Table 2 are reported before applying these fixes; leak-fixed
-runs confirm the same qualitative pattern with slightly stricter numerical bounds.
+**Boundary leakage.** Train/test bboxes that share boundary planes allow v117 fragments
+whose supervoxels straddle those planes to appear in both train and test label maps,
+inflating out-of-sample metrics. We address this with two complementary fixes: (1) a
+50 µm inter-bbox seam buffer (physical gap between train and test planes) and (2) root
+deduplication (any v117 root appearing in the test label map is excluded from encoder
+supervision). Table 2 reports the leak-fixed numbers. The leak-inflated run (same
+protocol, no buffer) yields ARI = 0.901 and merge\_P = 0.980; the honest gap
+(ARI −0.149, merge\_P −0.029) quantifies the leakage's contribution. Bars 1+2 pass
+under either evaluation; fk\_split = 0.000 is the correct out-of-sample estimate.
 
 ---
 
@@ -383,10 +393,12 @@ The snapshot diff between two segmentation materializations is sufficient superv
 train a fragment-to-neuron partition model that generalizes spatially, without accessing
 raw EM imagery. Key architectural choices — typed observation edges, frankenmerge
 oversampling, and GAEC for globally-consistent inference — yield merge precision 0.981
-in-sample and 0.980 out-of-sample (dense multi-region) on MICrONS Minnie65.
+in-sample and 0.951 out-of-sample (dense multi-region, leak-free) on MICrONS Minnie65.
 Kruskal stitching produces tree-compliant whole-neuron skeletons (is\_tree = 100%).
-The binding open problem — deployment outside the proofread sub-volume — is shared
-across version-diff supervision methods and is the correct next target for the field.
+Applied outside the proofread column, the model is conservative by construction
+(over\_merge = 0.000) with appropriate uncertainty flagging. The binding open problem —
+high-confidence deployment outside the proofread sub-volume — is shared across
+version-diff supervision methods and is the correct next target for the field.
 
 ---
 
