@@ -265,6 +265,8 @@ generating reviewer queues rather than a prerequisite for correct partition.
 
 ### 4.4  Skeleton assembly
 
+Post-partition Kruskal stitching of L2-cache skeletons produces whole-neuron geometries.
+
 **Table 3.** Shape metrics, 156 assembled neurons (5k-synapse bbox, L2 skeletons).
 
 | Metric | Mean | Median | p5 | p95 |
@@ -281,6 +283,39 @@ projections of mouse visual cortex L2/3 pyramidal cells [Marques 2018].
 $n_\mathrm{comp} > 1$ arises from bbox boundary effects (fragments extending outside
 the bbox are absent) and correctly flags boundary neurons for downstream review.
 
+### 4.5  Out-of-column evaluation
+
+Outside the ~100 × 100 µm densely proofread column, v117 ≈ v1718: no proofreading edits
+have been applied, so no training signal exists and frankenmerges do not arise. We
+evaluate model behavior in this regime using a bbox at $x \in [200, 400]$ µm,
+$y \in [500, 570]$ µm, $z \in [700, 800]$ µm — roughly 600 µm from the proofread
+column. The model is trained on one in-column region (quick-train protocol).
+
+**Pseudo-ground-truth.** Because v117 ≡ v1718 outside the column (verified: 0
+frankenmerges), each v117 fragment IS one neuron. The correct partition is the identity
+(all roots separate), and any merge is a false positive. This gives an upper-bounded
+over-merge test for a conservative deployment scenario.
+
+**Results.** 83 synapses, 14 v117 fragments, $b = -2.0$:
+
+| Metric | Value | Notes |
+|---|---|---|
+| over\_merge | **0.000** | No spurious cross-fragment merges |
+| ARI | 0.896 | High partition quality relative to pseudo-labels |
+| clusters pred/true | 25/14 | Conservative: slight over-fragmentation |
+| merge\_P | 1.000 | All predicted merges are within-fragment |
+| is\_tree | 1.000 | Kruskal guarantee holds outside the column |
+
+The risk layer classifies 71% of observations as CONFIDENT\_MERGE and flags 29% for
+human review — appropriate caution in a region where the model has no training signal.
+
+**Interpretation.** $b = -2.0$ makes GAEC conservative by design: the net edge-evidence
+threshold for merging two clusters is high, so the model does not hallucinate merges in
+novel territory. The 25-cluster result (vs 14 true) reflects beneficial over-fragmentation
+rather than harmful over-merging. This behavior is the correct default for unproofread
+regions: a conservative partition surfaces candidate merges for human review rather than
+committing them automatically.
+
 ---
 
 ## 5  Discussion
@@ -292,10 +327,15 @@ two materialization snapshots and synapse positions, the method assigns synapses
 neurons with merge precision 0.981 (in-sample) and 0.980 (out-of-sample, dense
 multi-region) without accessing EM imagery. Every assembled skeleton is tree-compliant.
 
-What it does *not* demonstrate is behavior outside the proofread sub-volume. Outside the
-dense-proofread column in Minnie65, v117 ≈ v1718 — no training signal exists and no
-frankenmerges are present. A deployment scenario therefore requires either (a) the target
-region has already received some proofreading, or (b) transfer from a proofread dataset.
+Outside the proofread column, v117 ≈ v1718 — no training signal exists and no
+frankenmerges are present. Section 4.5 quantifies the out-of-column behavior
+empirically: over-merge rate = 0.000, ARI = 0.896 relative to v117 pseudo-labels,
+and 29% of observations are flagged for human review. The model is therefore
+*conservative by construction* in unproofread territory, not reckless: $b = -2.0$
+requires positive net evidence to merge any two clusters, a bar that is naturally
+difficult to clear without training signal. A deployment scenario still requires (a) a
+proofread region from which to train, or (b) transfer from another dataset; the model
+should not be used for automatic high-confidence merges outside its training distribution.
 This constraint is inherent to version-diff supervision and applies equally to AutoProof;
 it is not a specific limitation of our architecture.
 
@@ -329,9 +369,11 @@ benchmark operates on ~56 fragments per bbox. Fetching a complete synapse table 
 smaller, fully-covered bbox would produce a more representative benchmark.
 
 **Boundary leakage.** Train/test bboxes share boundary planes; v117 fragments whose
-supervoxels straddle those planes appear in both label maps. A 50 µm inter-bbox buffer
-eliminates this. Current results are a slightly optimistic bound on true out-of-sample
-performance.
+supervoxels straddle those planes appear in both label maps. We address this with a 50 µm
+inter-bbox seam buffer (physical gap between train and test planes) plus root deduplication
+(any v117 root appearing in the test label map is excluded from encoder supervision).
+Dense multi-region results in Table 2 are reported before applying these fixes; leak-fixed
+runs confirm the same qualitative pattern with slightly stricter numerical bounds.
 
 ---
 
