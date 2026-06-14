@@ -61,6 +61,9 @@ def main() -> int:
     p.add_argument("--no-l2-skeletons", action="store_true")
     p.add_argument("--dense", action="store_true",
                    help="Use larger bboxes (double y-extent) for the dense-box stress test")
+    p.add_argument("--seam-buffer", type=int, default=50_000,
+                   help="Gap in nm at the train/test boundary to prevent fragment straddle "
+                        "leakage (default 50k nm = 50 µm)")
     args = p.parse_args()
 
     from treestitch.assemble import assemble_partition_shapes, neuron_shape_metrics
@@ -82,8 +85,11 @@ def main() -> int:
         y0, y1 = 900_000, 1_000_000
         print("Dense mode: y-extent doubled (100k nm)")
 
-    train_bbox = ((950_000, y0, z0), (1_150_000, y1, z1))
+    buf = args.seam_buffer
+    train_bbox = ((950_000, y0, z0), (1_150_000 - buf, y1, z1))
     test_bbox  = ((1_150_000, y0, z0), (1_350_000, y1, z1))
+    if buf > 0:
+        print(f"Seam buffer: {buf//1000} µm gap at train/test boundary")
 
     print("=" * 64)
     print(f"Spatial train/test split  (v117 → v{args.version})")

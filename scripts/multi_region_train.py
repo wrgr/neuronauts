@@ -65,6 +65,9 @@ def main() -> int:
     p.add_argument("--no-l2-skeletons", action="store_true")
     p.add_argument("--dense", action="store_true",
                    help="Double y-extent (930–1000k instead of 930–980k) for dense-box test")
+    p.add_argument("--seam-buffer", type=int, default=50_000,
+                   help="Gap in nm between adjacent train/test bbox boundaries to prevent "
+                        "fragment-straddle leakage (default 50k nm = 50 µm)")
     args = p.parse_args()
 
     from treestitch.assemble import assemble_partition_shapes, neuron_shape_metrics
@@ -83,13 +86,18 @@ def main() -> int:
         y1 = 1_000_000
         print("Dense mode: y-extent = 930–1000k nm")
 
-    # Non-overlapping training regions and the established test bbox
+    # Non-overlapping training regions and the established test bbox.
+    # seam_buffer creates a gap at each train/test boundary so no v117 fragment
+    # can straddle into both train and test supervision sets.
+    buf = args.seam_buffer
     train_bboxes = [
-        ((750_000, y0, z0),   (950_000, y1, z1)),   # A: far west
-        ((950_000, y0, z0),   (1_150_000, y1, z1)), # B: west (prev split train)
-        ((1_350_000, y0, z0), (1_550_000, y1, z1)), # C: far east
+        ((750_000, y0, z0),               (950_000, y1, z1)),          # A: far west
+        ((950_000, y0, z0),               (1_150_000 - buf, y1, z1)),  # B: west, buffer before test
+        ((1_350_000 + buf, y0, z0),       (1_550_000, y1, z1)),        # C: far east, buffer after test
     ]
     test_bbox = ((1_150_000, y0, z0), (1_350_000, y1, z1))
+    if buf > 0:
+        print(f"Seam buffer: {buf//1000} µm gap at each train/test boundary (prevents fragment straddle)")
 
     print("=" * 64)
     print(f"Multi-region training  (v117 → v{args.version})")
@@ -127,12 +135,31 @@ def main() -> int:
     print(f"\nTotal train: {total_frags} fragments, {total_syn} synapses, "
           f"{total_franken} frankenmerges across {len(train_bboxes)} regions")
 
+    # ------------------------------------------------------------------ Build test world early for dedup
+    # Build the test world before training so we can exclude any v117 root that
+    # appears in both train and test supervision sets (cross-set label leakage).
+    print(f"\n[TEST] Building world (held-out bbox, for dedup check) …")
+    frags_te, region_te, lmap_te = build_region_world(
+        test_bbox, version=args.version, side=args.side,
+        max_synapses=args.max_synapses,
+        min_syn_per_fragment=args.min_syn_per_fragment,
+        seed=args.seed, verbose=True,
+        l2_skeletons=not args.no_l2_skeletons)
+    test_v117_roots = set(lmap_te.keys())
+
     # ------------------------------------------------------------------ Encode all regions
     print(f"\nTraining FragmentEncoder on all {len(train_bboxes)} regions ({args.embed_epochs} epochs) …")
-    # Merge all label maps for cross-region supervision in the encoder
+    # Merge label maps, excluding any root present in the test set.
     merged_lmap: dict = {}
+    n_excluded = 0
     for lm in all_label_maps:
-        merged_lmap.update(lm)
+        for root, labels in lm.items():
+            if root in test_v117_roots:
+                n_excluded += 1
+            else:
+                merged_lmap[root] = labels
+    if n_excluded:
+        print(f"  Root dedup: excluded {n_excluded} v117 roots present in both train and test")
 
     encoder = FragmentEncoder(node_input_dim=4, d_model=64, output_dim=32)
     if args.embed_epochs > 0:
@@ -172,15 +199,8 @@ def main() -> int:
         mm = merge_metrics(g, pred)
         print(f"  Region {chr(65+i)}: {_fmt({**ev, **mm})}")
 
-    # ------------------------------------------------------------------ Test
-    print(f"\n[TEST] Building world (held-out bbox, model never trained on this) …")
-    frags_te, region_te, lmap_te = build_region_world(
-        test_bbox, version=args.version, side=args.side,
-        max_synapses=args.max_synapses,
-        min_syn_per_fragment=args.min_syn_per_fragment,
-        seed=args.seed, verbose=True,
-        l2_skeletons=not args.no_l2_skeletons)
-
+    # ------------------------------------------------------------------ Test (world already built above)
+    print(f"\n[TEST] Evaluating held-out bbox (world built earlier, model never trained on this) …")
     n_franken_te = sum(1 for v in lmap_te.values() if len(v) > 1)
     frags_te_enc = encode_fragments(encoder, frags_te, device=args.device)
     graph_te = build_observation_graph(region_te, frags_te_enc, side=args.side,
