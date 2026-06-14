@@ -1,38 +1,32 @@
 #!/usr/bin/env python3
-"""Out-of-proofread-column evaluation for NeuronautS.
+"""Out-of-proofread-column transfer assessment for NeuronautS.
 
-Tests the trained model on a spatial region where v117 ≈ v1718 (no proofreading
-edits exist). In this regime, each v117 fragment IS a neuron — there are no
-merge or split errors for the proofreader to have fixed, so the correct partition
-is to keep every v117 root as its own cluster.
+Trains on in-column bboxes (where v117→v1718 diff provides real GT) and applies
+the model to a spatially distant region where v117 ≈ v1718 (no proofreading edits).
+No formal ground truth is available outside the column.
 
-v117 is therefore used as the ground-truth pseudo-label outside the column.
+Assessment strategy
+-------------------
+Primary — biological plausibility of assembled shapes:
+  - cable_length_um distribution (expected 500–20,000 µm for cortical L2/3 neurons)
+  - is_tree fraction (Kruskal guarantee; should be 1.000 by construction)
+  - fully_connected fraction (1-component shapes = no stitch gap)
+  - Compare to in-column shape distribution as a transfer signal
 
-Why this matters
-----------------
-All our training and in-sample metrics come from within/adjacent to the MICrONS
-dense-proofread column (~100 × 100 µm, VISp). Outside the column, v117 ≈ v1718
-(our diagnostic records 0% root-ID divergence in random spatial boxes). A model
-trained on the column may (a) produce biologically plausible neuron shapes but
-wildly merge fragments, or (b) correctly abstain from merging when evidence is
-absent. This script distinguishes these outcomes.
+Secondary — Neuroglancer visual inspection:
+  Generates a shareable URL with synapse pairs (colored by cluster), per-observation
+  entropy (uncertainty), and assembled skeletons for expert assessment.
 
-Evaluation metrics
-------------------
-Without a v1718 ground truth, we use:
-  - merge_P (precision): fraction of predicted merges that are correct
-    (using v117 as pseudo-truth → all fragment boundaries are "correct")
-  - n_merged_pairs: how aggressively the model merges outside the column
-  - Shape metrics: is_tree, cable_length (biological plausibility)
-  - Confidence distribution: are out-of-column predictions higher- or lower-
-    confidence than in-column? High-confidence out-of-column merges = concern.
-
-We train on in-column data (default: the established multi-region bboxes), then
-evaluate on a user-specified out-of-column bbox.
+Tertiary — conservative-behavior sanity check:
+  Because v117 ≡ v1718 outside the column (0 frankenmerges), each v117 root IS one
+  neuron. Over-merge rate against v117 pseudo-labels confirms the model does not
+  hallucinate merges in novel territory. This is a necessary but not sufficient
+  condition: it cannot confirm the model finds real neurons, only that it does not
+  spuriously fuse known-separate fragments.
 
 Usage
 -----
-  # Default: evaluate at x=300k (well outside the x=750k–1550k column region)
+  # Default: evaluate at x=200–400k (well outside the x=750k–1550k column)
   python scripts/out_of_column_eval.py --version 1718
 
   # Custom out-of-column bbox:
@@ -41,7 +35,7 @@ Usage
       --ooc-y0 400000 --ooc-y1 500000 \\
       --ooc-z0 600000 --ooc-z1 700000
 
-  # Skip retraining; load a saved model (placeholder — currently always retrains):
+  # Faster debugging (1 training region):
   python scripts/out_of_column_eval.py --quick-train --embed-epochs 10
 """
 
@@ -282,68 +276,69 @@ def main() -> int:
 
     # ------------------------------------------------------------------ Summary
     print(f"\n{'='*64}")
-    print(f"SUMMARY: out-of-column evaluation")
+    print(f"SUMMARY: out-of-column transfer assessment")
     print(f"{'='*64}")
     print(f"\n  OOC bbox: {n_ooc_syn} synapses, {n_ooc_frags} fragments")
     print(f"  Edit signal: {n_franken_v1718} frankenmerges "
           f"({'unproofread' if n_franken_v1718 == 0 else 'some edits'})")
 
-    print(f"\n  Using v117 pseudo-labels (each fragment = 1 neuron):")
-    print(f"    ARI={ev_ooc_pseudo['ari']:.4f}  "
-          f"clusters={ev_ooc_pseudo['n_clusters_pred']}/{ev_ooc_pseudo['n_clusters_true']}")
-    print(f"    merge_P={mm_ooc_pseudo['merge_precision']:.3f}  "
-          f"merge_R={mm_ooc_pseudo['merge_recall']:.3f}  "
-          f"over={mm_ooc_pseudo['over_merge_rate']:.3f}")
-
-    if n_franken_v1718 > 0:
-        print(f"\n  Using v1718 labels (some proofreading signal):")
-        print(f"    {_fmt({**ev_ooc_v1718, **mm_ooc_v1718})}")
-
-    print(f"\n  Risk decision summary:")
-    print(f"    {risk_summary_str(decisions_ooc)}")
-
-    print(f"\n  Shape assembly ({len(shapes_ooc)} neurons):")
+    print(f"\n  [PRIMARY] Shape plausibility ({len(shapes_ooc)} assembled neurons):")
     print(f"    is_tree={is_tree_frac:.3f}")
     print(f"    cable_um: median={np.median(cable_arr):.0f}  "
           f"p5={np.percentile(cable_arr,5):.0f}  "
           f"p95={np.percentile(cable_arr,95):.0f}")
     print(f"    fully_connected={( n_comp_arr==1).mean():.1%}")
 
-    print(f"\n  Neuroglancer view (pre/post + clusters + uncertainty + skeletons):")
+    print(f"\n  [SECONDARY] Risk / confidence distribution:")
+    print(f"    {risk_summary_str(decisions_ooc)}")
+
+    print(f"\n  [SECONDARY] Neuroglancer view (pre/post + clusters + uncertainty + skeletons):")
     print(f"    {ngl_url[:120]}...")
+
+    print(f"\n  [TERTIARY] Conservative-behavior check vs v117 pseudo-labels:")
+    print(f"    over_merge={mm_ooc_pseudo['over_merge_rate']:.3f}  "
+          f"clusters={ev_ooc_pseudo['n_clusters_pred']}/{ev_ooc_pseudo['n_clusters_true']}")
+    print(f"    (v117 pseudo-labels: each fragment = 1 neuron; over_merge=0 is expected "
+          f"with cc_bias=-2.0)")
+
+    if n_franken_v1718 > 0:
+        print(f"\n  Using v1718 labels (some proofreading signal):")
+        print(f"    {_fmt({**ev_ooc_v1718, **mm_ooc_v1718})}")
 
     # Key interpretation
     print(f"\n{'='*64}")
     print("INTERPRETATION")
     print(f"{'='*64}")
-    merge_P = mm_ooc_pseudo['merge_precision']
     over = mm_ooc_pseudo['over_merge_rate']
-    n_merged = ev_ooc_pseudo['n_clusters_pred']
+    n_predicted = ev_ooc_pseudo['n_clusters_pred']
     n_frags = ev_ooc_pseudo['n_clusters_true']
+    cable_med = float(np.median(cable_arr))
 
-    if over < 0.05:
-        print(f"  ✓ Model is conservative out-of-column: over_merge={over:.3f} < 5%")
-        print(f"    Merges {n_merged} fragments into {n_frags} pseudo-neurons cleanly.")
-        print(f"    This is the expected behaviour: cc_bias=-2.0 prevents spurious merges.")
-    elif over < 0.20:
-        print(f"  ⚠ Moderate over-merge out-of-column: over_merge={over:.3f}")
-        print(f"    Some cross-fragment merges occur where the model has no real signal.")
-    else:
-        print(f"  ✗ High over-merge out-of-column: over_merge={over:.3f}")
-        print(f"    Model hallucinates merges outside the proofread column.")
-        print(f"    Consider increasing --cc-bias magnitude for out-of-column deployment.")
-
+    # Primary: shape plausibility
     if is_tree_frac >= 0.99:
         print(f"  ✓ All assembled shapes are trees (is_tree={is_tree_frac:.3f})")
     else:
         print(f"  ⚠ {(1-is_tree_frac):.0%} of shapes have cycles (is_tree={is_tree_frac:.3f})")
 
-    cable_med = float(np.median(cable_arr))
     if 500 <= cable_med <= 20_000:
-        print(f"  ✓ Cable lengths biologically plausible: median {cable_med:.0f} µm")
+        print(f"  ✓ Cable lengths biologically plausible: median {cable_med:.0f} µm "
+              f"(expected 500–20000 µm for cortical neurons)")
     else:
         print(f"  ⚠ Cable lengths unusual: median {cable_med:.0f} µm "
               f"(expected 500–20000 µm for cortical neurons)")
+        if cable_med < 500:
+            print(f"    Short cables → over-fragmentation; model may not be generalizing "
+                  f"well to this region")
+
+    # Secondary: conservative-behavior check
+    if over < 0.05:
+        print(f"  ✓ Conservative out-of-column: over_merge={over:.3f} "
+              f"({n_predicted} clusters from {n_frags} fragments)")
+    elif over < 0.20:
+        print(f"  ⚠ Moderate over-merge: over_merge={over:.3f} — some spurious merges")
+    else:
+        print(f"  ✗ High over-merge: over_merge={over:.3f} — "
+              f"model hallucinates merges; increase --cc-bias magnitude")
 
     print(f"{'='*64}")
     return 0
