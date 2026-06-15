@@ -81,6 +81,36 @@ def _true_connectome(region, *, ignore_label: int = 0) -> Counter:
     return counts
 
 
+def _undirected_edge_set(counts: Counter, *, min_syn: int = 1) -> set:
+    """Collapse a directed (a, b) -> count Counter into canonical undirected edges.
+
+    Counts of (a, b) and (b, a) are summed before applying the min_syn threshold, so
+    a reciprocal connection is one undirected edge. Self-loops (a == b, autapses) are
+    kept. Returns a set of canonical (min(a, b), max(a, b)) tuples with summed count
+    >= min_syn.
+    """
+    merged: Counter = Counter()
+    for (a, b), c in counts.items():
+        key = (a, b) if a <= b else (b, a)
+        merged[key] += c
+    return {e for e, c in merged.items() if c >= min_syn}
+
+
+def _prf1(true_edges: set, pred_edges: set) -> tuple[float, float, float]:
+    """Precision, recall, F1 between two edge sets (nan-safe)."""
+    tp = len(true_edges & pred_edges)
+    fp = len(pred_edges - true_edges)
+    fn = len(true_edges - pred_edges)
+    precision = tp / (tp + fp) if (tp + fp) > 0 else float("nan")
+    recall = tp / (tp + fn) if (tp + fn) > 0 else float("nan")
+    if precision != precision or recall != recall:  # nan check
+        f1 = float("nan")
+    else:
+        f1 = (2 * precision * recall / (precision + recall)
+              if (precision + recall) > 0 else 0.0)
+    return precision, recall, f1
+
+
 def _match_clusters_to_neurons(pred_labels: np.ndarray, true_labels: np.ndarray,
                                 ignore: int = 0) -> dict[int, int]:
     """Map each predicted cluster to the majority-vote true neuron."""
@@ -131,6 +161,10 @@ def connectome_accuracy(
         conn_edge_f1        — harmonic mean of precision and recall
         n_true_edges        — unique directed (A→B) connections in ground truth
         n_pred_edges        — unique directed connections in prediction
+        conn_edge_precision_undir / conn_edge_recall_undir / conn_edge_f1_undir
+                            — same as above but on the UNDIRECTED neuron-neuron graph
+                              (A↔B; reciprocal connections summed into one edge)
+        n_true_edges_undir / n_pred_edges_undir — unique undirected connections
         n_synapses_labelled — synapses with known pre AND post neuron
     """
     pre = region.pre_root_id
@@ -165,27 +199,142 @@ def connectome_accuracy(
         if mapped != -1:
             remapped_pred[(mapped, post_r)] += cnt
 
+    # Directed edge F1: (A -> B) ordered pairs with >= min_syn synapses.
     true_edges = {e for e, c in true_counts.items() if c >= min_syn}
     pred_edges = {e for e, c in remapped_pred.items() if c >= min_syn}
+    precision, recall, f1 = _prf1(true_edges, pred_edges)
 
-    tp = len(true_edges & pred_edges)
-    fp = len(pred_edges - true_edges)
-    fn = len(true_edges - pred_edges)
-
-    precision = tp / (tp + fp) if (tp + fp) > 0 else float("nan")
-    recall = tp / (tp + fn) if (tp + fn) > 0 else float("nan")
-    if precision != precision or recall != recall:  # nan check
-        f1 = float("nan")
-    else:
-        f1 = (2 * precision * recall / (precision + recall)
-              if (precision + recall) > 0 else 0.0)
+    # Undirected edge F1: (A <-> B) unordered pairs; reciprocal counts summed.
+    true_edges_u = _undirected_edge_set(true_counts, min_syn=min_syn)
+    pred_edges_u = _undirected_edge_set(remapped_pred, min_syn=min_syn)
+    precision_u, recall_u, f1_u = _prf1(true_edges_u, pred_edges_u)
 
     return {
         "synapse_attr_acc": synapse_attr_acc,
+        # directed
         "conn_edge_precision": precision,
         "conn_edge_recall": recall,
         "conn_edge_f1": f1,
         "n_true_edges": len(true_edges),
         "n_pred_edges": len(pred_edges),
+        # undirected
+        "conn_edge_precision_undir": precision_u,
+        "conn_edge_recall_undir": recall_u,
+        "conn_edge_f1_undir": f1_u,
+        "n_true_edges_undir": len(true_edges_u),
+        "n_pred_edges_undir": len(pred_edges_u),
         "n_synapses_labelled": n_labelled,
+    }
+
+
+def dual_side_connectome_accuracy(
+    pred_pre: np.ndarray,
+    region_pre,
+    pred_post: np.ndarray,
+    region_post,
+    *,
+    min_syn: int = 1,
+    ignore_label: int = 0,
+) -> dict:
+    """Reconstruct the connectome from BOTH partitions and score it.
+
+    Unlike :func:`connectome_accuracy` — which predicts the pre neuron and reads the
+    post neuron from ground truth — this builds the connectome with NO ground-truth
+    root ids: the pre neuron comes from the pre-side partition and the post neuron from
+    the post-side partition. A physical synapse is observed on both sides (its pre point
+    and its post point both fall in the bbox) and the two observations are joined by the
+    shared CAVE synapse id (``region.synapse_id``).
+
+    Steps
+    -----
+    1. ``syn_id -> pred_pre_cluster``  from ``region_pre.synapse_id`` + ``pred_pre``;
+       ``syn_id -> pred_post_cluster`` from ``region_post.synapse_id`` + ``pred_post``.
+    2. ``pred_pre_cluster  -> true pre neuron``  (majority vote on ``region_pre.pre_root_id``);
+       ``pred_post_cluster -> true post neuron`` (majority vote on ``region_post.post_root_id``).
+    3. For each synapse seen on BOTH sides, predicted edge ``(mapped_pre, mapped_post)``;
+       true edge from ground truth ``(pre_root_id, post_root_id)`` of the same synapse.
+    4. Directed and undirected edge F1 over the resulting connection sets.
+
+    Parameters
+    ----------
+    pred_pre / pred_post:
+        [N_pre] / [N_post] int64 — predicted clusters from each side's partition.
+    region_pre / region_post:
+        Regions from ``build_region_world(side="pre")`` / ``side="post")`` over the same
+        bbox. Both must carry real ``synapse_id`` (the CAVE join key).
+    min_syn:
+        Minimum synapse count for a directed connection to count as an edge.
+    ignore_label:
+        Skip observations / neurons with this label on either side (0 = unlabelled).
+
+    Returns
+    -------
+    dict with the directed + undirected F1 keys (same names as
+    :func:`connectome_accuracy`) plus coverage diagnostics:
+        n_synapses_both_sides — synapses joined across pre and post partitions
+        n_synapses_pre_only / n_synapses_post_only — synapses seen on only one side
+    """
+    pre_ids = np.asarray(region_pre.synapse_id, dtype=np.int64)
+    post_ids = np.asarray(region_post.synapse_id, dtype=np.int64)
+
+    # Map predicted clusters -> true neurons on each side (majority vote).
+    pre_cluster_to_neuron = _match_clusters_to_neurons(
+        pred_pre, region_pre.pre_root_id, ignore=ignore_label)
+    post_cluster_to_neuron = _match_clusters_to_neurons(
+        pred_post, region_post.post_root_id, ignore=ignore_label)
+
+    # syn_id -> predicted cluster on each side (ignore abstained/unlabelled).
+    pre_by_syn = {int(s): int(c) for s, c in zip(pre_ids, pred_pre)
+                  if int(c) != ignore_label and int(s) >= 0}
+    post_by_syn = {int(s): int(c) for s, c in zip(post_ids, pred_post)
+                   if int(c) != ignore_label and int(s) >= 0}
+
+    # syn_id -> ground-truth (pre_root, post_root) from the pre-side region.
+    true_pre = np.asarray(region_pre.pre_root_id, dtype=np.int64)
+    true_post = np.asarray(region_pre.post_root_id, dtype=np.int64)
+    gt_by_syn = {int(s): (int(p), int(q))
+                 for s, p, q in zip(pre_ids, true_pre, true_post)}
+
+    both = set(pre_by_syn) & set(post_by_syn)
+    pre_only = set(pre_by_syn) - set(post_by_syn)
+    post_only = set(post_by_syn) - set(pre_by_syn)
+
+    pred_counts: Counter = Counter()
+    true_counts: Counter = Counter()
+    for sid in both:
+        mapped_pre = pre_cluster_to_neuron.get(pre_by_syn[sid], -1)
+        mapped_post = post_cluster_to_neuron.get(post_by_syn[sid], -1)
+        if mapped_pre == -1 or mapped_post == -1:
+            continue
+        pred_counts[(mapped_pre, mapped_post)] += 1
+        gt = gt_by_syn.get(sid)
+        if gt is not None and gt[0] != ignore_label and gt[1] != ignore_label:
+            true_counts[gt] += 1
+
+    # Directed + undirected edge F1.
+    true_edges = {e for e, c in true_counts.items() if c >= min_syn}
+    pred_edges = {e for e, c in pred_counts.items() if c >= min_syn}
+    precision, recall, f1 = _prf1(true_edges, pred_edges)
+
+    true_edges_u = _undirected_edge_set(true_counts, min_syn=min_syn)
+    pred_edges_u = _undirected_edge_set(pred_counts, min_syn=min_syn)
+    precision_u, recall_u, f1_u = _prf1(true_edges_u, pred_edges_u)
+
+    return {
+        # directed
+        "conn_edge_precision": precision,
+        "conn_edge_recall": recall,
+        "conn_edge_f1": f1,
+        "n_true_edges": len(true_edges),
+        "n_pred_edges": len(pred_edges),
+        # undirected
+        "conn_edge_precision_undir": precision_u,
+        "conn_edge_recall_undir": recall_u,
+        "conn_edge_f1_undir": f1_u,
+        "n_true_edges_undir": len(true_edges_u),
+        "n_pred_edges_undir": len(pred_edges_u),
+        # coverage
+        "n_synapses_both_sides": len(both),
+        "n_synapses_pre_only": len(pre_only),
+        "n_synapses_post_only": len(post_only),
     }

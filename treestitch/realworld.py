@@ -359,6 +359,8 @@ def build_region_world(
     sv_ids = syn["supervoxel_ids"]
     v_labels = syn["root_ids"].astype(np.int64)
     other_labels = syn.get("other_root_ids", np.zeros(len(pos), dtype=np.uint64)).astype(np.int64)
+    # Real CAVE synapse id (shared across pre/post fetches) — join key for dual-side.
+    syn_ids = syn.get("synapse_ids", np.full(len(pos), -1, dtype=np.int64)).astype(np.int64)
 
     if verbose:
         n_neurons = len(np.unique(v_labels[v_labels > 0]))
@@ -366,8 +368,8 @@ def build_region_world(
 
     if len(pos) > max_synapses:
         sel = rng.choice(len(pos), max_synapses, replace=False)
-        pos, sv_ids, v_labels, other_labels = (pos[sel], sv_ids[sel],
-                                                v_labels[sel], other_labels[sel])
+        pos, sv_ids, v_labels, other_labels, syn_ids = (
+            pos[sel], sv_ids[sel], v_labels[sel], other_labels[sel], syn_ids[sel])
 
     v117_roots = L.roots_at(sv_ids, v117_ts, token=tok)
     if v117_roots is None:
@@ -378,6 +380,7 @@ def build_region_world(
     frag_ids = v117_roots[keep].astype(np.int64)
     labels = v_labels[keep]
     other_labels = other_labels[keep]
+    syn_ids = syn_ids[keep]
     n_obs_raw = len(pos)
 
     # Discard slivers — always apply, error if threshold is too aggressive
@@ -385,8 +388,8 @@ def build_region_world(
     keep_frags = {int(f) for f, c in zip(frag_uniq, frag_counts)
                   if c >= min_syn_per_fragment}
     mask = np.array([int(f) in keep_frags for f in frag_ids])
-    pos, frag_ids, labels, other_labels = (pos[mask], frag_ids[mask],
-                                            labels[mask], other_labels[mask])
+    pos, frag_ids, labels, other_labels, syn_ids = (
+        pos[mask], frag_ids[mask], labels[mask], other_labels[mask], syn_ids[mask])
     if len(pos) == 0:
         raise RuntimeError(
             f"No fragments with ≥{min_syn_per_fragment} synapses survived the sliver filter. "
@@ -453,7 +456,10 @@ def build_region_world(
         post_pt_nm=pos.copy(),  # placeholder; positions not needed for connectivity
         pre_root_id=pre_root_id_arr,
         post_root_id=post_root_id_arr,
-        synapse_id=np.arange(n_obs, dtype=np.int64),
+        # Real CAVE synapse ids where available (join key for dual-side); fall back to a
+        # local index only when the id column was absent (all -1).
+        synapse_id=(syn_ids if np.any(syn_ids >= 0)
+                    else np.arange(n_obs, dtype=np.int64)),
         pre_seg_id=pre_seg_id_arr,
         post_seg_id=np.zeros(n_obs, dtype=np.int64),
     ).validate()

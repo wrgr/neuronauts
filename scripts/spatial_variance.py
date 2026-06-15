@@ -86,6 +86,10 @@ def main() -> int:
                    help="Fewer epochs (debug mode): embed=5, partition=30")
     p.add_argument("--no-calibration", action="store_true",
                    help="Skip temperature scaling calibration")
+    p.add_argument("--dual-side", action="store_true",
+                   help="Also partition the POST side at each in-column bbox and "
+                        "reconstruct the connectome from both partitions (no GT root "
+                        "ids), reporting directed + undirected edge F1.")
     args = p.parse_args()
 
     if args.quick:
@@ -99,7 +103,9 @@ def main() -> int:
         calibrated_obs_confidence, reliability_diagram,
     )
     from treestitch.checkpoint import load_checkpoint, save_checkpoint
-    from treestitch.connectivity import connectome_accuracy
+    from treestitch.connectivity import (
+        connectome_accuracy, dual_side_connectome_accuracy,
+    )
     from treestitch.embed import FragmentEncoder, encode_fragments, train_fragment_encoder
     from treestitch.graph import build_observation_graph
     from treestitch.partition import (
@@ -280,11 +286,12 @@ def main() -> int:
             print(f"  cable_med={cable_med:.0f}µm  max_path={max_path_med:.0f}µm  "
                   f"tort={tort_med:.2f}  is_tree={is_tree:.3f}  n_neurons={len(shapes)}")
             if has_conn:
-                print(f"  conn_edge_F1={conn['conn_edge_f1']:.3f}  "
+                print(f"  conn_edge_F1(dir)={conn['conn_edge_f1']:.3f}  "
+                      f"conn_edge_F1(undir)={conn['conn_edge_f1_undir']:.3f}  "
                       f"syn_attr_acc={conn['synapse_attr_acc']:.3f}  "
-                      f"({conn['n_true_edges']} true edges, {conn['n_pred_edges']} pred edges)")
+                      f"({conn['n_true_edges']} dir / {conn['n_true_edges_undir']} undir true edges)")
 
-            in_col_results.append({
+            row = {
                 "name": name, "ari": ev["ari"],
                 "merge_p": mm["merge_precision"],
                 "merge_r": mm["merge_recall"],
@@ -296,9 +303,41 @@ def main() -> int:
                 "is_tree": is_tree,
                 "n_franken": n_fk,
                 "conn_f1": conn["conn_edge_f1"],
+                "conn_f1_undir": conn["conn_edge_f1_undir"],
                 "syn_attr_acc": conn["synapse_attr_acc"],
                 "n_true_edges": conn["n_true_edges"],
-            })
+            }
+
+            # ── Dual-side: partition the POST side and reconstruct the connectome
+            #    from BOTH partitions (no ground-truth root ids). ───────────────
+            if args.dual_side:
+                try:
+                    frags_post, region_post, _ = build_region_world(
+                        bbox, version=args.version, side="post",
+                        max_synapses=args.max_synapses,
+                        min_syn_per_fragment=args.min_syn_per_fragment,
+                        seed=args.seed, verbose=False)
+                    frags_post_enc = encode_fragments(encoder, frags_post,
+                                                      device=args.device)
+                    graph_post = build_observation_graph(
+                        region_post, frags_post_enc, side="post",
+                        k_spatial=args.k_spatial)
+                    pred_post = partition_observations_cc(
+                        model, graph_post, bias=args.cc_bias, device=args.device)
+                    dual = dual_side_connectome_accuracy(
+                        pred, region, pred_post, region_post)
+                    print(f"  [dual-side] conn_F1(dir)={dual['conn_edge_f1']:.3f}  "
+                          f"conn_F1(undir)={dual['conn_edge_f1_undir']:.3f}  "
+                          f"both-sides={dual['n_synapses_both_sides']} syn  "
+                          f"(pre-only={dual['n_synapses_pre_only']}, "
+                          f"post-only={dual['n_synapses_post_only']})")
+                    row["dual_f1"] = dual["conn_edge_f1"]
+                    row["dual_f1_undir"] = dual["conn_edge_f1_undir"]
+                    row["dual_both"] = dual["n_synapses_both_sides"]
+                except Exception as exc:
+                    print(f"  [dual-side] ERROR: {exc}")
+
+            in_col_results.append(row)
         except Exception as exc:
             print(f"  ERROR: {exc}")
             in_col_results.append({"name": name, "error": str(exc)})
@@ -398,6 +437,21 @@ def main() -> int:
         if cf1s:
             print(f"    conn_F1:   mean={np.mean(cf1s):.3f}  std={np.std(cf1s):.3f}  "
                   f"range=[{min(cf1s):.3f}, {max(cf1s):.3f}]")
+        cf1u = [r["conn_f1_undir"] for r in good_in
+                if r.get("conn_f1_undir") == r.get("conn_f1_undir")]
+        if cf1u:
+            print(f"    conn_F1u:  mean={np.mean(cf1u):.3f}  std={np.std(cf1u):.3f}  "
+                  f"range=[{min(cf1u):.3f}, {max(cf1u):.3f}]")
+
+    if args.dual_side:
+        dual_rows = [r for r in good_in if "dual_f1" in r]
+        if dual_rows:
+            print(f"\n  Dual-side connectome (both partitions, NO GT root ids):")
+            print(f"  {'Location':<38} {'dir_F1':>7} {'undir_F1':>9} {'both_syn':>9}")
+            print(f"  {'-'*38} {'-'*7} {'-'*9} {'-'*9}")
+            for r in dual_rows:
+                print(f"  {r['name']:<38} {r['dual_f1']:>7.3f} "
+                      f"{r['dual_f1_undir']:>9.3f} {r['dual_both']:>9d}")
 
     print(f"\n  OOC ({len(good_ooc)} locations):")
     print(f"  {'Location':<38} {'over':>6} {'cable_med':>10} {'max_path':>10} "

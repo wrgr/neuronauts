@@ -356,6 +356,10 @@ def fetch_region_synapses(
         positions_nm   : [N, 3] float32 in nm
         supervoxel_ids : [N] uint64
         root_ids       : [N] uint64 — v{version} root id (ground-truth label)
+        other_root_ids : [N] uint64 — v{version} root id at the OTHER synapse endpoint
+        synapse_ids    : [N] int64  — CAVE synapse-table id (-1 if column absent).
+                          Shared across pre/post fetches, so it joins a synapse's two
+                          observations.
     or ``None`` on failure.
     """
     if side not in ("pre", "post"):
@@ -395,6 +399,7 @@ def fetch_region_synapses(
             "supervoxel_ids": np.zeros(0, dtype=np.uint64),
             "root_ids": np.zeros(0, dtype=np.uint64),
             "other_root_ids": np.zeros(0, dtype=np.uint64),
+            "synapse_ids": np.zeros(0, dtype=np.int64),
         }
     pos = np.stack([
         np.asarray(d[px], dtype=np.float64) * vx,
@@ -405,11 +410,15 @@ def fetch_region_synapses(
     other_key = f"{other_side}_pt_root_id"
     other_root_ids = (np.asarray(d[other_key], dtype=np.uint64)
                       if other_key in d else np.zeros(n, dtype=np.uint64))
+    # Real CAVE synapse-table id — shared across pre/post fetches; -1 if absent.
+    synapse_ids = (np.asarray(d["id"], dtype=np.int64)
+                   if "id" in d else np.full(n, -1, dtype=np.int64))
     return {
         "positions_nm": pos,
         "supervoxel_ids": np.asarray(d[f"{side}_pt_supervoxel_id"], dtype=np.uint64),
         "root_ids": np.asarray(d[f"{side}_pt_root_id"], dtype=np.uint64),
         "other_root_ids": other_root_ids,
+        "synapse_ids": synapse_ids,
     }
 
 
