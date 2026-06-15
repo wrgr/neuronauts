@@ -198,10 +198,15 @@ def main() -> int:
                 franken_hard_frac=args.franken_hard_frac,
                 device=args.device, seed=args.seed, log_every=25)
 
+            # Derive kwargs to match what train_edge_partition_gnn actually used
+            _all_etypes = np.concatenate([g.edge_type for g in train_graphs])
+            _n_et = int(max(2, int(_all_etypes.max()) + 1)) if len(_all_etypes) > 0 else 2
+            _ef = train_graphs[0]
+            _efd = int(_ef.edge_feat.shape[1]) if _ef.edge_feat.ndim == 2 else 0
             gnn_kwargs = dict(
                 input_dim=train_graphs[0].node_feat.shape[1],
-                d_model=64, n_edge_types=3, output_dim=32,
-                dropout=0.1, edge_feat_dim=3,
+                d_model=64, n_edge_types=_n_et, output_dim=32,
+                dropout=0.1, edge_feat_dim=_efd,
             )
             save_checkpoint(args.save_checkpoint, encoder, model,
                             encoder_kwargs=enc_kwargs, gnn_kwargs=gnn_kwargs,
