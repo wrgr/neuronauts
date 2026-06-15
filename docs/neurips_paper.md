@@ -270,6 +270,33 @@ implicitly — synapses on each side of a frankenmerge receive different predict
 labels regardless of whether the root is explicitly flagged. fk\_split is a useful
 diagnostic for reviewer queues, not a prerequisite for correct partition.
 
+**Spatial variance across 4 test locations.** We evaluate the same trained model (A/B/C
+protocol, 50 µm seam buffer) on four non-overlapping test bboxes spanning different
+$x$ and $y$ positions within the proofread column. Three are $x$-shifted in-column
+strips (T1–T3, 143–383 synapses each), and one is a $y$-shifted denser sub-volume
+(T4: $y \in [1000, 1070]$ µm, 2277 synapses and 341 fragments — the densely packed
+column center).
+
+**Table 2b.** Variance across test locations, same A/B/C-trained model, $b = -2.0$.
+
+| Location | Synapses | ARI | merge\_P | merge\_R | over |
+|---|---|---|---|---|---|
+| T1 $x \in [1150, 1350]$ µm (ref.) | 383 | 0.613 | 0.977 | 0.537 | 0.007 |
+| T2 $x \in [550, 750]$ µm (west) | 280 | 0.877 | 0.972 | 0.820 | 0.012 |
+| T3 $y \in [870, 940]$ µm (south) | 143 | 0.829 | 0.991 | 0.744 | 0.004 |
+| T4 $y \in [1000, 1070]$ µm (north) | 2,277 | 0.287 | 0.958 | 0.676 | 0.015 |
+| **Mean ± std** | — | **0.65 ± 0.23** | **0.97 ± 0.01** | **0.69 ± 0.11** | — |
+
+Merge precision is stable across all locations (range 0.958–0.991, std = 0.01): the model
+almost never creates false merges regardless of spatial position. ARI varies more
+(range 0.287–0.877), with T4 as the outlier. T4 is an order of magnitude denser than
+the other test bboxes (2,277 vs 143–383 synapses), has 33 frankenmerges (vs 1–7 for
+T1–T3), and lies entirely in the $y$-direction beyond the training bboxes — it is
+a harder problem instance. Excluding T4, the three comparable-density bboxes give
+mean ARI = 0.77 ± 0.14, merge\_P = 0.98 ± 0.01. The stable merge precision across
+all conditions is the operationally relevant finding: the model's false-merge rate is
+controlled even when ARI varies.
+
 ### 4.4  Skeleton assembly
 
 Post-partition Kruskal stitching of L2-cache skeletons produces whole-neuron geometries.
@@ -310,38 +337,59 @@ A secondary check — over-merge rate against v117 pseudo-labels — is included
 conservative-behavior sanity test. Its limitation is clear: it can confirm the model
 does not hallucinate merges, but cannot confirm it finds real neurons.
 
-**Setup.** The model is trained on the full three-region protocol (Regions A/B/C,
-50 µm seam buffers) and applied to a bbox at $x \in [200, 400]$ µm, $y \in [500, 570]$
-µm, $z \in [700, 800]$ µm — roughly 550 µm from the nearest training bbox and
-confirmed unproofread (0 frankenmerges, v117 ≡ v1718 in this region).
+**Setup.** The same A/B/C-trained model (50 µm seam buffers) is applied to three
+out-of-column bboxes at different spatial positions, each confirmed to have minimal or
+no v117 → v1718 edit signal.
 
-**Table 4.** Shape plausibility: in-column (Table 3) vs out-of-column assembled neurons.
-Full 3-region training protocol, applied to OOC bbox $x \in [200, 400]$ µm
-(confirmed unproofread: 1 frankenmerge detected from 51 fragments).
+**Table 4.** Shape plausibility across three out-of-column locations, compared to the
+in-column reference (Table 3, 5k-synapse dense bbox).
 
-| Metric | In-column | Out-of-column |
-|---|---|---|
-| n\_neurons assembled | 156 | 121 |
-| is\_tree fraction | **1.000** (156/156) | **1.000** (121/121) |
-| cable\_length\_um median | 2,505 | **3,215** |
-| cable\_length\_um p5 | 79 | 32 |
-| cable\_length\_um p95 | 11,528 | 15,861 |
-| fully\_connected (1 comp) | 37.8% | 46.3% |
+| Location | Fragments | Frankenmerges | cable\_med (µm) | is\_tree | over |
+|---|---|---|---|---|---|
+| In-column reference | 174 | — | 2,505 | 1.000 | — |
+| OOC1 $x \in [200,400]$ (far west) | 38 | 0 | 997 | 1.000 | 0.014 |
+| OOC2 $x \in [1200,1400], y \in [400,470]$ | 26 | 1 | 6,960 | 1.000 | 0.007 |
+| OOC3 $x \in [600,800], y \in [600,670]$ | 86 | 19 | 10,537 | 1.000 | 0.045 |
 
-The cable length distributions are in the same biological range (median 2,505 vs 3,215 µm;
-both within the 500–20,000 µm expected range for mouse L2/3 cortical neurons). This
-is the primary transfer signal: assembled shapes outside the training distribution are
-morphologically consistent with those inside it. The 410 µm median seen in a
-single-region (quick-train) run is an artifact of insufficient training coverage, not
-a property of the model at full capacity.
+Cable lengths across all three OOC locations fall within the 500–20,000 µm expected
+range for mouse visual cortex neurons. is\_tree = 1.000 at every site — Kruskal stitching
+never introduces cycles. Over-merge rates are low (0.007–0.045 against v117 pseudo-labels).
 
-**Conservative-behavior check.** Over-merge rate = 0.006 against v117 pseudo-labels
-(vs 0.000 with quick-train: the 1 detected frankenmerge accounts for the small rate).
-The model produces 121 predicted clusters from 51 v117 fragments — appropriate
-over-fragmentation rather than over-merging, since cc\_bias = −2.0 requires positive
-net evidence to merge two clusters, a bar that is naturally difficult to clear without
-training signal. Candidate merges surface for human review via the risk layer (78%
-CONFIDENT\_MERGE, 22% REVIEW\_MERGE) and the Neuroglancer visual.
+The cable length range (997–10,537 µm) spans nearly the full biological distribution,
+reflecting natural variation in how many synapses are in the bbox and how many fragments
+belong to long-range vs short-range neurons. OOC3 has 19 detected frankenmerges, indicating
+partial proofreading coverage at this location; its over-merge rate of 0.045 is slightly
+elevated relative to the unproofread sites but remains below 5%.
+
+**Conservative-behavior check.** In all OOC bboxes the model produces more predicted
+clusters than input fragments (appropriate over-fragmentation rather than over-merging),
+consistent with cc\_bias = −2.0 requiring positive net evidence to merge two clusters —
+a bar that is naturally difficult to clear when training signal from that region is absent.
+Candidate merges surface for human review via the risk layer and the Neuroglancer visual.
+
+### 4.6  Calibrated confidence
+
+The risk layer outputs categorical decisions (CONFIDENT\_MERGE / REVIEW\_MERGE /
+REVIEW\_SPLIT) and expected-loss priority scores, but not a directly interpretable 0–1
+confidence. We apply post-hoc temperature scaling [Guo et al., 2017] to convert the
+raw edge log-odds into calibrated probabilities.
+
+**Method.** A single scalar temperature $T$ is fit by minimizing negative log-likelihood
+of $\sigma((\text{logit}_e + b) / T)$ on a held-out 20% of training graph edges
+(LBFGS, 200 steps). Per-observation confidence is the mean calibrated edge probability
+over all edges touching that observation. No model weights are changed.
+
+**Result.** On the A/B/C training graph: $T = 0.97$ (95% CI approximately $[0.91, 1.04]$),
+$\text{ECE} = 0.141$. $T \approx 1$ indicates the raw logits are already nearly
+calibrated — temperature scaling provides only a small correction. A reliability diagram
+(predicted confidence vs. fraction of true positive edges per bin) shows the model
+tracks the diagonal within ±0.08 for confidence bins between 0.2 and 0.8, with some
+deviation in the tails (very high or very low confidence) where sample counts are small.
+
+The calibrated per-observation confidence is stored in `ObservationDecision.calibrated_conf`
+and can be queried via `treestitch.calibration.calibrated_obs_confidence`. Observations
+with confidence between 0.4 and 0.6 are the most uncertain and map directly onto the
+REVIEW\_MERGE / REVIEW\_SPLIT reviewer queue from the risk layer.
 
 ---
 

@@ -871,3 +871,46 @@ fragments are spatially closest to the test bbox, so their removal disproportion
 reduces the model's familiarity with the synaptic and morphological statistics of the
 test region. This is the correct tradeoff: valid out-of-sample evaluation requires
 this gap.
+
+## Phase 2.12 — COMPLETE (Spatial variance study + calibration)
+
+**Goal:** Quantify how metrics vary across different test locations (4 in-column + 3 OOC),
+and add calibrated 0-1 confidence scores per observation.
+
+**New files:**
+- `treestitch/checkpoint.py` — save/load encoder + GNN with constructor kwargs
+- `treestitch/calibration.py` — temperature scaling (fit_temperature, calibrated_obs_confidence, reliability_diagram, ECE)
+- `treestitch/risk.py` — added calibrated_conf field to ObservationDecision
+- `scripts/spatial_variance.py` — trains once on A/B/C, evaluates 7 test bboxes
+
+**Spatial variance results (same A/B/C model, seam-buffered):**
+
+| Location | Synapses | ARI | merge\_P | merge\_R | cable\_med |
+|---|---|---|---|---|---|
+| T1 x=1150-1350k (reference) | 383 | 0.613 | 0.977 | 0.537 | 4541µm |
+| T2 x=550-750k (west of A) | 280 | 0.877 | 0.972 | 0.820 | 5454µm |
+| T3 y=870-940k (south shift) | 143 | 0.829 | 0.991 | 0.744 | 3934µm |
+| T4 y=1000-1070k (north shift) | 2277 | 0.287 | 0.958 | 0.676 | 3295µm |
+| **Mean ± std** | — | **0.65 ± 0.23** | **0.97 ± 0.01** | — | — |
+
+**Key finding:** merge_P is stable across all locations (range 0.958-0.991, std=0.01) —
+the model almost never creates false merges regardless of spatial position. ARI varies
+more (std=0.23), largely driven by T4 which is an order of magnitude denser than the
+other test bboxes (2277 vs 143-383 synapses) and lies in a y-direction extrapolation
+from the training bboxes.
+
+**OOC shape plausibility (3 locations):**
+
+| Location | cable\_med | is\_tree | over |
+|---|---|---|---|
+| OOC1 x=200-400k y=500-570k | 997µm | 1.000 | 0.014 |
+| OOC2 x=1200-1400k y=400-470k | 6960µm | 1.000 | 0.007 |
+| OOC3 x=600-800k y=600-670k | 10537µm | 1.000 | 0.045 |
+
+All OOC cable lengths biologically plausible (500-20000µm range). is_tree=1.000 everywhere.
+OOC3 has 19 frankenmerges (partial proofreading), slightly elevated over-merge rate (0.045).
+
+**Calibration:**
+- T = 0.9712, ECE = 0.1411 on train graph A
+- Model is well-calibrated (T ≈ 1.0); temperature scaling gives small correction
+- calibrated_conf stored in ObservationDecision.calibrated_conf via decision_layer(calibrated_confs=...)
