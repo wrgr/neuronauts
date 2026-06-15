@@ -470,7 +470,7 @@ Location & directed & undir. & directed & undir. & both-sides & ARI \\
 T1 ($x\!\in\![1150,1350]$ µm, ref.) & 0.962 & 0.962 & 0.986 & 0.986 & 286 & 0.789 \\
 T2 ($x\!\in\![550,750]$ µm, west)   & 0.970 & 0.970 & 0.986 & 0.986 & 170 & 0.475 \\
 T3 ($y\!\in\![870,940]$ µm, south)  & 0.966 & 0.966 & 0.972 & 0.972 & 144 & 0.879 \\
-T4 ($y\!\in\![1000,1070]$ µm, north) & 0.943 & 0.943 & \multicolumn{3}{c}{(in progress)} & 0.415 \\
+T4 ($y\!\in\![1000,1070]$ µm, north) & 0.943 & 0.943 & 0.550 & 0.550 & 317 & 0.415 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -483,6 +483,11 @@ partitions---yet measures the circuit a downstream analyst would actually obtain
 the metric is sensitive to false merges and lenient toward over-fragmentation (a never-merge
 partition attains F1 $= 1.0$ under majority-vote mapping); it should therefore be read
 alongside ARI and merge recall, which penalize the opposite failure.
+
+T4 illustrates the compounding effect: its single-side F1 (0.943) is only modestly below
+T1--T3 because the true post-neuron absorbs dendritic errors. In dual-side mode (F1 $= 0.550$)
+both pre- and post-partitions must be correct; the dense, out-of-training north bbox degrades
+both simultaneously, exposing the harder regime.
 
 %---------------------------------------------------------------------------
 \section{Discussion}

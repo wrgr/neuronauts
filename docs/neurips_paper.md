@@ -431,7 +431,7 @@ Directed $\equiv$ undirected at this scale (no reciprocal pairs within a single 
 | T1 $x \in [1150, 1350]$ µm (ref.) | 0.962 | 0.962 | 0.986 | 0.986 | 286 | 0.789 |
 | T2 $x \in [550, 750]$ µm (west) | 0.970 | 0.970 | 0.986 | 0.986 | 170 | 0.475 |
 | T3 $y \in [870, 940]$ µm (south) | 0.966 | 0.966 | 0.972 | 0.972 | 144 | 0.879 |
-| T4 $y \in [1000, 1070]$ µm (north) | 0.943 | 0.943 | — | — | — | 0.415 |
+| T4 $y \in [1000, 1070]$ µm (north) | 0.943 | 0.943 | 0.550 | 0.550 | 317 | 0.415 |
 
 The connectivity F1 tracks merge precision rather than ARI: because the model rarely
 creates false merges (merge\_P $= 0.97 \pm 0.01$, §4.3), the reconstructed circuit
@@ -439,6 +439,11 @@ preserves most true connections even where ARI is depressed by missed splits. Th
 dual-side F1 is the more demanding metric — it compounds errors from two independent
 partitions — yet remains a faithful measure of the circuit a downstream analyst would
 obtain from the partition alone.
+
+T4 illustrates the compounding effect: its single-side F1 (0.943) is only modestly
+below T1–T3, because the true post-neuron absorbs the dendritic side errors. In
+dual-side mode (F1 = 0.550) both pre- and post-partitions must be correct; the dense,
+out-of-training north bbox degrades both simultaneously, exposing the harder regime.
 
 The metric is, by design, sensitive to false merges and lenient toward over-fragmentation:
 a maximally conservative partition that never merges (every fragment its own cluster)
