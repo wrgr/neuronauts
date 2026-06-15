@@ -99,6 +99,7 @@ def main() -> int:
         calibrated_obs_confidence, reliability_diagram,
     )
     from treestitch.checkpoint import load_checkpoint, save_checkpoint
+    from treestitch.connectivity import connectome_accuracy
     from treestitch.embed import FragmentEncoder, encode_fragments, train_fragment_encoder
     from treestitch.graph import build_observation_graph
     from treestitch.partition import (
@@ -267,12 +268,21 @@ def main() -> int:
             shapes = assemble_partition_shapes(frags, pred, graph.fragment_id,
                                                stitch_radius_nm=5_000.0)
             mlist = [neuron_shape_metrics(s) for s in shapes.values()]
-            cable_med = float(np.median([m['cable_length_um'] for m in mlist])) if mlist else 0.0
-            is_tree   = float(np.mean([m['is_tree'] for m in mlist])) if mlist else 0.0
+            cable_med    = float(np.median([m['cable_length_um'] for m in mlist])) if mlist else 0.0
+            max_path_med = float(np.median([m['max_path_length_um'] for m in mlist])) if mlist else 0.0
+            tort_med     = float(np.nanmedian([m['tortuosity'] for m in mlist])) if mlist else float("nan")
+            is_tree      = float(np.mean([m['is_tree'] for m in mlist])) if mlist else 0.0
+
+            conn = connectome_accuracy(pred, region)
+            has_conn = region.post_root_id is not None and int((region.post_root_id > 0).sum()) > 0
 
             print(f"  {_fmt_in(ev, mm)}")
-            print(f"  cable_median={cable_med:.0f}µm  is_tree={is_tree:.3f}  "
-                  f"n_neurons={len(shapes)}  frankenmerges={n_fk}")
+            print(f"  cable_med={cable_med:.0f}µm  max_path={max_path_med:.0f}µm  "
+                  f"tort={tort_med:.2f}  is_tree={is_tree:.3f}  n_neurons={len(shapes)}")
+            if has_conn:
+                print(f"  conn_edge_F1={conn['conn_edge_f1']:.3f}  "
+                      f"syn_attr_acc={conn['synapse_attr_acc']:.3f}  "
+                      f"({conn['n_true_edges']} true edges, {conn['n_pred_edges']} pred edges)")
 
             in_col_results.append({
                 "name": name, "ari": ev["ari"],
@@ -281,8 +291,13 @@ def main() -> int:
                 "over": mm["over_merge_rate"],
                 "fk": mm["frankenmerge_split_recall"],
                 "cable_med": cable_med,
+                "max_path_med": max_path_med,
+                "tort_med": tort_med,
                 "is_tree": is_tree,
                 "n_franken": n_fk,
+                "conn_f1": conn["conn_edge_f1"],
+                "syn_attr_acc": conn["synapse_attr_acc"],
+                "n_true_edges": conn["n_true_edges"],
             })
         except Exception as exc:
             print(f"  ERROR: {exc}")
@@ -326,17 +341,21 @@ def main() -> int:
             shapes = assemble_partition_shapes(frags, pred, graph.fragment_id,
                                                stitch_radius_nm=5_000.0)
             mlist = [neuron_shape_metrics(s) for s in shapes.values()]
-            cable_med = float(np.median([m['cable_length_um'] for m in mlist])) if mlist else 0.0
-            is_tree   = float(np.mean([m['is_tree'] for m in mlist])) if mlist else 0.0
-            fully_conn = float(np.mean([m['n_connected_components'] == 1
-                                        for m in mlist])) if mlist else 0.0
+            cable_med    = float(np.median([m['cable_length_um'] for m in mlist])) if mlist else 0.0
+            max_path_med = float(np.median([m['max_path_length_um'] for m in mlist])) if mlist else 0.0
+            tort_med     = float(np.nanmedian([m['tortuosity'] for m in mlist])) if mlist else float("nan")
+            is_tree      = float(np.mean([m['is_tree'] for m in mlist])) if mlist else 0.0
+            fully_conn   = float(np.mean([m['n_connected_components'] == 1
+                                          for m in mlist])) if mlist else 0.0
 
-            print(f"  {_fmt_ooc(over, cable_med, is_tree)}  fully_conn={fully_conn:.1%}")
+            print(f"  {_fmt_ooc(over, cable_med, is_tree)}  "
+                  f"max_path={max_path_med:.0f}µm  tort={tort_med:.2f}  fully_conn={fully_conn:.1%}")
             cable_ok = 500 <= cable_med <= 20_000
             print(f"  cable plausible: {'✓' if cable_ok else '⚠'}")
 
             ooc_results.append({
                 "name": name, "over": over, "cable_med": cable_med,
+                "max_path_med": max_path_med, "tort_med": tort_med,
                 "is_tree": is_tree, "fully_conn": fully_conn,
                 "n_neurons": len(shapes), "n_franken": n_fk,
             })
@@ -357,29 +376,37 @@ def main() -> int:
 
     print(f"\n  In-column ({len(good_in)} locations):")
     print(f"  {'Location':<38} {'ARI':>6} {'merge_P':>8} {'merge_R':>8} "
-          f"{'over':>6} {'fk':>6} {'cable_med':>10}")
-    print(f"  {'-'*38} {'-'*6} {'-'*8} {'-'*8} {'-'*6} {'-'*6} {'-'*10}")
+          f"{'conn_F1':>8} {'syn_acc':>8} {'cable_med':>10} {'tort':>6}")
+    print(f"  {'-'*38} {'-'*6} {'-'*8} {'-'*8} {'-'*8} {'-'*8} {'-'*10} {'-'*6}")
     for r in good_in:
-        fk_str = "n/a" if r["n_franken"] == 0 else f"{r['fk']:.3f}"
+        cf1 = f"{r['conn_f1']:.3f}" if r['conn_f1'] == r['conn_f1'] else "n/a"
+        sa  = f"{r['syn_attr_acc']:.3f}" if r['syn_attr_acc'] == r['syn_attr_acc'] else "n/a"
+        tort = f"{r['tort_med']:.2f}" if r['tort_med'] == r['tort_med'] else "n/a"
         print(f"  {r['name']:<38} {r['ari']:>6.3f} {r['merge_p']:>8.3f} "
-              f"{r['merge_r']:>8.3f} {r['over']:>6.3f} {fk_str:>6} "
-              f"{r['cable_med']:>9.0f}µ")
+              f"{r['merge_r']:>8.3f} {cf1:>8} {sa:>8} "
+              f"{r['cable_med']:>9.0f}µ {tort:>6}")
 
     if len(good_in) >= 2:
-        aris = [r["ari"] for r in good_in]
-        mps  = [r["merge_p"] for r in good_in]
+        aris   = [r["ari"] for r in good_in]
+        mps    = [r["merge_p"] for r in good_in]
+        cf1s   = [r["conn_f1"] for r in good_in if r["conn_f1"] == r["conn_f1"]]
         print(f"\n  In-column variance:")
-        print(f"    ARI:     mean={np.mean(aris):.3f}  std={np.std(aris):.3f}  "
+        print(f"    ARI:       mean={np.mean(aris):.3f}  std={np.std(aris):.3f}  "
               f"range=[{min(aris):.3f}, {max(aris):.3f}]")
-        print(f"    merge_P: mean={np.mean(mps):.3f}   std={np.std(mps):.3f}  "
+        print(f"    merge_P:   mean={np.mean(mps):.3f}   std={np.std(mps):.3f}  "
               f"range=[{min(mps):.3f}, {max(mps):.3f}]")
+        if cf1s:
+            print(f"    conn_F1:   mean={np.mean(cf1s):.3f}  std={np.std(cf1s):.3f}  "
+                  f"range=[{min(cf1s):.3f}, {max(cf1s):.3f}]")
 
     print(f"\n  OOC ({len(good_ooc)} locations):")
-    print(f"  {'Location':<38} {'over':>6} {'cable_med':>10} {'is_tree':>8}")
-    print(f"  {'-'*38} {'-'*6} {'-'*10} {'-'*8}")
+    print(f"  {'Location':<38} {'over':>6} {'cable_med':>10} {'max_path':>10} "
+          f"{'tort':>6} {'is_tree':>8}")
+    print(f"  {'-'*38} {'-'*6} {'-'*10} {'-'*10} {'-'*6} {'-'*8}")
     for r in good_ooc:
+        tort = f"{r['tort_med']:.2f}" if r['tort_med'] == r['tort_med'] else "n/a"
         print(f"  {r['name']:<38} {r['over']:>6.3f} {r['cable_med']:>9.0f}µ  "
-              f"{r['is_tree']:>8.3f}")
+              f"{r['max_path_med']:>9.0f}µ  {tort:>6} {r['is_tree']:>8.3f}")
 
     if len(good_ooc) >= 2:
         cables = [r["cable_med"] for r in good_ooc]

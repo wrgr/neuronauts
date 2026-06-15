@@ -394,16 +394,22 @@ def fetch_region_synapses(
             "positions_nm": np.zeros((0, 3), dtype=np.float32),
             "supervoxel_ids": np.zeros(0, dtype=np.uint64),
             "root_ids": np.zeros(0, dtype=np.uint64),
+            "other_root_ids": np.zeros(0, dtype=np.uint64),
         }
     pos = np.stack([
         np.asarray(d[px], dtype=np.float64) * vx,
         np.asarray(d[py], dtype=np.float64) * vy,
         np.asarray(d[pz], dtype=np.float64) * vz,
     ], axis=1).astype(np.float32)
+    other_side = "post" if side == "pre" else "pre"
+    other_key = f"{other_side}_pt_root_id"
+    other_root_ids = (np.asarray(d[other_key], dtype=np.uint64)
+                      if other_key in d else np.zeros(n, dtype=np.uint64))
     return {
         "positions_nm": pos,
         "supervoxel_ids": np.asarray(d[f"{side}_pt_supervoxel_id"], dtype=np.uint64),
         "root_ids": np.asarray(d[f"{side}_pt_root_id"], dtype=np.uint64),
+        "other_root_ids": other_root_ids,
     }
 
 

@@ -358,6 +358,7 @@ def build_region_world(
     pos = syn["positions_nm"]
     sv_ids = syn["supervoxel_ids"]
     v_labels = syn["root_ids"].astype(np.int64)
+    other_labels = syn.get("other_root_ids", np.zeros(len(pos), dtype=np.uint64)).astype(np.int64)
 
     if verbose:
         n_neurons = len(np.unique(v_labels[v_labels > 0]))
@@ -365,7 +366,8 @@ def build_region_world(
 
     if len(pos) > max_synapses:
         sel = rng.choice(len(pos), max_synapses, replace=False)
-        pos, sv_ids, v_labels = pos[sel], sv_ids[sel], v_labels[sel]
+        pos, sv_ids, v_labels, other_labels = (pos[sel], sv_ids[sel],
+                                                v_labels[sel], other_labels[sel])
 
     v117_roots = L.roots_at(sv_ids, v117_ts, token=tok)
     if v117_roots is None:
@@ -375,6 +377,7 @@ def build_region_world(
     pos = pos[keep].astype(np.float32)
     frag_ids = v117_roots[keep].astype(np.int64)
     labels = v_labels[keep]
+    other_labels = other_labels[keep]
     n_obs_raw = len(pos)
 
     # Discard slivers — always apply, error if threshold is too aggressive
@@ -382,7 +385,8 @@ def build_region_world(
     keep_frags = {int(f) for f, c in zip(frag_uniq, frag_counts)
                   if c >= min_syn_per_fragment}
     mask = np.array([int(f) in keep_frags for f in frag_ids])
-    pos, frag_ids, labels = pos[mask], frag_ids[mask], labels[mask]
+    pos, frag_ids, labels, other_labels = (pos[mask], frag_ids[mask],
+                                            labels[mask], other_labels[mask])
     if len(pos) == 0:
         raise RuntimeError(
             f"No fragments with ≥{min_syn_per_fragment} synapses survived the sliver filter. "
@@ -424,11 +428,20 @@ def build_region_world(
 
     n_franken = sum(1 for v in root_label_map.values() if len(v) > 1)
 
-    post_pts = pos + rng.normal(0, 2000, pos.shape).astype(np.float32)
     mins, maxs = pos.min(0), pos.max(0)
     pad = 5000.0
     region_bbox = (tuple(float(v) for v in mins - pad),
                    tuple(float(v) for v in maxs + pad))
+
+    # other_labels: v{version} root at the OTHER synapse endpoint (post when side="pre").
+    # Swapped for side="post" so region always has (pre_root_id = the queried side's label,
+    # post_root_id = the other side's label) regardless of which side we queried.
+    if side == "pre":
+        pre_root_id_arr, post_root_id_arr = labels, other_labels
+        pre_seg_id_arr = frag_ids
+    else:
+        post_root_id_arr, pre_root_id_arr = labels, other_labels
+        pre_seg_id_arr = np.zeros(n_obs, dtype=np.int64)
 
     region = Region(
         region_id=f"minnie65_v{version}",
@@ -437,11 +450,11 @@ def build_region_world(
         seg_version=117,
         label_version=version,
         pre_pt_nm=pos,
-        post_pt_nm=post_pts,
-        pre_root_id=labels,
-        post_root_id=np.zeros(n_obs, dtype=np.int64),
+        post_pt_nm=pos.copy(),  # placeholder; positions not needed for connectivity
+        pre_root_id=pre_root_id_arr,
+        post_root_id=post_root_id_arr,
         synapse_id=np.arange(n_obs, dtype=np.int64),
-        pre_seg_id=frag_ids,
+        pre_seg_id=pre_seg_id_arr,
         post_seg_id=np.zeros(n_obs, dtype=np.int64),
     ).validate()
 

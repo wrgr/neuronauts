@@ -311,19 +311,50 @@ def assemble_partition_shapes(
 # Shape metrics
 # ---------------------------------------------------------------------------
 
+def _max_path_bfs(adj: list[list[tuple[int, float]]], start: int
+                   ) -> tuple[int, float, list[int]]:
+    """BFS from `start` on a weighted undirected adjacency list.
+
+    Returns (farthest_node, arc_length, path) using arc-length as distance.
+    """
+    from collections import deque
+    dist = {start: 0.0}
+    parent: dict[int, int] = {start: -1}
+    queue: deque[int] = deque([start])
+    farthest, max_d = start, 0.0
+    while queue:
+        u = queue.popleft()
+        for v, w in adj[u]:
+            if v not in dist:
+                dist[v] = dist[u] + w
+                parent[v] = u
+                queue.append(v)
+                if dist[v] > max_d:
+                    max_d, farthest = dist[v], v
+    # Reconstruct path
+    path = []
+    node = farthest
+    while node != -1:
+        path.append(node)
+        node = parent[node]
+    return farthest, max_d, path[::-1]
+
+
 def neuron_shape_metrics(neuron: Fragment) -> dict:
     """Morphological sanity metrics for an assembled neuron skeleton.
 
     Returns
     -------
     dict with keys:
-        cable_length_um       float  — total edge length in micrometres
-        n_branch_points       int    — vertices with degree ≥ 3
-        n_endpoints           int    — vertices with degree ≤ 1
-        n_connected_components int   — 1 = fully connected; >1 = stitch gap
-        is_tree               bool   — True if no cycles and each component is a tree
-                                       (n_edges == n_verts − n_components)
-        bbox_volume_um3       float  — axis-aligned bounding-box volume in μm³
+        cable_length_um        float  — total edge length in micrometres
+        n_branch_points        int    — vertices with degree ≥ 3
+        n_endpoints            int    — vertices with degree ≤ 1
+        n_connected_components int    — 1 = fully connected; >1 = stitch gap
+        is_tree                bool   — True if no cycles
+        bbox_volume_um3        float  — axis-aligned bounding-box volume in μm³
+        max_path_length_um     float  — geodesic diameter (longest endpoint-to-endpoint path)
+        tortuosity             float  — arc_length / Euclidean distance for the diameter path
+        mean_caliber_um        float  — mean vertex radius in µm (nan if radius unavailable)
     """
     verts = neuron.vertices_nm  # [V, 3] float32
     edges = neuron.edges        # [E, 2] int64
@@ -338,22 +369,31 @@ def neuron_shape_metrics(neuron: Fragment) -> dict:
             "n_connected_components": 0,
             "is_tree": True,
             "bbox_volume_um3": 0.0,
+            "max_path_length_um": 0.0,
+            "tortuosity": float("nan"),
+            "mean_caliber_um": float("nan"),
         }
 
-    # Cable length
+    # Edge lengths in µm
     if E > 0:
         u_idx = edges[:, 0]
         v_idx = edges[:, 1]
         diffs = verts[u_idx].astype(np.float64) - verts[v_idx].astype(np.float64)
-        cable_length_um = float(np.linalg.norm(diffs, axis=1).sum()) / 1_000.0
+        edge_len_um = np.linalg.norm(diffs, axis=1) / 1_000.0
+        cable_length_um = float(edge_len_um.sum())
     else:
+        edge_len_um = np.zeros(0)
         cable_length_um = 0.0
 
-    # Degree-based metrics
+    # Degree-based metrics + adjacency list for BFS
     degree = np.zeros(V, dtype=np.int32)
-    for u, v in edges:
-        degree[u] += 1
-        degree[v] += 1
+    adj: list[list[tuple[int, float]]] = [[] for _ in range(V)]
+    for k, (u, v) in enumerate(edges):
+        w = float(edge_len_um[k]) if E > 0 else 0.0
+        degree[int(u)] += 1
+        degree[int(v)] += 1
+        adj[int(u)].append((int(v), w))
+        adj[int(v)].append((int(u), w))
     n_branch_points = int((degree >= 3).sum())
     n_endpoints = int((degree <= 1).sum())
 
@@ -362,8 +402,6 @@ def neuron_shape_metrics(neuron: Fragment) -> dict:
     for u, v in edges:
         uf.union(int(u), int(v))
     n_components = len({uf.find(i) for i in range(V)})
-
-    # Tree check: a forest on V vertices and C components has exactly V - C edges.
     is_tree = (E == V - n_components)
 
     # Bounding box
@@ -372,6 +410,36 @@ def neuron_shape_metrics(neuron: Fragment) -> dict:
     extents_um = (hi - lo) / 1_000.0
     bbox_volume_um3 = float(extents_um[0] * extents_um[1] * extents_um[2])
 
+    # Geodesic diameter: BFS from each endpoint; take max arc-length path.
+    # For isolated single vertices (no edges) treat as diameter=0.
+    leaf_nodes = [i for i in range(V) if degree[i] <= 1]
+    if not leaf_nodes:
+        leaf_nodes = [0]    # fully branched graph — start from any node
+    max_path_length_um = 0.0
+    tortuosity = float("nan")
+    if E > 0:
+        # Double-sweep: BFS from first leaf → find far end → BFS again for true diameter
+        _, _, _ = _max_path_bfs(adj, leaf_nodes[0])
+        far1, arc1, path1 = _max_path_bfs(adj, leaf_nodes[0])
+        far2, arc2, path2 = _max_path_bfs(adj, far1)
+        if arc2 >= arc1:
+            diam_arc, diam_path = arc2, path2
+        else:
+            diam_arc, diam_path = arc1, path1
+        max_path_length_um = diam_arc
+        if len(diam_path) >= 2:
+            p0 = verts[diam_path[0]].astype(np.float64)
+            p1 = verts[diam_path[-1]].astype(np.float64)
+            eucl = float(np.linalg.norm(p1 - p0)) / 1_000.0
+            tortuosity = diam_arc / eucl if eucl > 0 else float("nan")
+
+    # Mean caliber (radius_nm available from L2-cache skeletons)
+    radius = getattr(neuron, "radius_nm", None)
+    if radius is not None and len(radius) > 0 and float(np.max(radius)) > 0:
+        mean_caliber_um = float(np.mean(radius)) / 1_000.0
+    else:
+        mean_caliber_um = float("nan")
+
     return {
         "cable_length_um": cable_length_um,
         "n_branch_points": n_branch_points,
@@ -379,6 +447,9 @@ def neuron_shape_metrics(neuron: Fragment) -> dict:
         "n_connected_components": n_components,
         "is_tree": is_tree,
         "bbox_volume_um3": bbox_volume_um3,
+        "max_path_length_um": max_path_length_um,
+        "tortuosity": tortuosity,
+        "mean_caliber_um": mean_caliber_um,
     }
 
 
