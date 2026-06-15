@@ -71,6 +71,7 @@ class ObservationDecision:
     risk_merge: float
     risk_split: float
     expected_loss: float
+    calibrated_conf: float = float("nan")  # set by decision_layer if T is provided
 
 
 def decision_layer(
@@ -82,6 +83,7 @@ def decision_layer(
     merge_risk_threshold: float = 0.15,
     split_risk_threshold: float = 0.40,
     fragment_ids: np.ndarray | None = None,
+    calibrated_confs: np.ndarray | None = None,
 ) -> list[ObservationDecision]:
     """Apply asymmetric expected-loss weighting to soft partition output.
 
@@ -90,20 +92,20 @@ def decision_layer(
     soft:
         Return value of `partition_observations_soft`.
     cost_merge:
-        Relative cost of a false merge. Default 5.0 (over-merge is more
-        expensive than under-merge in production proofreading).
+        Relative cost of a false merge. Default 5.0.
     cost_split:
         Relative cost of a false split. Default 1.0.
     conf_threshold:
-        cluster_conf above which an observation is considered confident
-        (action = CONFIDENT_MERGE).
+        cluster_conf above which an observation is considered confident.
     merge_risk_threshold:
         risk_merge above which the observation is flagged REVIEW_MERGE.
     split_risk_threshold:
         normalised entropy above which the observation is flagged REVIEW_SPLIT.
     fragment_ids:
-        Optional [N] int64 array of v117 fragment IDs per observation
-        (graph.fragment_id). Included in the output for traceability.
+        Optional [N] int64 array of v117 fragment IDs per observation.
+    calibrated_confs:
+        Optional [N] float array from `treestitch.calibration.calibrated_obs_confidence`.
+        When provided, stored as `ObservationDecision.calibrated_conf`.
 
     Returns
     -------
@@ -142,6 +144,7 @@ def decision_layer(
             action = "CONFIDENT_MERGE"
 
         fid = int(fragment_ids[i]) if fragment_ids is not None else -1
+        cal = float(calibrated_confs[i]) if calibrated_confs is not None else float("nan")
         results.append(ObservationDecision(
             obs_idx=i,
             fragment_id=fid,
@@ -153,6 +156,7 @@ def decision_layer(
             risk_merge=risk_merge,
             risk_split=risk_split,
             expected_loss=expected_loss,
+            calibrated_conf=cal,
         ))
 
     results.sort(key=lambda d: d.priority_score, reverse=True)
