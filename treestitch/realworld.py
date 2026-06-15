@@ -371,6 +371,25 @@ def build_region_world(
         pos, sv_ids, v_labels, other_labels, syn_ids = (
             pos[sel], sv_ids[sel], v_labels[sel], other_labels[sel], syn_ids[sel])
 
+    return _assemble_world_arrays(
+        pos, sv_ids, v_labels, other_labels, syn_ids,
+        side=side, version=version, min_syn_per_fragment=min_syn_per_fragment,
+        tok=tok, v117_ts=v117_ts, verbose=verbose, l2_skeletons=l2_skeletons)
+
+
+def _assemble_world_arrays(
+    pos, sv_ids, v_labels, other_labels, syn_ids,
+    *, side, version, min_syn_per_fragment, tok, v117_ts, verbose, l2_skeletons,
+):
+    """Resolve v117 roots, sliver-filter, build fragments + Region from synapse arrays.
+
+    Shared by ``build_region_world`` (one queried side) and ``build_region_world_dual``
+    (both sides from a single fetch). Inputs are already subsampled; this does the
+    roots_at + sliver filter + fragment construction + Region assembly for one side.
+    """
+    from neuronauts.data import lineage as L
+    from neuronauts.schemas import Region
+
     v117_roots = L.roots_at(sv_ids, v117_ts, token=tok)
     if v117_roots is None:
         raise RuntimeError("roots_at failed for v117 — check network/token")
@@ -474,4 +493,97 @@ def build_region_world(
     return fragments, region, root_label_map
 
 
-__all__ = ["build_lineage_world", "build_region_world"]
+def build_region_world_dual(
+    bbox_nm: tuple,
+    *,
+    version: int = 1718,
+    max_synapses: int = 20_000,
+    min_syn_per_fragment: int = 5,
+    v117_timestamp: Optional[int] = None,
+    token: Optional[str] = None,
+    seed: int = 0,
+    verbose: bool = True,
+    l2_skeletons_pre: bool = True,
+    l2_skeletons_post: bool = False,
+) -> tuple:
+    """Build pre- and post-side worlds for the SAME synapses from a single fetch.
+
+    Two independent ``build_region_world`` calls (one per side) cannot be joined:
+    each spatial fetch is capped/subsampled at ``max_synapses`` independently, so the
+    pre and post fetches sample different synapses and share almost no real ids. This
+    builder instead does ONE fetch (``side="pre"``) that carries BOTH endpoints of each
+    synapse (positions, supervoxels, roots, and the shared CAVE id), subsamples once,
+    then assembles a pre world and a post world over the identical synapse set. Every
+    synapse therefore appears on both sides with the same ``synapse_id`` — a guaranteed
+    join for :func:`treestitch.connectivity.dual_side_connectome_accuracy`.
+
+    Returns
+    -------
+    ((frags_pre, region_pre, lmap_pre), (frags_post, region_post, lmap_post))
+        Each side independently sliver-filtered; the shared ``synapse_id`` space is
+        what joins them.
+    """
+    from neuronauts.data import lineage as L
+    from neuronauts.data.loaders import DEFAULT_TOKEN
+
+    tok = token or DEFAULT_TOKEN
+    v117_ts = v117_timestamp if v117_timestamp is not None else L.V117_TIMESTAMP
+    rng = np.random.default_rng(seed)
+
+    if verbose:
+        (x0, y0, z0), (x1, y1, z1) = bbox_nm
+        print(f"Building DUAL region world v117→v{version}: "
+              f"[{x0:.0f},{y0:.0f},{z0:.0f}]–[{x1:.0f},{y1:.0f},{z1:.0f}] nm "
+              f"(single fetch, both sides) …")
+
+    syn = None
+    effective_limit = max_synapses
+    while effective_limit >= 1000:
+        syn = L.fetch_region_synapses(bbox_nm, version=version, side="pre",
+                                       limit=effective_limit, token=tok)
+        if syn is not None:
+            break
+        effective_limit //= 2
+    if syn is None or len(syn["positions_nm"]) == 0:
+        raise RuntimeError("No synapses returned for bbox — check network/token/version/bbox")
+
+    # Pre side = queried side; post side = the OTHER endpoint of the same rows.
+    pos_pre = syn["positions_nm"]
+    sv_pre = syn["supervoxel_ids"]
+    root_pre = syn["root_ids"].astype(np.int64)
+    pos_post = syn["other_positions_nm"]
+    sv_post = syn["other_supervoxel_ids"]
+    root_post = syn["other_root_ids"].astype(np.int64)
+    syn_ids = syn.get("synapse_ids", np.full(len(pos_pre), -1, dtype=np.int64)).astype(np.int64)
+
+    if np.all(sv_post == 0) or np.all(syn_ids < 0):
+        raise RuntimeError(
+            "Dual fetch missing other-side supervoxels or synapse ids — the synapse "
+            "table did not return post_pt columns / id. Cannot build a joinable dual world.")
+
+    if verbose:
+        print(f"  fetched {len(pos_pre)} synapses (both endpoints, shared ids)")
+
+    # Subsample ONCE on the shared synapse set so both sides see the same synapses.
+    if len(pos_pre) > max_synapses:
+        sel = rng.choice(len(pos_pre), max_synapses, replace=False)
+        pos_pre, sv_pre, root_pre = pos_pre[sel], sv_pre[sel], root_pre[sel]
+        pos_post, sv_post, root_post = pos_post[sel], sv_post[sel], root_post[sel]
+        syn_ids = syn_ids[sel]
+
+    if verbose:
+        print("  [pre side]")
+    pre = _assemble_world_arrays(
+        pos_pre, sv_pre, root_pre, root_post, syn_ids,
+        side="pre", version=version, min_syn_per_fragment=min_syn_per_fragment,
+        tok=tok, v117_ts=v117_ts, verbose=verbose, l2_skeletons=l2_skeletons_pre)
+    if verbose:
+        print("  [post side]")
+    post = _assemble_world_arrays(
+        pos_post, sv_post, root_post, root_pre, syn_ids,
+        side="post", version=version, min_syn_per_fragment=min_syn_per_fragment,
+        tok=tok, v117_ts=v117_ts, verbose=verbose, l2_skeletons=l2_skeletons_post)
+    return pre, post
+
+
+__all__ = ["build_lineage_world", "build_region_world", "build_region_world_dual"]

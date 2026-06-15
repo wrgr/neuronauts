@@ -116,7 +116,7 @@ def main() -> int:
         evaluate_partition, merge_metrics,
         partition_observations_cc, train_edge_partition_multi_region,
     )
-    from treestitch.realworld import build_region_world
+    from treestitch.realworld import build_region_world, build_region_world_dual
 
     # ── Training bboxes (same as multi_region_train.py) ────────────────────
     y0, y1 = 930_000, 1_000_000   # dense y-extent
@@ -316,29 +316,32 @@ def main() -> int:
             #    from BOTH partitions (no ground-truth root ids). ───────────────
             if args.dual_side:
                 try:
-                    # The post (dendritic) side is far denser — often 8-10x more
-                    # fragments survive the sliver filter than the pre side — so
-                    # fetching L2 skeletons for every post fragment is intractable.
-                    # The post partition is only needed for the connectome join, so
-                    # default to synapse-cloud fragments (no L2 fetch). --dual-post-l2
-                    # opts back into real skeletons.
-                    print("  [dual-side] building post-side world "
-                          f"(l2_skeletons={args.dual_post_l2}) …")
-                    frags_post, region_post, _ = build_region_world(
-                        bbox, version=args.version, side="post",
-                        max_synapses=args.max_synapses,
-                        min_syn_per_fragment=args.min_syn_per_fragment,
-                        seed=args.seed, verbose=True,
-                        l2_skeletons=args.dual_post_l2)
-                    frags_post_enc = encode_fragments(encoder, frags_post,
-                                                      device=args.device)
-                    graph_post = build_observation_graph(
-                        region_post, frags_post_enc, side="post",
-                        k_spatial=args.k_spatial)
+                    # Build pre AND post worlds for the SAME synapses from a single
+                    # fetch so every synapse shares a real id across both sides (a
+                    # guaranteed join). The post (dendritic) side is far denser, so
+                    # default to cloud fragments there (--dual-post-l2 opts into L2).
+                    print("  [dual-side] building dual world (single fetch) …")
+                    (frags_pre2, region_pre2, _), (frags_post, region_post, _) = \
+                        build_region_world_dual(
+                            bbox, version=args.version,
+                            max_synapses=args.max_synapses,
+                            min_syn_per_fragment=args.min_syn_per_fragment,
+                            seed=args.seed, verbose=True,
+                            l2_skeletons_pre=True,
+                            l2_skeletons_post=args.dual_post_l2)
+                    # Partition both sides with the same model.
+                    fe_pre2 = encode_fragments(encoder, frags_pre2, device=args.device)
+                    g_pre2 = build_observation_graph(region_pre2, fe_pre2,
+                                                     side="pre", k_spatial=args.k_spatial)
+                    pred_pre2 = partition_observations_cc(
+                        model, g_pre2, bias=args.cc_bias, device=args.device)
+                    fe_post = encode_fragments(encoder, frags_post, device=args.device)
+                    g_post = build_observation_graph(region_post, fe_post,
+                                                     side="post", k_spatial=args.k_spatial)
                     pred_post = partition_observations_cc(
-                        model, graph_post, bias=args.cc_bias, device=args.device)
+                        model, g_post, bias=args.cc_bias, device=args.device)
                     dual = dual_side_connectome_accuracy(
-                        pred, region, pred_post, region_post)
+                        pred_pre2, region_pre2, pred_post, region_post)
                     print(f"  [dual-side] conn_F1(dir)={dual['conn_edge_f1']:.3f}  "
                           f"conn_F1(undir)={dual['conn_edge_f1_undir']:.3f}  "
                           f"both-sides={dual['n_synapses_both_sides']} syn  "
@@ -348,7 +351,9 @@ def main() -> int:
                     row["dual_f1_undir"] = dual["conn_edge_f1_undir"]
                     row["dual_both"] = dual["n_synapses_both_sides"]
                 except Exception as exc:
+                    import traceback
                     print(f"  [dual-side] ERROR: {exc}")
+                    traceback.print_exc()
 
             in_col_results.append(row)
         except Exception as exc:

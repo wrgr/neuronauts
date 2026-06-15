@@ -357,6 +357,8 @@ def fetch_region_synapses(
         supervoxel_ids : [N] uint64
         root_ids       : [N] uint64 — v{version} root id (ground-truth label)
         other_root_ids : [N] uint64 — v{version} root id at the OTHER synapse endpoint
+        other_positions_nm   : [N, 3] float32 — OTHER endpoint position (nm)
+        other_supervoxel_ids : [N] uint64 — OTHER endpoint supervoxel id
         synapse_ids    : [N] int64  — CAVE synapse-table id (-1 if column absent).
                           Shared across pre/post fetches, so it joins a synapse's two
                           observations.
@@ -399,6 +401,8 @@ def fetch_region_synapses(
             "supervoxel_ids": np.zeros(0, dtype=np.uint64),
             "root_ids": np.zeros(0, dtype=np.uint64),
             "other_root_ids": np.zeros(0, dtype=np.uint64),
+            "other_positions_nm": np.zeros((0, 3), dtype=np.float32),
+            "other_supervoxel_ids": np.zeros(0, dtype=np.uint64),
             "synapse_ids": np.zeros(0, dtype=np.int64),
         }
     pos = np.stack([
@@ -413,11 +417,28 @@ def fetch_region_synapses(
     # Real CAVE synapse-table id — shared across pre/post fetches; -1 if absent.
     synapse_ids = (np.asarray(d["id"], dtype=np.int64)
                    if "id" in d else np.full(n, -1, dtype=np.int64))
+    # The OTHER endpoint's position + supervoxel, from the SAME rows. This lets a
+    # single fetch yield both sides of the same synapses (a guaranteed join), which
+    # two independent spatial fetches cannot provide once either is subsampled.
+    ox, oy, oz = (f"{other_side}_pt_position_{a}" for a in "xyz")
+    if ox in d and f"{other_side}_pt_supervoxel_id" in d:
+        other_positions_nm = np.stack([
+            np.asarray(d[ox], dtype=np.float64) * vx,
+            np.asarray(d[oy], dtype=np.float64) * vy,
+            np.asarray(d[oz], dtype=np.float64) * vz,
+        ], axis=1).astype(np.float32)
+        other_supervoxel_ids = np.asarray(d[f"{other_side}_pt_supervoxel_id"],
+                                          dtype=np.uint64)
+    else:
+        other_positions_nm = np.zeros((n, 3), dtype=np.float32)
+        other_supervoxel_ids = np.zeros(n, dtype=np.uint64)
     return {
         "positions_nm": pos,
         "supervoxel_ids": np.asarray(d[f"{side}_pt_supervoxel_id"], dtype=np.uint64),
         "root_ids": np.asarray(d[f"{side}_pt_root_id"], dtype=np.uint64),
         "other_root_ids": other_root_ids,
+        "other_positions_nm": other_positions_nm,
+        "other_supervoxel_ids": other_supervoxel_ids,
         "synapse_ids": synapse_ids,
     }
 
