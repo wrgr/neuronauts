@@ -312,11 +312,12 @@ def main() -> int:
             #    from BOTH partitions (no ground-truth root ids). ───────────────
             if args.dual_side:
                 try:
+                    print("  [dual-side] building post-side world …")
                     frags_post, region_post, _ = build_region_world(
                         bbox, version=args.version, side="post",
                         max_synapses=args.max_synapses,
                         min_syn_per_fragment=args.min_syn_per_fragment,
-                        seed=args.seed, verbose=False)
+                        seed=args.seed, verbose=True)
                     frags_post_enc = encode_fragments(encoder, frags_post,
                                                       device=args.device)
                     graph_post = build_observation_graph(
