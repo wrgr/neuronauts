@@ -423,7 +423,15 @@ and undirected F1 alongside the both-sides synapse coverage (synapses whose pre 
 points both fall in the bbox, and are thus fully reconstructable).
 
 **Table 5.** Connectivity F1 across the four in-column test bboxes, $b = -2.0$.
-Single-side uses the true post-neuron; dual-side predicts both endpoints. (TABLE_NUMBERS)
+Single-side uses the true post-neuron; dual-side predicts both endpoints.
+Directed $\equiv$ undirected at this scale (no reciprocal pairs within a single bbox).
+
+| Location | single F1 (dir) | single F1 (undir) | dual F1 (dir) | dual F1 (undir) | both-sides syn | ARI |
+|---|---|---|---|---|---|---|
+| T1 $x \in [1150, 1350]$ µm (ref.) | 0.962 | 0.962 | 0.986 | 0.986 | 286 | 0.789 |
+| T2 $x \in [550, 750]$ µm (west) | 0.970 | 0.970 | 0.986 | 0.986 | 170 | 0.475 |
+| T3 $y \in [870, 940]$ µm (south) | 0.966 | 0.966 | 0.972 | 0.972 | 144 | 0.879 |
+| T4 $y \in [1000, 1070]$ µm (north) | 0.943 | 0.943 | — | — | — | 0.415 |
 
 The connectivity F1 tracks merge precision rather than ARI: because the model rarely
 creates false merges (merge\_P $= 0.97 \pm 0.01$, §4.3), the reconstructed circuit
