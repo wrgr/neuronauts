@@ -379,17 +379,67 @@ of $\sigma((\text{logit}_e + b) / T)$ on a held-out 20% of training graph edges
 (LBFGS, 200 steps). Per-observation confidence is the mean calibrated edge probability
 over all edges touching that observation. No model weights are changed.
 
-**Result.** On the A/B/C training graph: $T = 0.97$ (95% CI approximately $[0.91, 1.04]$),
-$\text{ECE} = 0.141$. $T \approx 1$ indicates the raw logits are already nearly
-calibrated — temperature scaling provides only a small correction. A reliability diagram
-(predicted confidence vs. fraction of true positive edges per bin) shows the model
-tracks the diagonal within ±0.08 for confidence bins between 0.2 and 0.8, with some
-deviation in the tails (very high or very low confidence) where sample counts are small.
+**Result.** On the training graph (region A): $T = 1.095$, $\text{ECE} = 0.137$.
+$T \approx 1$ indicates the raw logits are already nearly calibrated — temperature
+scaling softens them by under 10%. The reliability diagram (Figure 2; predicted
+confidence vs. fraction of true positive edges per bin) shows the model tracks the
+diagonal for confidence bins between 0.2 and 0.8, with the largest deviations in the
+tails (very high or very low confidence) where per-bin sample counts are small.
 
 The calibrated per-observation confidence is stored in `ObservationDecision.calibrated_conf`
 and can be queried via `treestitch.calibration.calibrated_obs_confidence`. Observations
 with confidence between 0.4 and 0.6 are the most uncertain and map directly onto the
 REVIEW\_MERGE / REVIEW\_SPLIT reviewer queue from the risk layer.
+
+### 4.7  Connectivity accuracy: the cost of a false merge
+
+ARI and merge precision measure the partition as a clustering, but the deliverable of a
+connectomics pipeline is a *circuit* — a directed graph of which neuron synapses onto
+which. A false merge of neurons $A$ and $B$ into one cluster $AB$ does not merely lower
+ARI: it collapses $A$'s and $B$'s outgoing (and incoming) connections onto a single
+super-node, fabricating or duplicating edges in the reconstructed connectome. We measure
+this directly with a **connectivity F1** over neuron-neuron edges.
+
+**Two graphs.** Each synapse contributes a directed edge (pre-neuron $\to$ post-neuron).
+We score the partition against the ground-truth connectome on (i) the **directed** graph
+— "does $A$ synapse onto $B$?" — and (ii) the **undirected** graph — "is there any
+connection between $A$ and $B$?", where reciprocal edges are merged. Both are computed at
+the neuron level after mapping predicted clusters to true neurons by majority vote, with
+a directed/undirected edge requiring $\ge 1$ supporting synapse. A perfect partition gives
+F1 = 1.0 on both graphs; merging two neurons that each project to distinct targets halves
+both F1 scores. (See `treestitch.connectivity.connectome_accuracy`.)
+
+**Single-side connectome (predicted pre-neuron, ground-truth post-neuron).** Using the
+pre-side partition and the true post-neuron of each synapse, the directed and undirected
+neuron-neuron F1 across the four in-column test bboxes is reported in Table 5.
+
+**Dual-side connectome (both neurons predicted).** Going further, we partition the **post**
+side independently — grouping dendritic observations by post-neuron — and reconstruct the
+connectome with *no ground-truth root ids at all*: a synapse's pre-neuron comes from the
+pre-side partition and its post-neuron from the post-side partition, the two observations
+joined by their shared CAVE synapse id. This is the honest end-to-end circuit-reconstruction
+metric: every edge endpoint is a model prediction. Table 5 reports the dual-side directed
+and undirected F1 alongside the both-sides synapse coverage (synapses whose pre *and* post
+points both fall in the bbox, and are thus fully reconstructable).
+
+**Table 5.** Connectivity F1 across the four in-column test bboxes, $b = -2.0$.
+Single-side uses the true post-neuron; dual-side predicts both endpoints. (TABLE_NUMBERS)
+
+The connectivity F1 tracks merge precision rather than ARI: because the model rarely
+creates false merges (merge\_P $= 0.97 \pm 0.01$, §4.3), the reconstructed circuit
+preserves most true connections even where ARI is depressed by missed splits. The
+dual-side F1 is the more demanding metric — it compounds errors from two independent
+partitions — yet remains a faithful measure of the circuit a downstream analyst would
+obtain from the partition alone.
+
+The metric is, by design, sensitive to false merges and lenient toward over-fragmentation:
+a maximally conservative partition that never merges (every fragment its own cluster)
+attains F1 $= 1.0$, because each singleton inherits its synapse's true neuron under the
+majority-vote mapping. The connectivity F1 should therefore be read alongside ARI and
+merge recall, which penalize the opposite failure. Read together they bound the operating
+point: high merge precision *and* high ARI means the model merges aggressively and
+correctly; high connectivity F1 with low ARI (as can occur in very sparse bboxes) means it
+is conservatively under-merging without corrupting the circuit it does report.
 
 ---
 

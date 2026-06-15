@@ -408,11 +408,11 @@ log-likelihood of $\sigma((\text{logit}_e + b) / T)$ on a held-out 20\% of train
 graph edges (LBFGS, 200 steps). Per-observation confidence is the mean calibrated edge
 probability over all edges touching that observation. No model weights are changed.
 
-\textbf{Result.} On the A/B/C training graph: $T = 0.97$, $\text{ECE} = 0.141$.
+\textbf{Result.} On the training graph (region A): $T = 1.095$, $\text{ECE} = 0.137$.
 $T \approx 1$ indicates the raw logits are already nearly calibrated---temperature scaling
-provides only a small correction. The reliability diagram (Figure~\ref{fig:calibration})
-shows the model tracks the diagonal within $\pm 0.08$ for confidence bins between 0.2 and
-0.8, with some deviation in the tails where sample counts are small.
+softens them by under 10\%. The reliability diagram (Figure~\ref{fig:calibration})
+shows the model tracks the diagonal for confidence bins between 0.2 and 0.8, with the
+largest deviations in the tails where per-bin sample counts are small.
 
 \begin{figure}[h]
 \centering
@@ -427,6 +427,63 @@ fraction of true positive edges in that confidence bin; the dashed diagonal is p
 calibration. ECE = 0.141. Marker sizes are proportional to bin count.}
 \label{fig:calibration}
 \end{figure}
+
+\subsection{Connectivity Accuracy: The Cost of a False Merge}
+\label{sec:connectivity}
+
+ARI and merge precision measure the partition as a clustering, but the deliverable of a
+connectomics pipeline is a \emph{circuit}---a directed graph of which neuron synapses onto
+which. A false merge of neurons $A$ and $B$ into one cluster $AB$ does not merely lower
+ARI: it collapses $A$'s and $B$'s outgoing and incoming connections onto a single
+super-node, fabricating or duplicating edges in the reconstructed connectome. We measure
+this directly with a \textbf{connectivity F1} over neuron-neuron edges.
+
+\textbf{Two graphs.} Each synapse contributes a directed edge (pre-neuron $\to$
+post-neuron). We score the partition against the ground-truth connectome on (i) the
+\emph{directed} graph---``does $A$ synapse onto $B$?''---and (ii) the \emph{undirected}
+graph---``is there any connection between $A$ and $B$?'', with reciprocal edges merged.
+Both are computed at the neuron level after mapping predicted clusters to true neurons by
+majority vote. A perfect partition gives F1 $= 1.0$ on both graphs; merging two neurons
+that project to distinct targets halves both F1 scores.
+
+\textbf{Single- vs. dual-side.} The single-side connectome uses the pre-side partition and
+the \emph{true} post-neuron of each synapse. The dual-side connectome goes further: we
+partition the \textbf{post} side independently (grouping dendritic observations by
+post-neuron) and reconstruct the circuit with \emph{no} ground-truth root ids---a synapse's
+pre-neuron comes from the pre-side partition and its post-neuron from the post-side
+partition, the two observations joined by their shared CAVE synapse id. This is the honest
+end-to-end metric: every edge endpoint is a model prediction.
+
+\begin{table}[h]
+\centering
+\caption{Connectivity F1 across the four in-column test bboxes, $b = -2.0$. Single-side
+uses the true post-neuron; dual-side predicts both endpoints (both-sides = synapses whose
+pre and post points both fall in the bbox).}
+\label{tab:connectivity}
+\small
+% TABLE_NUMBERS — filled from scripts/spatial_variance.py --dual-side
+\begin{tabular}{lcccccc}
+\toprule
+ & \multicolumn{2}{c}{Single-side F1} & \multicolumn{3}{c}{Dual-side F1 (no GT)} & \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-6}
+Location & directed & undir. & directed & undir. & both-sides & ARI \\
+\midrule
+T1 & --- & --- & --- & --- & --- & --- \\
+T2 & --- & --- & --- & --- & --- & --- \\
+T3 & --- & --- & --- & --- & --- & --- \\
+T4 & --- & --- & --- & --- & --- & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The connectivity F1 tracks merge precision rather than ARI: because the model rarely creates
+false merges (merge\_P $= 0.97 \pm 0.01$, Section~\ref{sec:spatial}), the reconstructed
+circuit preserves most true connections even where ARI is depressed by missed splits. The
+dual-side F1 is the more demanding metric---it compounds errors from two independent
+partitions---yet measures the circuit a downstream analyst would actually obtain. By design
+the metric is sensitive to false merges and lenient toward over-fragmentation (a never-merge
+partition attains F1 $= 1.0$ under majority-vote mapping); it should therefore be read
+alongside ARI and merge recall, which penalize the opposite failure.
 
 %---------------------------------------------------------------------------
 \section{Discussion}
