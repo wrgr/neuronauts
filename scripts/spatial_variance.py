@@ -90,6 +90,10 @@ def main() -> int:
                    help="Also partition the POST side at each in-column bbox and "
                         "reconstruct the connectome from both partitions (no GT root "
                         "ids), reporting directed + undirected edge F1.")
+    p.add_argument("--dual-post-l2", action="store_true",
+                   help="Use real L2 skeletons for the post (dendritic) side in "
+                        "--dual-side mode. Default uses synapse-cloud fragments, which "
+                        "is far faster because the post side has many more fragments.")
     args = p.parse_args()
 
     if args.quick:
@@ -312,12 +316,20 @@ def main() -> int:
             #    from BOTH partitions (no ground-truth root ids). ───────────────
             if args.dual_side:
                 try:
-                    print("  [dual-side] building post-side world …")
+                    # The post (dendritic) side is far denser — often 8-10x more
+                    # fragments survive the sliver filter than the pre side — so
+                    # fetching L2 skeletons for every post fragment is intractable.
+                    # The post partition is only needed for the connectome join, so
+                    # default to synapse-cloud fragments (no L2 fetch). --dual-post-l2
+                    # opts back into real skeletons.
+                    print("  [dual-side] building post-side world "
+                          f"(l2_skeletons={args.dual_post_l2}) …")
                     frags_post, region_post, _ = build_region_world(
                         bbox, version=args.version, side="post",
                         max_synapses=args.max_synapses,
                         min_syn_per_fragment=args.min_syn_per_fragment,
-                        seed=args.seed, verbose=True)
+                        seed=args.seed, verbose=True,
+                        l2_skeletons=args.dual_post_l2)
                     frags_post_enc = encode_fragments(encoder, frags_post,
                                                       device=args.device)
                     graph_post = build_observation_graph(
