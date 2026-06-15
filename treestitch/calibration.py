@@ -43,8 +43,11 @@ def _edge_logits(model, graph, *, device: str = "cpu") -> tuple[np.ndarray, np.n
                 if graph.edge_feat is not None else None
 
     with torch.no_grad():
-        logits = model(node_feat, edge_src, edge_dst, edge_type,
-                       edge_feat=edge_feat).squeeze(-1).cpu().numpy()
+        out = model(node_feat, edge_src, edge_dst, edge_type,
+                    edge_feat=edge_feat)
+        # forward() returns (emb, logits) tuple
+        logits_t = out[1] if isinstance(out, (tuple, list)) else out
+        logits = logits_t.squeeze(-1).cpu().numpy()
 
     # co-neuron label: 1 if labels[src] == labels[dst] and both > 0
     labels = graph.labels
