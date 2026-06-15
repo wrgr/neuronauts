@@ -21,9 +21,9 @@ In-column (v1718 GT available, y=930-1000k, z=780-880k):
   T4: x=1150-1350k, y=1000-1070k (north y-shift)
 
 Out-of-column (shape plausibility only, no GT):
-  OOC1: x=200-400k,  y=500-570k,  z=700-800k  (reference OOC)
-  OOC2: x=1800-2000k,y=500-570k,  z=700-800k  (far east)
-  OOC3: x=200-400k,  y=200-350k,  z=700-800k  (far south, different cortical depth)
+  OOC1: x=200-400k,  y=500-570k,  z=700-800k  (reference OOC; confirmed working)
+  OOC2: x=1200-1400k,y=400-470k,  z=700-800k  (central x, lower y band)
+  OOC3: x=600-800k,  y=600-670k,  z=700-800k  (west-central, mid y band)
 
 Usage
 -----
@@ -131,10 +131,10 @@ def main() -> int:
     OUT_OF_COLUMN = [
         ("OOC1 x=200-400k (reference)",
          ((200_000, 500_000, 700_000), (400_000, 570_000, 800_000))),
-        ("OOC2 x=1800-2000k (far east)",
-         ((1_800_000, 500_000, 700_000), (2_000_000, 570_000, 800_000))),
-        ("OOC3 y=200-350k (far south)",
-         ((200_000, 200_000, 700_000), (400_000, 350_000, 800_000))),
+        ("OOC2 x=1200-1400k y=400-470k",
+         ((1_200_000, 400_000, 700_000), (1_400_000, 470_000, 800_000))),
+        ("OOC3 x=600-800k y=600-670k",
+         ((600_000, 600_000, 700_000), (800_000, 670_000, 800_000))),
     ]
 
     print("=" * 68)
