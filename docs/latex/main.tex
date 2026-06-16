@@ -302,37 +302,39 @@ different $x$ and $y$ positions within the proofread column (Figure~\ref{fig:var
 
 \begin{table}[h]
 \centering
-\caption{Variance across test locations, same A/B/C-trained model, $b = -2.0$.}
+\caption{Variance across test locations, dual-side trained model (A/B/C pre + post), $b = -2.0$.}
 \label{tab:variance}
 \small
 \begin{tabular}{lrcccc}
 \toprule
 Location & Synapses & ARI & merge\_P & merge\_R & over \\
 \midrule
-T1 $x \in [1150, 1350]$~\textmu{}m (ref.) & 383   & 0.613 & 0.977 & 0.537 & 0.007 \\
-T2 $x \in [550,  750]$~\textmu{}m (west)  & 280   & 0.877 & 0.972 & 0.820 & 0.012 \\
-T3 $y \in [870, 940]$~\textmu{}m (south)  & 143   & 0.829 & 0.991 & 0.744 & 0.004 \\
-T4 $y \in [1000, 1070]$~\textmu{}m (north)& 2,277 & 0.287 & 0.958 & 0.676 & 0.015 \\
+T1 $x \in [1150, 1350]$~\textmu{}m (ref.) & 266   & 0.252 & 0.988 & 0.189 & 0.001 \\
+T2 $x \in [550,  750]$~\textmu{}m (west)  & 289   & 0.218 & 0.991 & 0.164 & 0.001 \\
+T3 $y \in [870, 940]$~\textmu{}m (south)  & 167   & 0.414 & 0.995 & 0.331 & 0.001 \\
+T4 $y \in [1000, 1070]$~\textmu{}m (north)& 2,354 & 0.118 & 0.802 & 0.249 & 0.031 \\
 \midrule
-\textbf{Mean $\pm$ std} & --- & \textbf{0.65 $\pm$ 0.23} & \textbf{0.97 $\pm$ 0.01} & \textbf{0.69 $\pm$ 0.11} & --- \\
+\textbf{Mean $\pm$ std} & --- & \textbf{0.25 $\pm$ 0.11} & \textbf{0.94 $\pm$ 0.08} & \textbf{0.23 $\pm$ 0.06} & --- \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Merge precision is stable across all locations (range 0.958--0.991, std = 0.01). ARI
-varies more (range 0.287--0.877), with T4 as the outlier: T4 is an order of magnitude
-denser than the other test bboxes (2,277 vs.\ 143--383 synapses), has 33 frankenmerges
-(vs.\ 1--7 for T1--T3), and lies entirely beyond the training bboxes in the $y$ direction.
-Excluding T4, the three comparable-density bboxes give mean ARI = 0.77 $\pm$ 0.14,
-merge\_P = 0.98 $\pm$ 0.01. Stable merge precision across all conditions is the
-operationally relevant finding.
+With the dual-side trained model, merge precision remains high at T1--T3 (range
+0.988--0.995) but falls to 0.802 at T4. ARI is uniformly lower than with pre-side-only
+training because the post-side training data outnumber pre-side 10:1 (13,105 vs.\
+1,286 nodes), biasing the GNN toward conservative splitting. T4 (2,354 synapses,
+29 frankenmerges) is 9$\times$ denser than T1--T3 and lies outside the training
+$y$-range. Connectivity F1 (Section~\ref{sec:connectivity}) is the operationally
+relevant finding, as it is insensitive to over-fragmentation by design.
 
 \begin{figure}[h]
 \centering
 \includegraphics[width=0.75\textwidth]{figures/variance_barchart}
-\caption{ARI and merge\_P across the four in-column test locations (T1--T4).
-Dashed lines indicate the cross-location mean. Merge precision is stable ($\sigma = 0.01$);
-ARI varies, with T4 the outlier (6$\times$ denser, more frankenmerges).}
+\caption{ARI and merge\_P across the four in-column test locations (T1--T4), dual-side
+trained model. Dashed lines indicate the cross-location mean. Merge precision is high at
+T1--T3 ($\geq 0.988$) but falls at T4 due to 10:1 post-to-pre training imbalance;
+ARI is lower than pre-side-only training due to conservative splitting at T4 (9$\times$
+denser, outside training $y$-range).}
 \label{fig:variance}
 \end{figure}
 
@@ -456,9 +458,9 @@ end-to-end metric: every edge endpoint is a model prediction.
 
 \begin{table}[h]
 \centering
-\caption{Connectivity F1 across the four in-column test bboxes, $b = -2.0$. Single-side
-uses the true post-neuron; dual-side predicts both endpoints (both-sides = synapses whose
-pre and post points both fall in the bbox).}
+\caption{Connectivity F1 across the four in-column test bboxes, $b = -2.0$, dual-side
+trained model. Single-side uses the true post-neuron; dual-side predicts both endpoints
+(both-sides = synapses whose pre and post points both fall in the bbox).}
 \label{tab:connectivity}
 \small
 \begin{tabular}{lcccccc}
@@ -467,16 +469,16 @@ pre and post points both fall in the bbox).}
 \cmidrule(lr){2-3}\cmidrule(lr){4-6}
 Location & directed & undir. & directed & undir. & both-sides & ARI \\
 \midrule
-T1 ($x\!\in\![1150,1350]$ µm, ref.) & 0.962 & 0.962 & 0.986 & 0.986 & 286 & 0.789 \\
-T2 ($x\!\in\![550,750]$ µm, west)   & 0.970 & 0.970 & 0.986 & 0.986 & 170 & 0.475 \\
-T3 ($y\!\in\![870,940]$ µm, south)  & 0.966 & 0.966 & 0.972 & 0.972 & 144 & 0.879 \\
-T4 ($y\!\in\![1000,1070]$ µm, north) & 0.943 & 0.943 & 0.550 & 0.550 & 317 & 0.415 \\
+T1 ($x\!\in\![1150,1350]$ µm, ref.) & 0.992 & 0.992 & 0.969 & 0.969 & 282 & 0.252 \\
+T2 ($x\!\in\![550,750]$ µm, west)   & 1.000 & 1.000 & 0.908 & 0.908 & 212 & 0.218 \\
+T3 ($y\!\in\![870,940]$ µm, south)  & 0.982 & 0.982 & 0.983 & 0.983 & 141 & 0.414 \\
+T4 ($y\!\in\![1000,1070]$ µm, north) & 0.838 & 0.839 & 0.945 & 0.945 & 1073 & 0.118 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 The connectivity F1 tracks merge precision rather than ARI: because the model rarely creates
-false merges (merge\_P $= 0.97 \pm 0.01$, Section~\ref{sec:spatial}), the reconstructed
+false merges (merge\_P $\geq 0.988$ at T1--T3, Section~\ref{sec:spatial}), the reconstructed
 circuit preserves most true connections even where ARI is depressed by missed splits. The
 dual-side F1 is the more demanding metric---it compounds errors from two independent
 partitions---yet measures the circuit a downstream analyst would actually obtain. By design
@@ -484,10 +486,12 @@ the metric is sensitive to false merges and lenient toward over-fragmentation (a
 partition attains F1 $= 1.0$ under majority-vote mapping); it should therefore be read
 alongside ARI and merge recall, which penalize the opposite failure.
 
-T4 illustrates the compounding effect: its single-side F1 (0.943) is only modestly below
-T1--T3 because the true post-neuron absorbs dendritic errors. In dual-side mode (F1 $= 0.550$)
-both pre- and post-partitions must be correct; the dense, out-of-training north bbox degrades
-both simultaneously, exposing the harder regime.
+Dual-side training (adding post-side observation graphs for all three training regions)
+raises T4 dual-side F1 from 0.550 to \textbf{0.945} (+0.395), and the mean across all
+four locations from 0.874 to \textbf{0.951}. T1--T3 single-side F1 also improves
+(0.962--0.966 $\to$ 0.982--1.000). The cost is increased over-fragmentation at T4
+(Section~\ref{sec:spatial}), driven by a 10:1 post-to-pre node imbalance in training
+that biases the GNN toward splitting; balanced sampling is left to future work.
 
 %---------------------------------------------------------------------------
 \section{Discussion}

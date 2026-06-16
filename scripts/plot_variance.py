@@ -33,15 +33,15 @@ def main() -> int:
     import matplotlib.pyplot as plt
     import numpy as np
 
-    # Results from the spatial variance study (Phase 2.12)
+    # Results from the spatial variance study (Phase 2.15, dual-side trained model)
     locations = [
         "T1\nx=1150-1350k\n(reference)",
         "T2\nx=550-750k\n(west)",
         "T3\ny=870-940k\n(south)",
-        "T4\ny=1000-1070k\n(north, 6× denser)",
+        "T4\ny=1000-1070k\n(north, 9× denser)",
     ]
-    ari      = [0.613, 0.877, 0.829, 0.287]
-    merge_p  = [0.977, 0.972, 0.991, 0.958]
+    ari      = [0.252, 0.218, 0.414, 0.118]
+    merge_p  = [0.988, 0.991, 0.995, 0.802]
 
     x = np.arange(len(locations))
     width = 0.35
@@ -69,7 +69,7 @@ def main() -> int:
     ax.set_ylim(0, 1.12)
     ax.set_ylabel("Score")
     ax.set_title("Spatial variance: ARI and merge_P across 4 in-column test bboxes\n"
-                 "(same A/B/C-trained model, 50 µm seam buffer, b = −2.0)",
+                 "(dual-side trained model, A/B/C pre+post, 50 µm seam buffer, b = −2.0)",
                  fontsize=10)
     ax.legend(fontsize=9, loc="lower right")
     ax.axhline(0.95, color="gray", linestyle=":", linewidth=0.8, alpha=0.5)
