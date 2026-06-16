@@ -196,10 +196,26 @@ def main() -> int:
 
         train_graphs = []
         for i, (frags, region) in enumerate(zip(all_frags, all_regions)):
+            label = chr(65 + i)
             frags_enc = encode_fragments(encoder, frags, device=args.device)
             g = build_observation_graph(region, frags_enc, side=args.side,
                                         k_spatial=args.k_spatial)
             train_graphs.append(g)
+            if args.dual_side:
+                print(f"  [post-side train {label}] Building world …")
+                frags_p, region_p, _ = build_region_world(
+                    train_bboxes[i], version=args.version,
+                    max_synapses=args.max_synapses,
+                    min_syn_per_fragment=args.min_syn_per_fragment,
+                    seed=args.seed, verbose=False,
+                    side="post", l2_skeletons=False)
+                fe_p = encode_fragments(encoder, frags_p, device=args.device)
+                g_p = build_observation_graph(region_p, fe_p, side="post",
+                                              k_spatial=args.k_spatial)
+                train_graphs.append(g_p)
+        if args.dual_side:
+            print(f"\n  Training on {len(train_graphs)} graphs "
+                  f"({len(train_bboxes)} pre + {len(train_bboxes)} post).")
 
         if not (args.checkpoint and Path(args.checkpoint).exists()):
             print(f"\nTraining EdgePartitionGNN ({args.partition_epochs} epochs) …")
