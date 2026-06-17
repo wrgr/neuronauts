@@ -63,6 +63,38 @@ def _fmt_ooc(over: float, cable_med: float, is_tree: float) -> str:
             f"is_tree={is_tree:.3f}")
 
 
+def _subsample_observation_graph(g, n_keep: int, rng: np.random.Generator):
+    """Return a copy of ObservationGraph g with n_keep randomly-sampled nodes.
+
+    Edges whose src or dst fell outside the kept set are dropped; indices are
+    remapped so the returned graph is self-consistent.
+    """
+    from treestitch.schemas import ObservationGraph
+    n = g.n_nodes
+    if n_keep >= n:
+        return g
+    keep = rng.choice(n, size=n_keep, replace=False)
+    keep_set = set(keep.tolist())
+    remap = np.full(n, -1, dtype=np.int64)
+    remap[keep] = np.arange(len(keep), dtype=np.int64)
+    edge_mask = np.array(
+        [s in keep_set and d in keep_set
+         for s, d in zip(g.edge_src.tolist(), g.edge_dst.tolist())],
+        dtype=bool,
+    )
+    return ObservationGraph(
+        node_feat=g.node_feat[keep],
+        node_pos=g.node_pos[keep],
+        edge_src=remap[g.edge_src[edge_mask]],
+        edge_dst=remap[g.edge_dst[edge_mask]],
+        edge_type=g.edge_type[edge_mask],
+        edge_feat=g.edge_feat[edge_mask],
+        labels=g.labels[keep],
+        fragment_id=g.fragment_id[keep],
+        side=g.side,
+    )
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -96,12 +128,23 @@ def main() -> int:
                         "is far faster because the post side has many more fragments.")
     p.add_argument("--no-soma", action="store_true",
                    help="Skip nucleus-position download and soma detection.")
+    p.add_argument("--post-cc-bias", type=float, default=None,
+                   help="cc_bias override for the POST side partition (--dual-side). "
+                        "Defaults to --cc-bias. Try 0.0, 1.0, 2.0 to loosen "
+                        "the post-side threshold without retraining.")
+    p.add_argument("--balanced-dual", action="store_true",
+                   help="When --dual-side, subsample each post training graph "
+                        "to match the pre-side node count before training. "
+                        "Fixes the 10:1 post-to-pre imbalance that drives "
+                        "over-conservative post-side partitioning.")
     args = p.parse_args()
 
     if args.quick:
         args.embed_epochs = 5
         args.partition_epochs = 30
         print("[quick mode] embed=5 epochs, partition=30 epochs")
+
+    post_cc_bias = args.post_cc_bias if args.post_cc_bias is not None else args.cc_bias
 
     from neuronauts.line_graph import LineGraphSuite, evaluate_suite
     from treestitch.assemble import assemble_partition_shapes, detect_soma, neuron_shape_metrics
@@ -230,6 +273,11 @@ def main() -> int:
                 fe_p = encode_fragments(encoder, frags_p, device=args.device)
                 g_p = build_observation_graph(region_p, fe_p, side="post",
                                               k_spatial=args.k_spatial)
+                if args.balanced_dual and g_p.n_nodes > g.n_nodes:
+                    _rng = np.random.default_rng(args.seed + i)
+                    g_p = _subsample_observation_graph(g_p, g.n_nodes, _rng)
+                    print(f"    balanced: post subsampled to {g_p.n_nodes} nodes "
+                          f"(matched pre-side)")
                 train_graphs.append(g_p)
         if args.dual_side:
             print(f"\n  Training on {len(train_graphs)} graphs "
@@ -401,8 +449,11 @@ def main() -> int:
                     fe_post = encode_fragments(encoder, frags_post, device=args.device)
                     g_post = build_observation_graph(region_post, fe_post,
                                                      side="post", k_spatial=args.k_spatial)
+                    if post_cc_bias != args.cc_bias:
+                        print(f"  [post-side] using cc_bias={post_cc_bias} "
+                              f"(pre uses {args.cc_bias})")
                     pred_post = partition_observations_cc(
-                        model, g_post, bias=args.cc_bias, device=args.device)
+                        model, g_post, bias=post_cc_bias, device=args.device)
                     dual = dual_side_connectome_accuracy(
                         pred_pre2, region_pre2, pred_post, region_post)
                     print(f"  [dual-side] conn_F1(dir)={dual['conn_edge_f1']:.3f}  "
