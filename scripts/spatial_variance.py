@@ -94,6 +94,8 @@ def main() -> int:
                    help="Use real L2 skeletons for the post (dendritic) side in "
                         "--dual-side mode. Default uses synapse-cloud fragments, which "
                         "is far faster because the post side has many more fragments.")
+    p.add_argument("--no-soma", action="store_true",
+                   help="Skip nucleus-position download and soma detection.")
     args = p.parse_args()
 
     if args.quick:
@@ -101,7 +103,8 @@ def main() -> int:
         args.partition_epochs = 30
         print("[quick mode] embed=5 epochs, partition=30 epochs")
 
-    from treestitch.assemble import assemble_partition_shapes, neuron_shape_metrics
+    from neuronauts.line_graph import LineGraphSuite, evaluate_suite
+    from treestitch.assemble import assemble_partition_shapes, detect_soma, neuron_shape_metrics
     from treestitch.calibration import (
         expected_calibration_error, fit_temperature,
         calibrated_obs_confidence, reliability_diagram,
@@ -154,6 +157,21 @@ def main() -> int:
     print(f"  In-column test locations: {len(IN_COLUMN)}")
     print(f"  OOC test locations:       {len(OUT_OF_COLUMN)}")
     print("=" * 68)
+
+    # ── Nucleus positions for soma detection ────────────────────────────────
+    nucleus_pos_nm: np.ndarray | None = None
+    if not args.no_soma:
+        try:
+            from neuronauts.data.loaders import load_nucleus_positions
+            print("\nLoading nucleus positions …")
+            ndf = load_nucleus_positions(cache_path="/tmp/nucleus_positions.csv.gz")
+            if {"x_nm", "y_nm", "z_nm"}.issubset(ndf.columns) and len(ndf) > 0:
+                nucleus_pos_nm = ndf[["x_nm", "y_nm", "z_nm"]].to_numpy(dtype=float)
+                print(f"  {len(nucleus_pos_nm):,} nucleus positions loaded.")
+            else:
+                print("  Nucleus CSV lacks xyz columns — soma detection disabled.")
+        except Exception as exc:
+            print(f"  Nucleus load failed ({exc}); soma detection disabled.")
 
     # ── Train or load ───────────────────────────────────────────────────────
     enc_kwargs = dict(node_input_dim=4, d_model=64, output_dim=32)
@@ -299,17 +317,40 @@ def main() -> int:
             tort_med     = float(np.nanmedian([m['tortuosity'] for m in mlist])) if mlist else float("nan")
             is_tree      = float(np.mean([m['is_tree'] for m in mlist])) if mlist else 0.0
 
+            # Soma detection
+            n_with_soma = 0
+            if nucleus_pos_nm is not None and shapes:
+                for s in shapes.values():
+                    has_s, _ = detect_soma(s, nucleus_pos_nm)
+                    if has_s:
+                        n_with_soma += 1
+            soma_frac = n_with_soma / len(shapes) if shapes else float("nan")
+
             conn = connectome_accuracy(pred, region)
             has_conn = region.post_root_id is not None and int((region.post_root_id > 0).sum()) > 0
 
             print(f"  {_fmt_in(ev, mm)}")
             print(f"  cable_med={cable_med:.0f}µm  max_path={max_path_med:.0f}µm  "
-                  f"tort={tort_med:.2f}  is_tree={is_tree:.3f}  n_neurons={len(shapes)}")
+                  f"tort={tort_med:.2f}  is_tree={is_tree:.3f}  n_neurons={len(shapes)}  "
+                  f"soma={soma_frac:.1%}" if nucleus_pos_nm is not None
+                  else f"  cable_med={cable_med:.0f}µm  max_path={max_path_med:.0f}µm  "
+                       f"tort={tort_med:.2f}  is_tree={is_tree:.3f}  n_neurons={len(shapes)}")
             if has_conn:
                 print(f"  conn_edge_F1(dir)={conn['conn_edge_f1']:.3f}  "
                       f"conn_edge_F1(undir)={conn['conn_edge_f1_undir']:.3f}  "
                       f"syn_attr_acc={conn['synapse_attr_acc']:.3f}  "
                       f"({conn['n_true_edges']} dir / {conn['n_true_edges_undir']} undir true edges)")
+
+            # Line-graph metric suite (single-side pre-partition)
+            lg: LineGraphSuite | None = None
+            if has_conn:
+                lg = evaluate_suite(pred, region.pre_root_id, region.post_root_id)
+                print(f"  lg_pre:  F1={lg.pre_only.f1:.3f}  "
+                      f"P={lg.pre_only.precision:.3f}  R={lg.pre_only.recall:.3f}  "
+                      f"(penalises axonal over-fragmentation)")
+                print(f"  lg_or:   F1={lg.or_metric.f1:.3f}  "
+                      f"P={lg.or_metric.precision:.3f}  R={lg.or_metric.recall:.3f}  "
+                      f"(OR truth; insensitive to over-fragmentation)")
 
             row = {
                 "name": name, "ari": ev["ari"],
@@ -326,6 +367,12 @@ def main() -> int:
                 "conn_f1_undir": conn["conn_edge_f1_undir"],
                 "syn_attr_acc": conn["synapse_attr_acc"],
                 "n_true_edges": conn["n_true_edges"],
+                "soma_frac": soma_frac,
+                "n_with_soma": n_with_soma,
+                "lg_pre_f1": lg.pre_only.f1  if lg else float("nan"),
+                "lg_pre_p":  lg.pre_only.precision if lg else float("nan"),
+                "lg_pre_r":  lg.pre_only.recall    if lg else float("nan"),
+                "lg_or_f1":  lg.or_metric.f1       if lg else float("nan"),
             }
 
             # ── Dual-side: partition the POST side and reconstruct the connectome
@@ -366,6 +413,43 @@ def main() -> int:
                     row["dual_f1"] = dual["conn_edge_f1"]
                     row["dual_f1_undir"] = dual["conn_edge_f1_undir"]
                     row["dual_both"] = dual["n_synapses_both_sides"]
+
+                    # ── Line-graph suite with dual partition ─────────────────
+                    # Align pred_pre2 and pred_post by shared synapse_id.
+                    synid_pre  = region_pre2.synapse_id
+                    synid_post = region_post.synapse_id
+                    shared_ids = np.intersect1d(synid_pre, synid_post)
+                    if len(shared_ids) > 1:
+                        pre_idx  = {int(s): i for i, s in enumerate(synid_pre)}
+                        post_idx = {int(s): i for i, s in enumerate(synid_post)}
+                        bp  = np.array([pre_idx[int(s)]  for s in shared_ids])
+                        bpo = np.array([post_idx[int(s)] for s in shared_ids])
+                        lg_dual = evaluate_suite(
+                            pred_pre2[bp],
+                            region_pre2.pre_root_id[bp],
+                            region_pre2.post_root_id[bp],
+                            pred_post=pred_post[bpo],
+                        )
+                        # Post-side quality (truth = same post-neuron, est = pred_post).
+                        # Pass post_root_id as first arg so pre_only gives post-side F1.
+                        lg_post_side = evaluate_suite(
+                            pred_post,
+                            region_post.post_root_id,
+                            region_post.pre_root_id,
+                        )
+                        print(f"  [lg-and]  F1={lg_dual.and_metric.f1:.3f}  "
+                              f"P={lg_dual.and_metric.precision:.3f}  "
+                              f"R={lg_dual.and_metric.recall:.3f}  "
+                              f"(circuit-edge; penalises both sides)")
+                        print(f"  [lg-post] F1={lg_post_side.pre_only.f1:.3f}  "
+                              f"P={lg_post_side.pre_only.precision:.3f}  "
+                              f"R={lg_post_side.pre_only.recall:.3f}  "
+                              f"(post-side partition quality)")
+                        row["lg_and_f1"] = lg_dual.and_metric.f1
+                        row["lg_and_p"]  = lg_dual.and_metric.precision
+                        row["lg_and_r"]  = lg_dual.and_metric.recall
+                        row["lg_post_f1"] = lg_post_side.pre_only.f1
+                        row["lg_post_r"]  = lg_post_side.pre_only.recall
                 except Exception as exc:
                     import traceback
                     print(f"  [dual-side] ERROR: {exc}")
@@ -476,6 +560,32 @@ def main() -> int:
         if cf1u:
             print(f"    conn_F1u:  mean={np.mean(cf1u):.3f}  std={np.std(cf1u):.3f}  "
                   f"range=[{min(cf1u):.3f}, {max(cf1u):.3f}]")
+        lg_pre_f1s = [r["lg_pre_f1"] for r in good_in
+                      if r.get("lg_pre_f1") == r.get("lg_pre_f1")]
+        if lg_pre_f1s:
+            print(f"    lg_pre_F1: mean={np.mean(lg_pre_f1s):.3f}  "
+                  f"std={np.std(lg_pre_f1s):.3f}  "
+                  f"range=[{min(lg_pre_f1s):.3f}, {max(lg_pre_f1s):.3f}]")
+
+    # ── Soma summary ────────────────────────────────────────────────────────
+    soma_rows = [r for r in good_in if r.get("soma_frac") == r.get("soma_frac")]
+    if soma_rows and nucleus_pos_nm is not None:
+        print(f"\n  Soma detection (nucleus bbox overlap, margin=10µm):")
+        for r in soma_rows:
+            sf = r["soma_frac"]
+            ns = r["n_with_soma"]
+            print(f"    {r['name']:<38} {sf:.1%}  ({ns} with soma)")
+
+    # ── Line-graph metric suite summary ─────────────────────────────────────
+    lg_rows = [r for r in good_in if "lg_pre_f1" in r]
+    if lg_rows:
+        print(f"\n  Line-graph F1 suite (single-side pre-partition):")
+        print(f"  {'Location':<38} {'pre_F1':>7} {'pre_P':>7} {'pre_R':>7} {'or_F1':>7}")
+        print(f"  {'-'*38} {'-'*7} {'-'*7} {'-'*7} {'-'*7}")
+        for r in lg_rows:
+            print(f"  {r['name']:<38} {r['lg_pre_f1']:>7.3f} "
+                  f"{r['lg_pre_p']:>7.3f} {r['lg_pre_r']:>7.3f} "
+                  f"{r['lg_or_f1']:>7.3f}")
 
     if args.dual_side:
         dual_rows = [r for r in good_in if "dual_f1" in r]
@@ -486,6 +596,18 @@ def main() -> int:
             for r in dual_rows:
                 print(f"  {r['name']:<38} {r['dual_f1']:>7.3f} "
                       f"{r['dual_f1_undir']:>9.3f} {r['dual_both']:>9d}")
+        and_rows = [r for r in good_in if "lg_and_f1" in r]
+        if and_rows:
+            print(f"\n  Line-graph AND metric (circuit-edge; penalises both sides):")
+            print(f"  {'Location':<38} {'and_F1':>7} {'and_P':>7} {'and_R':>7} "
+                  f"{'post_F1':>8} {'post_R':>7}")
+            print(f"  {'-'*38} {'-'*7} {'-'*7} {'-'*7} {'-'*8} {'-'*7}")
+            for r in and_rows:
+                pf = f"{r.get('lg_post_f1', float('nan')):.3f}"
+                pr = f"{r.get('lg_post_r',  float('nan')):.3f}"
+                print(f"  {r['name']:<38} {r['lg_and_f1']:>7.3f} "
+                      f"{r['lg_and_p']:>7.3f} {r['lg_and_r']:>7.3f} "
+                      f"{pf:>8} {pr:>7}")
 
     print(f"\n  OOC ({len(good_ooc)} locations):")
     print(f"  {'Location':<38} {'over':>6} {'cable_med':>10} {'max_path':>10} "

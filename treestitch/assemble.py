@@ -308,6 +308,55 @@ def assemble_partition_shapes(
 
 
 # ---------------------------------------------------------------------------
+# Soma / cell-body detection
+# ---------------------------------------------------------------------------
+
+def detect_soma(
+    neuron: Fragment,
+    nucleus_pos_nm: np.ndarray,
+    margin_nm: float = 10_000.0,
+) -> tuple[bool, np.ndarray | None]:
+    """Test whether a nucleus falls within a neuron's skeleton bounding box.
+
+    Checks whether any entry in *nucleus_pos_nm* lies inside the axis-aligned
+    bounding box of *neuron.vertices_nm* expanded by *margin_nm* on each face.
+    When multiple nuclei qualify, returns the one closest to the skeleton
+    centroid.
+
+    Parameters
+    ----------
+    neuron:
+        Assembled Fragment (output of ``assemble_partition_shapes``).
+    nucleus_pos_nm:
+        [K, 3] float64 array of nucleus xyz positions in nm.
+    margin_nm:
+        Bounding-box expansion in nm (default 10 µm).
+
+    Returns
+    -------
+    has_soma : bool
+    soma_pos_nm : np.ndarray | None
+        xyz of the closest qualifying nucleus, or ``None`` if none found.
+    """
+    if nucleus_pos_nm is None or len(nucleus_pos_nm) == 0:
+        return False, None
+    verts = neuron.vertices_nm
+    if verts is None or len(verts) == 0:
+        return False, None
+
+    lo = verts.min(axis=0) - margin_nm
+    hi = verts.max(axis=0) + margin_nm
+    in_box = np.all((nucleus_pos_nm >= lo) & (nucleus_pos_nm <= hi), axis=1)
+    candidates = nucleus_pos_nm[in_box]
+    if len(candidates) == 0:
+        return False, None
+
+    centroid = verts.mean(axis=0)
+    dists = np.linalg.norm(candidates - centroid, axis=1)
+    return True, candidates[int(np.argmin(dists))].copy()
+
+
+# ---------------------------------------------------------------------------
 # Shape metrics
 # ---------------------------------------------------------------------------
 
