@@ -89,12 +89,14 @@ class TestPathToIntrinsic:
     def test_translation_invariant(self):
         """Shifting all vertices must not change intrinsic features."""
         from neuronauts.represent.path_grammar import path_to_intrinsic
-        verts = np.random.randn(8, 3).astype(np.float32) * 500
-        radii = np.random.rand(8).astype(np.float32) * 300 + 100
+        rng = np.random.default_rng(42)
+        verts = rng.standard_normal((8, 3)).astype(np.float32) * 500
+        radii = (rng.random(8) * 300 + 100).astype(np.float32)
         offset = np.array([1e6, -2e5, 3e5], dtype=np.float32)
         f1 = path_to_intrinsic(verts, radii)
         f2 = path_to_intrinsic(verts + offset, radii)
-        np.testing.assert_allclose(f1, f2, atol=1e-4)
+        # float32 precision loss from large offset: tolerate up to ~1e-3
+        np.testing.assert_allclose(f1, f2, atol=1e-3)
 
     def test_rotation_invariant(self):
         """Rotating all vertices must not change intrinsic features."""
