@@ -48,10 +48,24 @@ Usage
 from __future__ import annotations
 
 import argparse
+import datetime
+import json
 import sys
 from pathlib import Path
 
 import numpy as np
+
+
+def _json_default(obj):
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    raise TypeError(f"Not serializable: {type(obj)}")
 
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
@@ -123,6 +137,10 @@ def main() -> int:
                    help="Path to a saved checkpoint; if set, skip training and load model.")
     p.add_argument("--save-checkpoint", type=str, default="/tmp/neuronauts_variance.pt",
                    help="Where to save the trained checkpoint (default: /tmp/neuronauts_variance.pt)")
+    p.add_argument("--save-bundle", type=str, default=None,
+                   help="If set, serialize all evaluation results (metrics + skeletons + "
+                        "synapse positions) to a JSON bundle at this path. Load with the "
+                        "dashboard/app.py Streamlit app.")
     p.add_argument("--quick", action="store_true",
                    help="Fewer epochs (debug mode): embed=5, partition=30")
     p.add_argument("--no-calibration", action="store_true",
@@ -189,6 +207,7 @@ def main() -> int:
     from treestitch.checkpoint import load_checkpoint, save_checkpoint
     from treestitch.connectivity import (
         connectome_accuracy, dual_side_connectome_accuracy,
+        _match_clusters_to_neurons,
     )
     from treestitch.embed import FragmentEncoder, encode_fragments, train_fragment_encoder
     from treestitch.graph import build_observation_graph
@@ -418,6 +437,9 @@ def main() -> int:
     print("IN-COLUMN EVALUATION  (v1718 GT available)")
     print(f"{'='*68}")
 
+    # ── Bundle accumulator (populated only when --save-bundle is set) ────────
+    bbox_bundles: dict = {}
+
     in_col_results = []
     for name, bbox in IN_COLUMN:
         print(f"\n[{name}]")
@@ -456,6 +478,47 @@ def main() -> int:
                     if has_s:
                         n_with_soma += 1
             soma_frac = n_with_soma / len(shapes) if shapes else float("nan")
+
+            # ── Per-bbox bundle data (for --save-bundle) ──────────────────
+            if args.save_bundle is not None:
+                cluster_to_root = _match_clusters_to_neurons(pred, region.pre_root_id)
+                neurons_bundle: dict = {}
+                for cluster_id, frag in shapes.items():
+                    nm = neuron_shape_metrics(frag)
+                    has_s = False
+                    if nucleus_pos_nm is not None:
+                        has_s, _ = detect_soma(frag, nucleus_pos_nm)
+                    edges_list = frag.edges.tolist() if frag.edges.ndim == 2 else []
+                    neurons_bundle[str(cluster_id)] = {
+                        "vertices_nm": frag.vertices_nm.tolist(),
+                        "edges": edges_list,
+                        "radius_nm": frag.radius_nm.tolist(),
+                        "true_root_id": int(cluster_to_root.get(cluster_id, 0)),
+                        "n_synapses": int((pred == cluster_id).sum()),
+                        "metrics": {
+                            "cable_length_um": nm["cable_length_um"],
+                            "n_branch_points": nm["n_branch_points"],
+                            "n_endpoints": nm["n_endpoints"],
+                            "is_tree": nm["is_tree"],
+                            "tortuosity": nm["tortuosity"],
+                            "max_path_length_um": nm["max_path_length_um"],
+                            "mean_caliber_um": nm.get("mean_caliber_um", float("nan")),
+                        },
+                        "has_soma": bool(has_s),
+                    }
+                bbox_bundles[name] = {
+                    "bbox": [list(bbox[0]), list(bbox[1])],
+                    "synapses": {
+                        "positions_nm": region.pre_pt_nm.tolist(),
+                        "pre_root_id": region.pre_root_id.tolist(),
+                        "post_root_id": region.post_root_id.tolist()
+                                        if region.post_root_id is not None
+                                        else [],
+                        "pred_cluster": pred.tolist(),
+                        "synapse_id": region.synapse_id.tolist(),
+                    },
+                    "neurons": neurons_bundle,
+                }
 
             conn = connectome_accuracy(pred, region)
             has_conn = region.post_root_id is not None and int((region.post_root_id > 0).sum()) > 0
@@ -686,6 +749,25 @@ def main() -> int:
         except Exception as exc:
             print(f"  ERROR: {exc}")
             ooc_results.append({"name": name, "error": str(exc)})
+
+    # ── Save bundle ───────────────────────────────────────────────────────
+    if args.save_bundle is not None:
+        bundle = {
+            "meta": {
+                "timestamp": datetime.datetime.now().isoformat(),
+                "train_regions": ["A", "B", "C", "D", "E"],
+                "version": args.version,
+                "checkpoint": args.checkpoint or args.save_checkpoint,
+                "dual_side": args.dual_side,
+            },
+            "calibration": {"T": T, "ece_train": ece_train},
+            "in_col_results": in_col_results,
+            "ooc_results": ooc_results,
+            "bboxes": bbox_bundles,
+        }
+        with open(args.save_bundle, "w") as _bf:
+            json.dump(bundle, _bf, indent=2, default=_json_default)
+        print(f"\nBundle saved → {args.save_bundle}")
 
     # ── Summary table ─────────────────────────────────────────────────────
     print(f"\n{'='*68}")
