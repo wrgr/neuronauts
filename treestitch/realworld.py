@@ -461,9 +461,11 @@ def _assemble_world_arrays(
     if side == "pre":
         pre_root_id_arr, post_root_id_arr = labels, other_labels
         pre_seg_id_arr = frag_ids
+        post_seg_id_arr = np.zeros(n_obs, dtype=np.int64)
     else:
         post_root_id_arr, pre_root_id_arr = labels, other_labels
         pre_seg_id_arr = np.zeros(n_obs, dtype=np.int64)
+        post_seg_id_arr = frag_ids  # v117 dendritic segment IDs — join key for fragment partition
 
     region = Region(
         region_id=f"minnie65_v{version}",
@@ -480,7 +482,7 @@ def _assemble_world_arrays(
         synapse_id=(syn_ids if np.any(syn_ids >= 0)
                     else np.arange(n_obs, dtype=np.int64)),
         pre_seg_id=pre_seg_id_arr,
-        post_seg_id=np.zeros(n_obs, dtype=np.int64),
+        post_seg_id=post_seg_id_arr,
     ).validate()
 
     if verbose:
