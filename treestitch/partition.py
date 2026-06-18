@@ -466,7 +466,114 @@ __all__ = [
     "train_edge_partition_multi_region",
     "partition_observations_cc",
     "partition_observations_soft",
+    "partition_observations_tiled",
     "merge_metrics",
     "assemble_partition_shapes",
     "neuron_shape_metrics",
 ]
+
+
+def _extract_subgraph(g, node_indices: np.ndarray):
+    """Return a new ObservationGraph containing only ``node_indices`` nodes.
+
+    Edges whose src or dst is absent are dropped; remaining indices are
+    remapped to 0…len(node_indices)-1.
+    """
+    from treestitch.schemas import ObservationGraph
+    n_orig = g.n_nodes
+    keep_set = set(node_indices.tolist())
+    remap = np.full(n_orig, -1, dtype=np.int64)
+    remap[node_indices] = np.arange(len(node_indices), dtype=np.int64)
+    edge_mask = np.array(
+        [int(s) in keep_set and int(d) in keep_set
+         for s, d in zip(g.edge_src.tolist(), g.edge_dst.tolist())],
+        dtype=bool,
+    )
+    return ObservationGraph(
+        node_feat=g.node_feat[node_indices],
+        node_pos=g.node_pos[node_indices],
+        edge_src=remap[g.edge_src[edge_mask]],
+        edge_dst=remap[g.edge_dst[edge_mask]],
+        edge_type=g.edge_type[edge_mask],
+        edge_feat=g.edge_feat[edge_mask],
+        labels=g.labels[node_indices],
+        fragment_id=g.fragment_id[node_indices],
+        side=g.side,
+    )
+
+
+def partition_observations_tiled(
+    model,
+    graph,
+    *,
+    tile_size: int = 600,
+    bias: float = 0.0,
+    device: str = "cpu",
+) -> np.ndarray:
+    """Partition a large ObservationGraph by spatial tiling.
+
+    For graphs with ≤ ``tile_size`` nodes, falls back to
+    ``partition_observations_cc`` directly.  For larger graphs:
+
+    1. Sort nodes along the longest spatial axis.
+    2. Partition contiguous tiles of ``tile_size`` nodes independently.
+    3. Assign globally unique cluster IDs per tile.
+    4. Reconcile: nodes sharing a same-fragment edge (edge_type==0) across
+       tile boundaries must end up in the same cluster.  A union-find pass
+       over same-fragment edges achieves this without any model calls.
+
+    The reconciliation preserves the fragment-level co-membership guarantee
+    that same-fragment synapses belong to the same neuron, which is the only
+    cross-tile constraint the GNN would have seen during training.
+    """
+    n = graph.n_nodes
+    if n <= tile_size:
+        return partition_observations_cc(model, graph, bias=bias, device=device)
+
+    # Sort by the dimension with greatest spread for compact tiles.
+    spread = graph.node_pos.max(axis=0) - graph.node_pos.min(axis=0)
+    sort_dim = int(np.argmax(spread))
+    sorted_idx = np.argsort(graph.node_pos[:, sort_dim])
+
+    pred = np.full(n, -1, dtype=np.int64)
+    next_cluster = 0
+    for start in range(0, n, tile_size):
+        tile_nodes = sorted_idx[start:start + tile_size]
+        tile_g = _extract_subgraph(graph, tile_nodes)
+        tile_pred = partition_observations_cc(model, tile_g, bias=bias, device=device)
+        pred[tile_nodes] = tile_pred + next_cluster
+        next_cluster += int(tile_pred.max()) + 1
+
+    # Union-find reconciliation over same-fragment edges (edge_type == 0).
+    parent = np.arange(next_cluster, dtype=np.int64)
+
+    def _find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    frag_id = graph.fragment_id
+    # For each fragment, union all cluster IDs assigned to its nodes.
+    frag_rep: dict[int, int] = {}
+    for node in range(n):
+        fid = int(frag_id[node])
+        c = int(pred[node])
+        if fid not in frag_rep:
+            frag_rep[fid] = c
+        else:
+            rc, rr = _find(c), _find(frag_rep[fid])
+            if rc != rr:
+                parent[rc] = rr
+
+    # Remap to contiguous IDs.
+    canonical: dict[int, int] = {}
+    result = np.empty(n, dtype=np.int64)
+    next_id = 0
+    for node in range(n):
+        root = _find(int(pred[node]))
+        if root not in canonical:
+            canonical[root] = next_id
+            next_id += 1
+        result[node] = canonical[root]
+    return result

@@ -128,6 +128,11 @@ def main() -> int:
                         "is far faster because the post side has many more fragments.")
     p.add_argument("--no-soma", action="store_true",
                    help="Skip nucleus-position download and soma detection.")
+    p.add_argument("--post-tile-size", type=int, default=600,
+                   help="Max nodes per spatial tile when partitioning the post "
+                        "side (--dual-side). Post-side graphs are ~10x larger "
+                        "than training graphs; tiling applies the GNN at the "
+                        "same scale it was trained on. Default=600.")
     p.add_argument("--post-cc-bias", type=float, default=None,
                    help="cc_bias override for the POST side partition (--dual-side). "
                         "Defaults to --cc-bias. Try 0.0, 1.0, 2.0 to loosen "
@@ -160,7 +165,8 @@ def main() -> int:
     from treestitch.graph import build_observation_graph
     from treestitch.partition import (
         evaluate_partition, merge_metrics,
-        partition_observations_cc, train_edge_partition_multi_region,
+        partition_observations_cc, partition_observations_tiled,
+        train_edge_partition_multi_region,
     )
     from treestitch.realworld import build_region_world, build_region_world_dual
 
@@ -452,8 +458,15 @@ def main() -> int:
                     if post_cc_bias != args.cc_bias:
                         print(f"  [post-side] using cc_bias={post_cc_bias} "
                               f"(pre uses {args.cc_bias})")
-                    pred_post = partition_observations_cc(
-                        model, g_post, bias=post_cc_bias, device=args.device)
+                    if g_post.n_nodes > args.post_tile_size:
+                        print(f"  [post-side] tiled partition "
+                              f"({g_post.n_nodes} nodes → tiles of {args.post_tile_size})")
+                        pred_post = partition_observations_tiled(
+                            model, g_post, tile_size=args.post_tile_size,
+                            bias=post_cc_bias, device=args.device)
+                    else:
+                        pred_post = partition_observations_cc(
+                            model, g_post, bias=post_cc_bias, device=args.device)
                     dual = dual_side_connectome_accuracy(
                         pred_pre2, region_pre2, pred_post, region_post)
                     print(f"  [dual-side] conn_F1(dir)={dual['conn_edge_f1']:.3f}  "
