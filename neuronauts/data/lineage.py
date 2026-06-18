@@ -23,8 +23,11 @@ See ``docs/seg_117_to_1412.md`` for the full access map.
 
 from __future__ import annotations
 
+import hashlib
+import os
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -37,6 +40,71 @@ CG_SERVER = "https://minnie.microns-daf.com"
 SEG_TABLE = "minnie65_public"
 MAT_SERVER = "https://minnie.microns-daf.com"
 SYNAPSE_TABLE = "synapses_pni_2"
+
+# ---------------------------------------------------------------------------
+# Synapse-fetch cache
+# ---------------------------------------------------------------------------
+# The materialization query applies a server-side ``limit`` with no stable sort
+# order, so a bbox holding more than ``limit`` synapses returns a DIFFERENT
+# arbitrary subset on each call.  That makes any multi-run comparison (e.g.
+# adding a training region, sweeping a hyperparameter) invalid, because the
+# training/eval data silently changes underneath the experiment.
+#
+# To make fetches reproducible we cache each result to disk keyed on the query
+# (datastack, table, version, side, bbox, limit).  Set the cache directory via
+# NEURONAUTS_SYNAPSE_CACHE_DIR; caching is enabled by default.  Set
+# NEURONAUTS_SYNAPSE_CACHE_DIR="" (or "0"/"off") to disable.
+
+def _synapse_cache_dir() -> Optional[Path]:
+    val = os.environ.get("NEURONAUTS_SYNAPSE_CACHE_DIR", "_DEFAULT_")
+    if val in ("", "0", "off", "OFF", "none", "None"):
+        return None
+    if val == "_DEFAULT_":
+        val = "/tmp/neuronauts_synapse_cache"
+    p = Path(val)
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    return p
+
+
+def _synapse_cache_key(bbox_nm, *, version, side, limit) -> str:
+    (x0, y0, z0), (x1, y1, z1) = bbox_nm
+    # Round to 1 nm to avoid float-repr drift across callers.
+    parts = (DATASTACK, SYNAPSE_TABLE, int(version), side, int(limit),
+             round(x0), round(y0), round(z0), round(x1), round(y1), round(z1))
+    raw = "|".join(str(p) for p in parts)
+    return hashlib.sha1(raw.encode()).hexdigest()[:20]
+
+
+def _synapse_cache_load(key: str) -> Optional[dict]:
+    cdir = _synapse_cache_dir()
+    if cdir is None:
+        return None
+    f = cdir / f"{key}.npz"
+    if not f.exists():
+        return None
+    try:
+        with np.load(f, allow_pickle=False) as z:
+            return {k: z[k] for k in z.files}
+    except Exception:
+        return None
+
+
+def _synapse_cache_save(key: str, result: dict) -> None:
+    cdir = _synapse_cache_dir()
+    if cdir is None:
+        return
+    f = cdir / f"{key}.npz"
+    try:
+        # Atomic-ish: write to a tmp .npz then rename. (np.savez appends ".npz"
+        # if the path lacks it, so the tmp name must already end in ".npz".)
+        tmp = cdir / f"{key}.tmp{os.getpid()}.npz"
+        np.savez(tmp, **result)
+        os.replace(tmp, f)
+    except Exception:
+        pass
 
 # synapses_pni_2 positions are stored in 4×4×40 nm voxels.
 SYNAPSE_VOXEL_NM = (4.0, 4.0, 40.0)
@@ -367,6 +435,15 @@ def fetch_region_synapses(
     if side not in ("pre", "post"):
         raise ValueError("side must be 'pre' or 'post'")
 
+    # Reproducibility: serve from the on-disk cache when available so repeated
+    # runs (different training configs, hyperparameter sweeps) see IDENTICAL
+    # data. The server-side ``limit`` has no stable order, so without this an
+    # over-limit bbox returns a different subset every call.
+    _ck = _synapse_cache_key(bbox_nm, version=version, side=side, limit=limit)
+    _cached = _synapse_cache_load(_ck)
+    if _cached is not None:
+        return _cached
+
     (x0, y0, z0), (x1, y1, z1) = bbox_nm
     vx, vy, vz = SYNAPSE_VOXEL_NM
     lo = [x0 / vx, y0 / vy, z0 / vz]
@@ -432,7 +509,7 @@ def fetch_region_synapses(
     else:
         other_positions_nm = np.zeros((n, 3), dtype=np.float32)
         other_supervoxel_ids = np.zeros(n, dtype=np.uint64)
-    return {
+    result = {
         "positions_nm": pos,
         "supervoxel_ids": np.asarray(d[f"{side}_pt_supervoxel_id"], dtype=np.uint64),
         "root_ids": np.asarray(d[f"{side}_pt_root_id"], dtype=np.uint64),
@@ -441,6 +518,19 @@ def fetch_region_synapses(
         "other_supervoxel_ids": other_supervoxel_ids,
         "synapse_ids": synapse_ids,
     }
+
+    # Canonical, deterministic row order: sort by real CAVE synapse id when
+    # present (falls back to a stable position sort if ids are absent). This
+    # ensures the cached array — and any downstream seeded subsample — is
+    # reproducible regardless of the order the server happened to return.
+    if np.any(synapse_ids >= 0):
+        order = np.argsort(synapse_ids, kind="stable")
+    else:
+        order = np.lexsort((pos[:, 2], pos[:, 1], pos[:, 0]))
+    result = {k: v[order] for k, v in result.items()}
+
+    _synapse_cache_save(_ck, result)
+    return result
 
 
 # ---------------------------------------------------------------------------

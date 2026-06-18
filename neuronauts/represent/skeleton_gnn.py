@@ -234,6 +234,10 @@ def train_skeleton_gnn(
     import torch
     import torch.nn.functional as F
 
+    # Seed torch too (numpy is already seeded below) so weight init and any
+    # stochastic ops are reproducible — required for valid run-to-run
+    # experiment comparisons (e.g. adding a training region).
+    torch.manual_seed(0)
     rng = np.random.default_rng(0)
     gnn = gnn.to(device)
     opt = torch.optim.Adam(gnn.parameters(), lr=lr)
