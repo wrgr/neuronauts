@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Spatial variance study for NeuronautS.
 
-Trains once on the standard 3-region A/B/C protocol (saves a checkpoint),
+Trains once on the standard 4-region A/B/C/D protocol (saves a checkpoint),
 then evaluates on multiple test bboxes — both in-column (where v1718 GT
 exists) and out-of-column (where shape plausibility is the metric).
 
@@ -12,13 +12,20 @@ This answers: how stable are ARI/merge_P across different spatial locations?
 A tight spread strengthens the out-of-sample claim; a wide spread flags
 geographic sensitivity that the paper should acknowledge.
 
+Training regions (y=930-1000k, z=780-880k):
+  A: x=750-950k
+  B: x=950-1150k   (seam-buffered right edge)
+  C: x=1350-1550k  (seam-buffered left edge)
+  D: x=1550-1750k  (seam-buffered left edge; east expansion)
+
 Test locations
 --------------
 In-column (v1718 GT available, y=930-1000k, z=780-880k):
-  T1: x=1150-1350k  (current reference)
+  T1: x=1150-1350k  (reference; gap between train B and C)
   T2: x=550-750k    (west of train A; reveals column extent)
   T3: x=1150-1350k, y=870-940k   (south y-shift)
   T4: x=1150-1350k, y=1000-1070k (north y-shift)
+  T5: x=1750-1950k  (east of train D; east extrapolation)
 
 Out-of-column (shape plausibility only, no GT):
   OOC1: x=200-400k,  y=500-570k,  z=700-800k  (reference OOC; confirmed working)
@@ -198,6 +205,7 @@ def main() -> int:
         ((750_000,  y0, z0), (950_000,           y1, z1)),  # A
         ((950_000,  y0, z0), (1_150_000 - buf,   y1, z1)),  # B (seam-buffered)
         ((1_350_000 + buf, y0, z0), (1_550_000,  y1, z1)),  # C (seam-buffered)
+        ((1_550_000 + buf, y0, z0), (1_750_000,  y1, z1)),  # D (seam-buffered)
     ]
 
     # ── Test bboxes ─────────────────────────────────────────────────────────
@@ -210,6 +218,8 @@ def main() -> int:
          ((1_150_000, 870_000, z0), (1_350_000, 940_000, z1))),
         ("T4 y-shift north (y=1000-1070k)",
          ((1_150_000, 1_000_000, z0), (1_350_000, 1_070_000, z1))),
+        ("T5 x=1750-1950k (east of D)",
+         ((1_750_000, y0, z0), (1_950_000, y1, z1))),
     ]
     OUT_OF_COLUMN = [
         ("OOC1 x=200-400k (reference)",
@@ -222,7 +232,7 @@ def main() -> int:
 
     print("=" * 68)
     print(f"Spatial variance study  (v117 → v{args.version})")
-    print(f"  Train: 3 regions (A/B/C, seam buffer={buf//1000}µm)")
+    print(f"  Train: {len(train_bboxes)} regions (A/B/C/D, seam buffer={buf//1000}µm)")
     print(f"  In-column test locations: {len(IN_COLUMN)}")
     print(f"  OOC test locations:       {len(OUT_OF_COLUMN)}")
     print("=" * 68)
