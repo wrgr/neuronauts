@@ -12,11 +12,12 @@ This answers: how stable are ARI/merge_P across different spatial locations?
 A tight spread strengthens the out-of-sample claim; a wide spread flags
 geographic sensitivity that the paper should acknowledge.
 
-Training regions (y=930-1000k, z=780-880k):
-  A: x=750-950k
-  B: x=950-1150k   (seam-buffered right edge)
-  C: x=1350-1550k  (seam-buffered left edge)
-  D: x=1550-1750k  (seam-buffered left edge; east expansion)
+Training regions (z=780-880k):
+  A: x=750-950k,   y=930-1000k
+  B: x=950-1150k,  y=930-1000k  (seam-buffered right edge)
+  C: x=1350-1550k, y=930-1000k  (seam-buffered left edge)
+  D: x=1550-1750k, y=930-1000k  (seam-buffered left edge; east expansion)
+  E: x=750-950k,   y=1000-1070k (north y-band; matches T4 density regime)
 
 Test locations
 --------------
@@ -62,6 +63,7 @@ def _fmt_in(ev: dict, mm: dict) -> str:
             f"merge_P={mm['merge_precision']:.3f}  "
             f"merge_R={mm['merge_recall']:.3f}  "
             f"over={mm['over_merge_rate']:.3f}  "
+            f"under={mm['under_merge_rate']:.3f}  "
             f"fk={mm['frankenmerge_split_recall']:.3f}")
 
 
@@ -202,10 +204,11 @@ def main() -> int:
     z0, z1 = 780_000, 880_000
     buf = args.seam_buffer
     train_bboxes = [
-        ((750_000,  y0, z0), (950_000,           y1, z1)),  # A
-        ((950_000,  y0, z0), (1_150_000 - buf,   y1, z1)),  # B (seam-buffered)
-        ((1_350_000 + buf, y0, z0), (1_550_000,  y1, z1)),  # C (seam-buffered)
-        ((1_550_000 + buf, y0, z0), (1_750_000,  y1, z1)),  # D (seam-buffered)
+        ((750_000,  y0, z0), (950_000,             y1, z1)),  # A
+        ((950_000,  y0, z0), (1_150_000 - buf,     y1, z1)),  # B (seam-buffered)
+        ((1_350_000 + buf, y0, z0), (1_550_000,    y1, z1)),  # C (seam-buffered)
+        ((1_550_000 + buf, y0, z0), (1_750_000,    y1, z1)),  # D (seam-buffered)
+        ((750_000, 1_000_000, z0), (950_000, 1_070_000, z1)), # E y-north band
     ]
 
     # ── Test bboxes ─────────────────────────────────────────────────────────
@@ -232,7 +235,7 @@ def main() -> int:
 
     print("=" * 68)
     print(f"Spatial variance study  (v117 → v{args.version})")
-    print(f"  Train: {len(train_bboxes)} regions (A/B/C/D, seam buffer={buf//1000}µm)")
+    print(f"  Train: {len(train_bboxes)} regions (A/B/C/D/E, seam buffer={buf//1000}µm)")
     print(f"  In-column test locations: {len(IN_COLUMN)}")
     print(f"  OOC test locations:       {len(OUT_OF_COLUMN)}")
     print("=" * 68)
@@ -465,6 +468,7 @@ def main() -> int:
                        f"tort={tort_med:.2f}  is_tree={is_tree:.3f}  n_neurons={len(shapes)}")
             if has_conn:
                 print(f"  conn_edge_F1(dir)={conn['conn_edge_f1']:.3f}  "
+                      f"P={conn['conn_edge_precision']:.3f}  R={conn['conn_edge_recall']:.3f}  "
                       f"conn_edge_F1(undir)={conn['conn_edge_f1_undir']:.3f}  "
                       f"syn_attr_acc={conn['synapse_attr_acc']:.3f}  "
                       f"({conn['n_true_edges']} dir / {conn['n_true_edges_undir']} undir true edges)")
@@ -485,6 +489,7 @@ def main() -> int:
                 "merge_p": mm["merge_precision"],
                 "merge_r": mm["merge_recall"],
                 "over": mm["over_merge_rate"],
+                "under": mm["under_merge_rate"],
                 "fk": mm["frankenmerge_split_recall"],
                 "cable_med": cable_med,
                 "max_path_med": max_path_med,
@@ -492,9 +497,14 @@ def main() -> int:
                 "is_tree": is_tree,
                 "n_franken": n_fk,
                 "conn_f1": conn["conn_edge_f1"],
+                "conn_p": conn["conn_edge_precision"],
+                "conn_r": conn["conn_edge_recall"],
                 "conn_f1_undir": conn["conn_edge_f1_undir"],
-                "syn_attr_acc": conn["synapse_attr_acc"],
+                "conn_p_undir": conn["conn_edge_precision_undir"],
+                "conn_r_undir": conn["conn_edge_recall_undir"],
                 "n_true_edges": conn["n_true_edges"],
+                "n_pred_edges": conn["n_pred_edges"],
+                "syn_attr_acc": conn["synapse_attr_acc"],
                 "soma_frac": soma_frac,
                 "n_with_soma": n_with_soma,
                 "lg_pre_f1": lg.pre_only.f1  if lg else float("nan"),
@@ -560,11 +570,14 @@ def main() -> int:
                     dual = dual_side_connectome_accuracy(
                         pred_pre2, region_pre2, pred_post, region_post)
                     print(f"  [dual-side] conn_F1(dir)={dual['conn_edge_f1']:.3f}  "
+                          f"P={dual['conn_edge_precision']:.3f}  R={dual['conn_edge_recall']:.3f}  "
                           f"conn_F1(undir)={dual['conn_edge_f1_undir']:.3f}  "
                           f"both-sides={dual['n_synapses_both_sides']} syn  "
                           f"(pre-only={dual['n_synapses_pre_only']}, "
                           f"post-only={dual['n_synapses_post_only']})")
                     row["dual_f1"] = dual["conn_edge_f1"]
+                    row["dual_p"]  = dual["conn_edge_precision"]
+                    row["dual_r"]  = dual["conn_edge_recall"]
                     row["dual_f1_undir"] = dual["conn_edge_f1_undir"]
                     row["dual_both"] = dual["n_synapses_both_sides"]
 
@@ -686,15 +699,17 @@ def main() -> int:
         print(f"\n  Calibration: T={T:.4f}  ECE(train)={ece_train:.4f}")
 
     print(f"\n  In-column ({len(good_in)} locations):")
-    print(f"  {'Location':<38} {'ARI':>6} {'merge_P':>8} {'merge_R':>8} "
-          f"{'conn_F1':>8} {'syn_acc':>8} {'cable_med':>10} {'tort':>6}")
-    print(f"  {'-'*38} {'-'*6} {'-'*8} {'-'*8} {'-'*8} {'-'*8} {'-'*10} {'-'*6}")
+    print(f"  {'Location':<38} {'ARI':>6} {'merge_P':>8} {'merge_R':>8} {'under':>6} "
+          f"{'conn_F1':>8} {'conn_P':>7} {'conn_R':>7} {'cable_med':>10} {'tort':>6}")
+    print(f"  {'-'*38} {'-'*6} {'-'*8} {'-'*8} {'-'*6} {'-'*8} {'-'*7} {'-'*7} {'-'*10} {'-'*6}")
     for r in good_in:
         cf1 = f"{r['conn_f1']:.3f}" if r['conn_f1'] == r['conn_f1'] else "n/a"
-        sa  = f"{r['syn_attr_acc']:.3f}" if r['syn_attr_acc'] == r['syn_attr_acc'] else "n/a"
+        cp  = f"{r.get('conn_p', float('nan')):.3f}" if r.get('conn_p', float('nan')) == r.get('conn_p', float('nan')) else "n/a"
+        cr  = f"{r.get('conn_r', float('nan')):.3f}" if r.get('conn_r', float('nan')) == r.get('conn_r', float('nan')) else "n/a"
+        und = f"{r.get('under', float('nan')):.3f}" if r.get('under', float('nan')) == r.get('under', float('nan')) else "n/a"
         tort = f"{r['tort_med']:.2f}" if r['tort_med'] == r['tort_med'] else "n/a"
         print(f"  {r['name']:<38} {r['ari']:>6.3f} {r['merge_p']:>8.3f} "
-              f"{r['merge_r']:>8.3f} {cf1:>8} {sa:>8} "
+              f"{r['merge_r']:>8.3f} {und:>6} {cf1:>8} {cp:>7} {cr:>7} "
               f"{r['cable_med']:>9.0f}µ {tort:>6}")
 
     if len(good_in) >= 2:
@@ -745,10 +760,13 @@ def main() -> int:
         dual_rows = [r for r in good_in if "dual_f1" in r]
         if dual_rows:
             print(f"\n  Dual-side connectome (both partitions, NO GT root ids):")
-            print(f"  {'Location':<38} {'dir_F1':>7} {'undir_F1':>9} {'both_syn':>9}")
-            print(f"  {'-'*38} {'-'*7} {'-'*9} {'-'*9}")
+            print(f"  {'Location':<38} {'dir_F1':>7} {'dir_P':>6} {'dir_R':>6} {'undir_F1':>9} {'both_syn':>9}")
+            print(f"  {'-'*38} {'-'*7} {'-'*6} {'-'*6} {'-'*9} {'-'*9}")
             for r in dual_rows:
+                dp = f"{r.get('dual_p', float('nan')):.3f}"
+                dr = f"{r.get('dual_r', float('nan')):.3f}"
                 print(f"  {r['name']:<38} {r['dual_f1']:>7.3f} "
+                      f"{dp:>6} {dr:>6} "
                       f"{r['dual_f1_undir']:>9.3f} {r['dual_both']:>9d}")
         and_rows = [r for r in good_in if "lg_and_f1" in r]
         if and_rows:
