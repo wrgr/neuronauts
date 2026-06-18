@@ -142,6 +142,25 @@ def main() -> int:
                         "to match the pre-side node count before training. "
                         "Fixes the 10:1 post-to-pre imbalance that drives "
                         "over-conservative post-side partitioning.")
+    p.add_argument("--post-pred", default="fragment",
+                   choices=["model", "fragment"],
+                   help="How to produce the post-side partition (--dual-side). "
+                        "'fragment': use the raw v117 dendritic fragment id as the "
+                        "cluster label — each fragment is its own cluster, no model "
+                        "call needed.  Gives a meaningful AND metric at the fragment "
+                        "level and avoids the scale-mismatch issue. "
+                        "'model': run the GNN (requires a well-trained post-side model). "
+                        "Default: fragment.")
+    p.add_argument("--dual-post-model", type=str, default=None,
+                   help="Path to a checkpoint trained exclusively on post-side graphs. "
+                        "When provided with --post-pred=model, this model is used for "
+                        "post-side partitioning instead of the shared model. "
+                        "Train with: --dual-side --post-only-train --save-checkpoint PATH.")
+    p.add_argument("--post-only-train", action="store_true",
+                   help="Train a post-side-only model (3 post graphs, no pre) and save "
+                        "to --save-checkpoint.  Use with --dual-side.  The resulting "
+                        "checkpoint can then be passed as --dual-post-model in a "
+                        "subsequent evaluation run.")
     args = p.parse_args()
 
     if args.quick:
@@ -150,6 +169,7 @@ def main() -> int:
         print("[quick mode] embed=5 epochs, partition=30 epochs")
 
     post_cc_bias = args.post_cc_bias if args.post_cc_bias is not None else args.cc_bias
+    use_frag_post = (args.post_pred == "fragment")
 
     from neuronauts.line_graph import LineGraphSuite, evaluate_suite
     from treestitch.assemble import assemble_partition_shapes, detect_soma, neuron_shape_metrics
@@ -314,6 +334,50 @@ def main() -> int:
                                    "cc_bias": args.cc_bias})
             print(f"  Checkpoint saved → {args.save_checkpoint}")
 
+        # ── Optional: train a dedicated post-side model ────────────────────
+        if args.post_only_train and args.dual_side and \
+                not (args.dual_post_model and Path(args.dual_post_model).exists()):
+            print(f"\nTraining dedicated post-side model ({args.partition_epochs} epochs) …")
+            post_graphs = []
+            for i, bbox in enumerate(train_bboxes):
+                label = chr(65 + i)
+                print(f"  [post-only train {label}] Building world …")
+                frags_p, region_p, _ = build_region_world(
+                    bbox, version=args.version,
+                    max_synapses=args.max_synapses,
+                    min_syn_per_fragment=args.min_syn_per_fragment,
+                    seed=args.seed, verbose=False,
+                    side="post", l2_skeletons=False)
+                fe_p = encode_fragments(encoder, frags_p, device=args.device)
+                g_p = build_observation_graph(region_p, fe_p, side="post",
+                                              k_spatial=args.k_spatial)
+                post_graphs.append(g_p)
+                print(f"    {g_p.n_nodes} nodes, {g_p.n_edges} edges")
+            post_model, _ = train_edge_partition_multi_region(
+                post_graphs,
+                n_epochs=args.partition_epochs, lr=1e-3,
+                franken_hard_frac=args.franken_hard_frac,
+                device=args.device, seed=args.seed, log_every=25)
+            _pef = post_graphs[0]
+            _pefd = int(_pef.edge_feat.shape[1]) if _pef.edge_feat.ndim == 2 else 0
+            _pall_et = np.concatenate([g.edge_type for g in post_graphs])
+            _pn_et = int(max(2, int(_pall_et.max()) + 1)) if len(_pall_et) > 0 else 2
+            post_gnn_kwargs = dict(
+                input_dim=post_graphs[0].node_feat.shape[1],
+                d_model=64, n_edge_types=_pn_et, output_dim=32,
+                dropout=0.1, edge_feat_dim=_pefd,
+            )
+            post_ckpt = args.dual_post_model or "/tmp/neuronauts_post_model.pt"
+            save_checkpoint(post_ckpt, encoder, post_model,
+                            encoder_kwargs=enc_kwargs, gnn_kwargs=post_gnn_kwargs,
+                            extra={"side": "post", "cc_bias": args.cc_bias})
+            print(f"  Post-side model saved → {post_ckpt}")
+        elif args.dual_post_model and Path(args.dual_post_model).exists():
+            print(f"\nLoading post-side model from {args.dual_post_model} …")
+            _, post_model = load_checkpoint(args.dual_post_model)
+        else:
+            post_model = None
+
         # ── Calibration (on first training graph) ─────────────────────────
         T = 1.0
         ece_train = float("nan")
@@ -446,27 +510,43 @@ def main() -> int:
                             seed=args.seed, verbose=True,
                             l2_skeletons_pre=True,
                             l2_skeletons_post=args.dual_post_l2)
-                    # Partition both sides with the same model.
+                    # Partition pre side.
                     fe_pre2 = encode_fragments(encoder, frags_pre2, device=args.device)
                     g_pre2 = build_observation_graph(region_pre2, fe_pre2,
                                                      side="pre", k_spatial=args.k_spatial)
                     pred_pre2 = partition_observations_cc(
                         model, g_pre2, bias=args.cc_bias, device=args.device)
+                    # Partition post side.
                     fe_post = encode_fragments(encoder, frags_post, device=args.device)
                     g_post = build_observation_graph(region_post, fe_post,
                                                      side="post", k_spatial=args.k_spatial)
-                    if post_cc_bias != args.cc_bias:
-                        print(f"  [post-side] using cc_bias={post_cc_bias} "
-                              f"(pre uses {args.cc_bias})")
-                    if g_post.n_nodes > args.post_tile_size:
-                        print(f"  [post-side] tiled partition "
-                              f"({g_post.n_nodes} nodes → tiles of {args.post_tile_size})")
-                        pred_post = partition_observations_tiled(
-                            model, g_post, tile_size=args.post_tile_size,
-                            bias=post_cc_bias, device=args.device)
+                    if use_frag_post:
+                        # Fragment-level partition: each v117 dendritic fragment is
+                        # its own cluster.  No model call; avoids the scale-mismatch
+                        # problem until a post-specific model is available.
+                        pred_post = g_post.fragment_id.copy()
+                        print(f"  [post-side] fragment partition "
+                              f"({len(np.unique(pred_post))} fragments as clusters)")
+                    elif post_model is not None:
+                        if g_post.n_nodes > args.post_tile_size:
+                            print(f"  [post-side] tiled partition via post model "
+                                  f"({g_post.n_nodes} nodes → tiles of {args.post_tile_size})")
+                            pred_post = partition_observations_tiled(
+                                post_model, g_post, tile_size=args.post_tile_size,
+                                bias=post_cc_bias, device=args.device)
+                        else:
+                            pred_post = partition_observations_cc(
+                                post_model, g_post, bias=post_cc_bias, device=args.device)
                     else:
-                        pred_post = partition_observations_cc(
-                            model, g_post, bias=post_cc_bias, device=args.device)
+                        if g_post.n_nodes > args.post_tile_size:
+                            print(f"  [post-side] tiled partition "
+                                  f"({g_post.n_nodes} nodes → tiles of {args.post_tile_size})")
+                            pred_post = partition_observations_tiled(
+                                model, g_post, tile_size=args.post_tile_size,
+                                bias=post_cc_bias, device=args.device)
+                        else:
+                            pred_post = partition_observations_cc(
+                                model, g_post, bias=post_cc_bias, device=args.device)
                     dual = dual_side_connectome_accuracy(
                         pred_pre2, region_pre2, pred_post, region_post)
                     print(f"  [dual-side] conn_F1(dir)={dual['conn_edge_f1']:.3f}  "
