@@ -149,6 +149,11 @@ def main() -> int:
                    help="Fewer epochs (debug mode): embed=5, partition=30")
     p.add_argument("--no-calibration", action="store_true",
                    help="Skip temperature scaling calibration")
+    p.add_argument("--no-eval-l2", action="store_true",
+                   help="Skip L2 skeleton fetching during evaluation (use synapse-cloud "
+                        "fragments instead). Required when --eval-max-synapses is large: "
+                        "at 50k synapses, 1500+ fragments × L2 fetch = hours. "
+                        "Morphology metrics are omitted; partition/connectome metrics are unaffected.")
     p.add_argument("--dual-side", action="store_true",
                    help="Also partition the POST side at each in-column bbox and "
                         "reconstruct the connectome from both partitions (no GT root "
@@ -455,7 +460,8 @@ def main() -> int:
                 bbox, version=args.version, side=args.side,
                 max_synapses=eval_max_syn,
                 min_syn_per_fragment=args.min_syn_per_fragment,
-                seed=args.seed, verbose=True)
+                seed=args.seed, verbose=True,
+                l2_skeletons=not args.no_eval_l2)
 
             n_fk = sum(1 for v in lmap.values() if len(v) > 1)
             if n_fk == 0:
@@ -476,28 +482,33 @@ def main() -> int:
             syn_pre_med = float(np.median(_pre_counts))
             n_output_cands = int(len(_pre_counts))
 
-            shapes = assemble_partition_shapes(frags, pred, graph.fragment_id,
-                                               stitch_radius_nm=5_000.0)
-            mlist = [neuron_shape_metrics(s) for s in shapes.values()]
-            cable_med    = float(np.median([m['cable_length_um'] for m in mlist])) if mlist else 0.0
-            max_path_med = float(np.median([m['max_path_length_um'] for m in mlist])) if mlist else 0.0
-            tort_med     = float(np.nanmedian([m['tortuosity'] for m in mlist])) if mlist else float("nan")
-            is_tree      = float(np.mean([m['is_tree'] for m in mlist])) if mlist else 0.0
-
-            # Soma detection
-            n_with_soma = 0
-            if nucleus_pos_nm is not None and shapes:
-                for s in shapes.values():
-                    has_s, _ = detect_soma(s, nucleus_pos_nm)
-                    if has_s:
-                        n_with_soma += 1
-            soma_frac = n_with_soma / len(shapes) if shapes else float("nan")
+            if not args.no_eval_l2:
+                shapes = assemble_partition_shapes(frags, pred, graph.fragment_id,
+                                                   stitch_radius_nm=5_000.0)
+                mlist = [neuron_shape_metrics(s) for s in shapes.values()]
+                cable_med    = float(np.median([m['cable_length_um'] for m in mlist])) if mlist else 0.0
+                max_path_med = float(np.median([m['max_path_length_um'] for m in mlist])) if mlist else 0.0
+                tort_med     = float(np.nanmedian([m['tortuosity'] for m in mlist])) if mlist else float("nan")
+                is_tree      = float(np.mean([m['is_tree'] for m in mlist])) if mlist else 0.0
+                # Soma detection
+                n_with_soma = 0
+                if nucleus_pos_nm is not None and shapes:
+                    for s in shapes.values():
+                        has_s, _ = detect_soma(s, nucleus_pos_nm)
+                        if has_s:
+                            n_with_soma += 1
+                soma_frac = n_with_soma / len(shapes) if shapes else float("nan")
+            else:
+                shapes, mlist = {}, []
+                cable_med = max_path_med = is_tree = 0.0
+                tort_med = soma_frac = float("nan")
+                n_with_soma = 0
 
             # ── Per-bbox bundle data (for --save-bundle) ──────────────────
             if args.save_bundle is not None:
                 cluster_to_root = _match_clusters_to_neurons(pred, region.pre_root_id)
                 neurons_bundle: dict = {}
-                for cluster_id, frag in shapes.items():
+                for cluster_id, frag in (shapes.items() if shapes else {}.items()):
                     nm = neuron_shape_metrics(frag)
                     has_s = False
                     if nucleus_pos_nm is not None:
@@ -616,8 +627,8 @@ def main() -> int:
                             max_synapses=eval_max_syn,
                             min_syn_per_fragment=args.min_syn_per_fragment,
                             seed=args.seed, verbose=True,
-                            l2_skeletons_pre=True,
-                            l2_skeletons_post=args.dual_post_l2)
+                            l2_skeletons_pre=not args.no_eval_l2,
+                            l2_skeletons_post=args.dual_post_l2 and not args.no_eval_l2)
                     # Partition pre side.
                     fe_pre2 = encode_fragments(encoder, frags_pre2, device=args.device)
                     g_pre2 = build_observation_graph(region_pre2, fe_pre2,
@@ -738,7 +749,8 @@ def main() -> int:
                 bbox, version=args.version, side=args.side,
                 max_synapses=eval_max_syn,
                 min_syn_per_fragment=args.min_syn_per_fragment,
-                seed=args.seed, verbose=True)
+                seed=args.seed, verbose=True,
+                l2_skeletons=not args.no_eval_l2)
 
             n_fk = sum(1 for v in lmap.values() if len(v) > 1)
             print(f"  Edit signal: {n_fk} frankenmerges "
