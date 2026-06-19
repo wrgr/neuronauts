@@ -107,5 +107,42 @@ class L2SkeletonUsesCacheTest(unittest.TestCase):
         self.assertEqual(len(out["vertices_nm"]), 4)
 
 
+class L2ProvenanceTest(unittest.TestCase):
+    """Provenance is embedded, stripped on load, and auditable."""
+
+    def setUp(self):
+        self._dir = tempfile.mkdtemp()
+        self._prev = os.environ.get("NEURONAUTS_L2_CACHE_DIR")
+        os.environ["NEURONAUTS_L2_CACHE_DIR"] = self._dir
+
+    def tearDown(self):
+        if self._prev is None:
+            os.environ.pop("NEURONAUTS_L2_CACHE_DIR", None)
+        else:
+            os.environ["NEURONAUTS_L2_CACHE_DIR"] = self._prev
+
+    def test_provenance_stripped_on_load_but_auditable(self):
+        key = L._l2_cache_key(42, max_l2_nodes=2000, seed=0)
+        skel = _fake_skel(5)
+        L._l2_cache_save(key, skel, prov={
+            "cache_kind": "l2_skeleton", "root_id": 42, "max_l2_nodes": 2000, "seed": 0})
+        loaded = L._l2_cache_load(key)
+        # Data dict must not contain the provenance blob.
+        self.assertNotIn(L._PROV_KEY, loaded)
+        self.assertEqual(set(loaded.keys()), set(skel.keys()))
+        # But provenance is recoverable from the file for auditing.
+        prov = L.read_cache_provenance(os.path.join(self._dir, key + ".npz"))
+        self.assertEqual(prov["root_id"], 42)
+        self.assertTrue(prov["code_version"])
+        self.assertTrue(prov["fetched_at"])
+
+    def test_manifest_written(self):
+        L._l2_cache_save("k", _fake_skel(3), prov={"cache_kind": "l2_skeleton"})
+        import json
+        man = json.loads((__import__("pathlib").Path(self._dir) / "PROVENANCE.json").read_text())
+        self.assertEqual(man["cache_kind"], "l2_skeleton")
+        self.assertIn("algorithm", man)
+
+
 if __name__ == "__main__":
     unittest.main()

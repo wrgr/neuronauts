@@ -24,7 +24,9 @@ See ``docs/seg_117_to_1412.md`` for the full access map.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -69,6 +71,76 @@ def _synapse_cache_dir() -> Optional[Path]:
     return p
 
 
+# ---------------------------------------------------------------------------
+# Cache provenance
+# ---------------------------------------------------------------------------
+# Caches are git-lfs-tracked and shared across runs/machines, so each entry must
+# be self-describing: which CAVE datastack/table, which materialization version,
+# which algorithm + params, and which code produced it.  We embed a JSON
+# provenance blob INTO each .npz under a reserved key (stripped on load so
+# callers never see it) and also write a human-readable manifest per cache dir.
+
+_PROV_KEY = "__provenance__"
+_CODE_VERSION: Optional[str] = None
+
+
+def _code_version() -> str:
+    """Short git commit of the code that produced a cache entry (or 'unknown')."""
+    global _CODE_VERSION
+    if _CODE_VERSION is None:
+        try:
+            _CODE_VERSION = subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=os.path.dirname(os.path.abspath(__file__)),
+                stderr=subprocess.DEVNULL, timeout=5).decode().strip() or "unknown"
+        except Exception:
+            _CODE_VERSION = "unknown"
+    return _CODE_VERSION
+
+
+def _embed_prov(result: dict, prov: dict) -> dict:
+    """Return a copy of ``result`` with a JSON provenance blob attached."""
+    out = dict(result)
+    full = {"code_version": _code_version(),
+            "fetched_at": datetime.now(timezone.utc).isoformat(), **prov}
+    out[_PROV_KEY] = np.array(json.dumps(full, sort_keys=True))
+    return out
+
+
+def _strip_prov(loaded: dict) -> dict:
+    """Drop the provenance blob so callers get only the data arrays."""
+    return {k: v for k, v in loaded.items() if k != _PROV_KEY}
+
+
+def read_cache_provenance(npz_path) -> Optional[dict]:
+    """Read the provenance dict embedded in a cache .npz, or None if absent.
+
+    Lets you audit a git-lfs-tracked cache file: which CAVE version, table,
+    algorithm, and code commit produced it.
+    """
+    try:
+        with np.load(npz_path, allow_pickle=False) as z:
+            if _PROV_KEY in z.files:
+                return json.loads(str(z[_PROV_KEY]))
+    except Exception:
+        return None
+    return None
+
+
+def _write_cache_manifest(cdir: Path, manifest: dict) -> None:
+    """Write a human-readable PROVENANCE.json into a cache dir (idempotent)."""
+    f = cdir / "PROVENANCE.json"
+    if f.exists():
+        return
+    try:
+        manifest = {"code_version": _code_version(),
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    **manifest}
+        f.write_text(json.dumps(manifest, indent=2, sort_keys=True))
+    except Exception:
+        pass
+
+
 def _synapse_cache_key(bbox_nm, *, version, side, limit) -> str:
     (x0, y0, z0), (x1, y1, z1) = bbox_nm
     # Round to 1 nm to avoid float-repr drift across callers.
@@ -87,21 +159,33 @@ def _synapse_cache_load(key: str) -> Optional[dict]:
         return None
     try:
         with np.load(f, allow_pickle=False) as z:
-            return {k: z[k] for k in z.files}
+            return _strip_prov({k: z[k] for k in z.files})
     except Exception:
         return None
 
 
-def _synapse_cache_save(key: str, result: dict) -> None:
+def _synapse_cache_save(key: str, result: dict, *, prov: Optional[dict] = None) -> None:
     cdir = _synapse_cache_dir()
     if cdir is None:
         return
+    _write_cache_manifest(cdir, {
+        "cache_kind": "synapse_fetch",
+        "datastack": DATASTACK,
+        "synapse_table": SYNAPSE_TABLE,
+        "synapse_voxel_nm": list(SYNAPSE_VOXEL_NM),
+        "v117_timestamp": V117_TIMESTAMP,
+        "sort": "stable by CAVE synapse id; lexsort (z,y,x) fallback when ids absent",
+        "key_fields": ["datastack", "synapse_table", "version", "side", "limit", "bbox_nm"],
+        "schema": "<sha1>.npz arrays: positions_nm, supervoxel_ids, root_ids, "
+                  "other_*; per-file provenance under '__provenance__'.",
+    })
     f = cdir / f"{key}.npz"
     try:
+        payload = _embed_prov(result, prov) if prov is not None else result
         # Atomic-ish: write to a tmp .npz then rename. (np.savez appends ".npz"
         # if the path lacks it, so the tmp name must already end in ".npz".)
         tmp = cdir / f"{key}.tmp{os.getpid()}.npz"
-        np.savez(tmp, **result)
+        np.savez(tmp, **payload)
         os.replace(tmp, f)
     except Exception:
         pass
@@ -148,19 +232,32 @@ def _l2_cache_load(key: str) -> Optional[dict]:
         return None
     try:
         with np.load(f, allow_pickle=False) as z:
-            return {k: z[k] for k in z.files}
+            return _strip_prov({k: z[k] for k in z.files})
     except Exception:
         return None
 
 
-def _l2_cache_save(key: str, result: dict) -> None:
+def _l2_cache_save(key: str, result: dict, *, prov: Optional[dict] = None) -> None:
     cdir = _l2_cache_dir()
     if cdir is None:
         return
+    _write_cache_manifest(cdir, {
+        "cache_kind": "l2_skeleton",
+        "datastack": DATASTACK,
+        "l2_table": L2_TABLE,
+        "algorithm": "rep_coord_nm per L2 node → kNN(k=6) proximity graph → "
+                     "Kruskal MST; radius proxy=200nm constant",
+        "note": "L2 skeletons reflect the live root segmentation at fetch time; "
+                "keyed on the immutable v117 fragment root_id.",
+        "key_fields": ["datastack", "l2_table", "root_id", "max_l2_nodes", "seed"],
+        "schema": "<sha1>.npz arrays: vertices_nm, edges, radii_nm, l2_ids; "
+                  "per-file provenance under '__provenance__'.",
+    })
     f = cdir / f"{key}.npz"
     try:
+        payload = _embed_prov(result, prov) if prov is not None else result
         tmp = cdir / f"{key}.tmp{os.getpid()}.npz"
-        np.savez(tmp, **result)
+        np.savez(tmp, **payload)
         os.replace(tmp, f)
     except Exception:
         pass
@@ -589,7 +686,15 @@ def fetch_region_synapses(
         order = np.lexsort((pos[:, 2], pos[:, 1], pos[:, 0]))
     result = {k: v[order] for k, v in result.items()}
 
-    _synapse_cache_save(_ck, result)
+    _synapse_cache_save(_ck, result, prov={
+        "cache_kind": "synapse_fetch",
+        "datastack": DATASTACK,
+        "synapse_table": SYNAPSE_TABLE,
+        "materialization_version": int(version),
+        "side": side,
+        "limit": int(limit),
+        "bbox_nm": [list(bbox_nm[0]), list(bbox_nm[1])],
+    })
     return result
 
 
@@ -713,7 +818,15 @@ def l2_skeleton(
         "radii_nm": np.full(n, 200.0, dtype=np.float32),
         "l2_ids": ids_out,
     }
-    _l2_cache_save(_ck, result)
+    _l2_cache_save(_ck, result, prov={
+        "cache_kind": "l2_skeleton",
+        "datastack": DATASTACK,
+        "l2_table": L2_TABLE,
+        "root_id": int(root_id),
+        "max_l2_nodes": int(max_l2_nodes),
+        "seed": int(seed),
+        "n_vertices": int(n),
+    })
     return result
 
 
@@ -733,4 +846,5 @@ __all__ = [
     "fetch_synapses",
     "fetch_region_synapses",
     "l2_skeleton",
+    "read_cache_provenance",
 ]
