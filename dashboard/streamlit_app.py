@@ -110,17 +110,18 @@ with tab_summary:
         # Which columns to show in the main table
         MAIN_COLS = [
             "ari", "merge_p", "merge_r", "over", "under", "fk",
+            "n_merges_pred", "n_splits_pred", "n_true_merges", "n_output_cands",
             "syn_pre_min", "syn_pre_max", "syn_pre_med",
             "conn_f1", "conn_f1_undir",
             "dual_f1", "dual_f1_undir",
             "lg_and_f1", "lg_post_f1",
-            "cable_med", "n_neurons",
+            "cable_med",
         ]
         show_cols = [c for c in MAIN_COLS if c in df.columns]
-        fmt = {c: "{:.3f}" for c in show_cols
-               if c not in ("syn_pre_min", "syn_pre_max", "syn_pre_med", "n_neurons")}
-        fmt.update({c: "{:.0f}" for c in ("syn_pre_min", "syn_pre_max", "syn_pre_med",
-                                           "cable_med") if c in show_cols})
+        int_cols = {"syn_pre_min", "syn_pre_max", "syn_pre_med", "cable_med",
+                    "n_merges_pred", "n_splits_pred", "n_true_merges", "n_output_cands"}
+        fmt = {c: "{:.3f}" for c in show_cols if c not in int_cols}
+        fmt.update({c: "{:.0f}" for c in show_cols if c in int_cols})
 
         st.dataframe(
             df[show_cols].style.format(fmt, na_rep="—"),
@@ -130,7 +131,8 @@ with tab_summary:
         # Sparkline-style bar chart for key metrics
         plot_metric = st.selectbox(
             "Plot metric",
-            [c for c in ("ari", "conn_f1", "dual_f1", "lg_and_f1", "merge_p", "over", "under")
+            [c for c in ("ari", "conn_f1", "dual_f1", "lg_and_f1", "merge_p", "over", "under",
+                         "n_merges_pred", "n_splits_pred", "n_output_cands")
              if c in df.columns],
             index=0,
         )
@@ -140,6 +142,29 @@ with tab_summary:
             color=plot_metric, color_continuous_scale="RdYlGn",
         )
         st.plotly_chart(fig_bar, use_container_width=True)
+
+    # Scale metrics
+    scale_cols = [c for c in ("n_merges_pred", "n_splits_pred", "n_true_merges",
+                               "n_output_cands") if in_col and c in df.columns]
+    if scale_cols:
+        st.subheader("Scale metrics — merge/split decisions per region")
+        st.caption(
+            "n_merges: edges the model chose to merge  ·  "
+            "n_splits: edges the model chose to split  ·  "
+            "n_true_merges: ground-truth same-neuron edges  ·  "
+            "out_cands: distinct predicted clusters"
+        )
+        scale_df = df[scale_cols].copy()
+        scale_df.columns = [c.replace("n_", "").replace("_pred", "").replace("_cands", "_candidates")
+                            for c in scale_cols]
+        st.dataframe(scale_df.style.format("{:.0f}", na_rep="—"), use_container_width=True)
+
+        fig_scale = px.bar(
+            df[scale_cols].reset_index().melt(id_vars="name", var_name="metric", value_name="count"),
+            x="name", y="count", color="metric", barmode="group",
+            title="Merge/split decisions at scale",
+        )
+        st.plotly_chart(fig_scale, use_container_width=True)
 
     # Synapse-per-fragment distribution summary
     if in_col and "syn_pre_min" in df.columns:
