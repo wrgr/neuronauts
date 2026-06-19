@@ -106,6 +106,66 @@ def _synapse_cache_save(key: str, result: dict) -> None:
     except Exception:
         pass
 
+
+# ---------------------------------------------------------------------------
+# L2-skeleton cache
+# ---------------------------------------------------------------------------
+# ``l2_skeleton`` makes 2+ network roundtrips per fragment (root_leaves + L2
+# attribute batches) with a throttle sleep, so building a region with 1500+
+# fragments takes hours.  The result is a pure function of the v117 root_id
+# (a globally unique, immutable CAVE id) plus max_l2_nodes/seed, so it caches
+# cleanly to disk: pay the fetch once, reuse forever across train/eval runs.
+# Set the dir via NEURONAUTS_L2_CACHE_DIR (default /tmp/neuronauts_l2_cache);
+# set "" / "0" / "off" to disable.  Only successful skeletons are cached, so a
+# transient network failure retries on the next call instead of poisoning the
+# cache with a permanent None.
+
+def _l2_cache_dir() -> Optional[Path]:
+    val = os.environ.get("NEURONAUTS_L2_CACHE_DIR", "_DEFAULT_")
+    if val in ("", "0", "off", "OFF", "none", "None"):
+        return None
+    if val == "_DEFAULT_":
+        val = "/tmp/neuronauts_l2_cache"
+    p = Path(val)
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    return p
+
+
+def _l2_cache_key(root_id: int, *, max_l2_nodes: int, seed: int) -> str:
+    raw = f"{DATASTACK}|{L2_TABLE}|{int(root_id)}|{int(max_l2_nodes)}|{int(seed)}"
+    return hashlib.sha1(raw.encode()).hexdigest()[:20]
+
+
+def _l2_cache_load(key: str) -> Optional[dict]:
+    cdir = _l2_cache_dir()
+    if cdir is None:
+        return None
+    f = cdir / f"{key}.npz"
+    if not f.exists():
+        return None
+    try:
+        with np.load(f, allow_pickle=False) as z:
+            return {k: z[k] for k in z.files}
+    except Exception:
+        return None
+
+
+def _l2_cache_save(key: str, result: dict) -> None:
+    cdir = _l2_cache_dir()
+    if cdir is None:
+        return
+    f = cdir / f"{key}.npz"
+    try:
+        tmp = cdir / f"{key}.tmp{os.getpid()}.npz"
+        np.savez(tmp, **result)
+        os.replace(tmp, f)
+    except Exception:
+        pass
+
+
 # synapses_pni_2 positions are stored in 4×4×40 nm voxels.
 SYNAPSE_VOXEL_NM = (4.0, 4.0, 40.0)
 
@@ -564,6 +624,13 @@ def l2_skeleton(
         l2_ids      : [V] uint64    — L2 node ids aligned with vertices
     or ``None`` on any failure (network error, too few nodes).
     """
+    # Serve from the on-disk cache when available (skeletons are immutable for
+    # a given v117 root_id, so this is the same data every time).
+    _ck = _l2_cache_key(root_id, max_l2_nodes=max_l2_nodes, seed=seed)
+    _cached = _l2_cache_load(_ck)
+    if _cached is not None:
+        return _cached
+
     # 1. Get L2 nodes for this root
     l2ids = root_leaves(root_id, stop_layer=2, token=token)
     if l2ids is None or len(l2ids) < 2:
@@ -640,12 +707,14 @@ def l2_skeleton(
         return None
 
     edges = np.array(mst, dtype=np.int64)
-    return {
+    result = {
         "vertices_nm": verts,
         "edges": edges,
         "radii_nm": np.full(n, 200.0, dtype=np.float32),
         "l2_ids": ids_out,
     }
+    _l2_cache_save(_ck, result)
+    return result
 
 
 __all__ = [
