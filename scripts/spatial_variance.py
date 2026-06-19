@@ -476,7 +476,7 @@ def main() -> int:
             mm = merge_metrics(graph, pred)
 
             # Synapse count distribution across predicted fragments (pre-side).
-            _pre_counts = np.bincount(pred)[np.bincount(pred) > 0]
+            _, _pre_counts = np.unique(pred, return_counts=True)
             syn_pre_min = int(_pre_counts.min())
             syn_pre_max = int(_pre_counts.max())
             syn_pre_med = float(np.median(_pre_counts))
@@ -667,7 +667,7 @@ def main() -> int:
                             pred_post = partition_observations_cc(
                                 model, g_post, bias=post_cc_bias, device=args.device)
                     # Synapse count per predicted fragment (post-side).
-                    _post_counts = np.bincount(pred_post)[np.bincount(pred_post) > 0]
+                    _, _post_counts = np.unique(pred_post, return_counts=True)
                     syn_post_min = int(_post_counts.min())
                     syn_post_max = int(_post_counts.max())
                     syn_post_med = float(np.median(_post_counts))
