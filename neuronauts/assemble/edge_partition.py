@@ -836,6 +836,9 @@ def edge_merge_metrics(
         "over_merge_rate": fp / n,
         "under_merge_rate": fn / n,
         "n_edges_eval": n,
+        "n_merges_pred": tp + fp,          # edges the model chose to merge
+        "n_splits_pred": n - (tp + fp),    # edges the model chose to split
+        "n_true_merges": tp + fn,          # ground-truth same-neuron edges
         "frankenmerge_rate": frankenmerge_rate,
         "frankenmerge_split_recall": frankenmerge_split_recall,
         "abstain_rate": abstain_rate,

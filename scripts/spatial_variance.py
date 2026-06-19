@@ -474,6 +474,7 @@ def main() -> int:
             syn_pre_min = int(_pre_counts.min())
             syn_pre_max = int(_pre_counts.max())
             syn_pre_med = float(np.median(_pre_counts))
+            n_output_cands = int(len(_pre_counts))
 
             shapes = assemble_partition_shapes(frags, pred, graph.fragment_id,
                                                stitch_radius_nm=5_000.0)
@@ -537,7 +538,10 @@ def main() -> int:
             has_conn = region.post_root_id is not None and int((region.post_root_id > 0).sum()) > 0
 
             print(f"  {_fmt_in(ev, mm)}")
-            print(f"  syn/frag(pre): min={syn_pre_min}  max={syn_pre_max}  med={syn_pre_med:.0f}")
+            print(f"  syn/frag(pre): min={syn_pre_min}  max={syn_pre_max}  med={syn_pre_med:.0f}  "
+                  f"out_cands={n_output_cands}  "
+                  f"n_merges={mm['n_merges_pred']}  n_splits={mm['n_splits_pred']}  "
+                  f"n_true_merges={mm['n_true_merges']}")
             print(f"  cable_med={cable_med:.0f}µm  max_path={max_path_med:.0f}µm  "
                   f"tort={tort_med:.2f}  is_tree={is_tree:.3f}  n_neurons={len(shapes)}  "
                   f"soma={soma_frac:.1%}" if nucleus_pos_nm is not None
@@ -571,6 +575,10 @@ def main() -> int:
                 "syn_pre_min": syn_pre_min,
                 "syn_pre_max": syn_pre_max,
                 "syn_pre_med": syn_pre_med,
+                "n_output_cands": n_output_cands,
+                "n_merges_pred": mm["n_merges_pred"],
+                "n_splits_pred": mm["n_splits_pred"],
+                "n_true_merges": mm["n_true_merges"],
                 "cable_med": cable_med,
                 "max_path_med": max_path_med,
                 "tort_med": tort_med,
@@ -820,6 +828,18 @@ def main() -> int:
         print(f"  {r['name']:<38} {r['ari']:>6.3f} {r['merge_p']:>8.3f} "
               f"{r['merge_r']:>8.3f} {und:>6} {cf1:>8} {cp:>7} {cr:>7} "
               f"{r['cable_med']:>9.0f}µ {tort:>6}")
+
+    # Scale metrics: merge/split decisions and output candidates.
+    scale_rows = [r for r in good_in if "n_merges_pred" in r]
+    if scale_rows:
+        print(f"\n  Scale metrics (edge decisions + candidates):")
+        print(f"  {'Location':<38} {'n_merges':>9} {'n_splits':>9} "
+              f"{'n_true_mg':>10} {'out_cands':>10} {'syn/frag_med':>13}")
+        print(f"  {'-'*38} {'-'*9} {'-'*9} {'-'*10} {'-'*10} {'-'*13}")
+        for r in scale_rows:
+            print(f"  {r['name']:<38} {r['n_merges_pred']:>9d} {r['n_splits_pred']:>9d} "
+                  f"{r['n_true_merges']:>10d} {r['n_output_cands']:>10d} "
+                  f"{r['syn_pre_med']:>13.0f}")
 
     if len(good_in) >= 2:
         aris   = [r["ari"] for r in good_in]
