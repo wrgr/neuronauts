@@ -124,6 +124,10 @@ def main() -> int:
     p.add_argument("--version", type=int, default=1718)
     p.add_argument("--side", default="pre", choices=["pre", "post"])
     p.add_argument("--max-synapses", type=int, default=10_000)
+    p.add_argument("--eval-max-synapses", type=int, default=None,
+                   help="Max synapses for EVALUATION bboxes (default: same as --max-synapses). "
+                        "Set higher (e.g. 200000) for more honest full-population evaluation; "
+                        "results are cached so the cost is paid only once.")
     p.add_argument("--min-syn-per-fragment", type=int, default=5)
     p.add_argument("--k-spatial", type=int, default=8)
     p.add_argument("--embed-epochs", type=int, default=15)
@@ -437,6 +441,9 @@ def main() -> int:
     print("IN-COLUMN EVALUATION  (v1718 GT available)")
     print(f"{'='*68}")
 
+    # Separate fetch cap for evaluation so training stays fast while eval is honest.
+    eval_max_syn = args.eval_max_synapses if args.eval_max_synapses is not None else args.max_synapses
+
     # ── Bundle accumulator (populated only when --save-bundle is set) ────────
     bbox_bundles: dict = {}
 
@@ -446,7 +453,7 @@ def main() -> int:
         try:
             frags, region, lmap = build_region_world(
                 bbox, version=args.version, side=args.side,
-                max_synapses=args.max_synapses,
+                max_synapses=eval_max_syn,
                 min_syn_per_fragment=args.min_syn_per_fragment,
                 seed=args.seed, verbose=True)
 
@@ -461,6 +468,12 @@ def main() -> int:
                                              device=args.device)
             ev = evaluate_partition(pred, graph.labels)
             mm = merge_metrics(graph, pred)
+
+            # Synapse count distribution across predicted fragments (pre-side).
+            _pre_counts = np.bincount(pred)[np.bincount(pred) > 0]
+            syn_pre_min = int(_pre_counts.min())
+            syn_pre_max = int(_pre_counts.max())
+            syn_pre_med = float(np.median(_pre_counts))
 
             shapes = assemble_partition_shapes(frags, pred, graph.fragment_id,
                                                stitch_radius_nm=5_000.0)
@@ -524,6 +537,7 @@ def main() -> int:
             has_conn = region.post_root_id is not None and int((region.post_root_id > 0).sum()) > 0
 
             print(f"  {_fmt_in(ev, mm)}")
+            print(f"  syn/frag(pre): min={syn_pre_min}  max={syn_pre_max}  med={syn_pre_med:.0f}")
             print(f"  cable_med={cable_med:.0f}µm  max_path={max_path_med:.0f}µm  "
                   f"tort={tort_med:.2f}  is_tree={is_tree:.3f}  n_neurons={len(shapes)}  "
                   f"soma={soma_frac:.1%}" if nucleus_pos_nm is not None
@@ -554,6 +568,9 @@ def main() -> int:
                 "over": mm["over_merge_rate"],
                 "under": mm["under_merge_rate"],
                 "fk": mm["frankenmerge_split_recall"],
+                "syn_pre_min": syn_pre_min,
+                "syn_pre_max": syn_pre_max,
+                "syn_pre_med": syn_pre_med,
                 "cable_med": cable_med,
                 "max_path_med": max_path_med,
                 "tort_med": tort_med,
@@ -588,7 +605,7 @@ def main() -> int:
                     (frags_pre2, region_pre2, _), (frags_post, region_post, _) = \
                         build_region_world_dual(
                             bbox, version=args.version,
-                            max_synapses=args.max_synapses,
+                            max_synapses=eval_max_syn,
                             min_syn_per_fragment=args.min_syn_per_fragment,
                             seed=args.seed, verbose=True,
                             l2_skeletons_pre=True,
@@ -630,6 +647,16 @@ def main() -> int:
                         else:
                             pred_post = partition_observations_cc(
                                 model, g_post, bias=post_cc_bias, device=args.device)
+                    # Synapse count per predicted fragment (post-side).
+                    _post_counts = np.bincount(pred_post)[np.bincount(pred_post) > 0]
+                    syn_post_min = int(_post_counts.min())
+                    syn_post_max = int(_post_counts.max())
+                    syn_post_med = float(np.median(_post_counts))
+                    print(f"  syn/frag(post): min={syn_post_min}  max={syn_post_max}  med={syn_post_med:.0f}")
+                    row["syn_post_min"] = syn_post_min
+                    row["syn_post_max"] = syn_post_max
+                    row["syn_post_med"] = syn_post_med
+
                     dual = dual_side_connectome_accuracy(
                         pred_pre2, region_pre2, pred_post, region_post)
                     print(f"  [dual-side] conn_F1(dir)={dual['conn_edge_f1']:.3f}  "
@@ -701,7 +728,7 @@ def main() -> int:
         try:
             frags, region, lmap = build_region_world(
                 bbox, version=args.version, side=args.side,
-                max_synapses=args.max_synapses,
+                max_synapses=eval_max_syn,
                 min_syn_per_fragment=args.min_syn_per_fragment,
                 seed=args.seed, verbose=True)
 
