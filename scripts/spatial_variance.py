@@ -169,6 +169,12 @@ def main() -> int:
                         "side (--dual-side). Post-side graphs are ~10x larger "
                         "than training graphs; tiling applies the GNN at the "
                         "same scale it was trained on. Default=600.")
+    p.add_argument("--pre-tile-size", type=int, default=None,
+                   help="Max nodes per spatial tile when partitioning the pre "
+                        "side at eval. Required when --eval-max-synapses is large "
+                        "(e.g. 50k → 1000–2400 fragment nodes). Same tiling + "
+                        "same-fragment-edge reconciliation as --post-tile-size. "
+                        "Recommended: 600 (matches typical training graph size).")
     p.add_argument("--post-cc-bias", type=float, default=None,
                    help="cc_bias override for the POST side partition (--dual-side). "
                         "Defaults to --cc-bias. Try 0.0, 1.0, 2.0 to loosen "
@@ -249,8 +255,6 @@ def main() -> int:
          ((1_150_000, 870_000, z0), (1_350_000, 940_000, z1))),
         ("T4 y-shift north (y=1000-1070k)",
          ((1_150_000, 1_000_000, z0), (1_350_000, 1_070_000, z1))),
-        ("T5 x=1750-1950k (east of D)",
-         ((1_750_000, y0, z0), (1_950_000, y1, z1))),
     ]
     OUT_OF_COLUMN = [
         ("OOC1 x=200-400k (reference)",
@@ -470,8 +474,16 @@ def main() -> int:
             frags_enc = encode_fragments(encoder, frags, device=args.device)
             graph = build_observation_graph(region, frags_enc, side=args.side,
                                             k_spatial=args.k_spatial)
-            pred = partition_observations_cc(model, graph, bias=args.cc_bias,
-                                             device=args.device)
+            pre_tile = args.pre_tile_size
+            if pre_tile and graph.n_nodes > pre_tile:
+                print(f"  tiled pre-side partition "
+                      f"({graph.n_nodes} nodes → tiles of {pre_tile})")
+                pred = partition_observations_tiled(
+                    model, graph, tile_size=pre_tile,
+                    bias=args.cc_bias, device=args.device)
+            else:
+                pred = partition_observations_cc(model, graph, bias=args.cc_bias,
+                                                 device=args.device)
             ev = evaluate_partition(pred, graph.labels)
             mm = merge_metrics(graph, pred)
 
@@ -633,8 +645,13 @@ def main() -> int:
                     fe_pre2 = encode_fragments(encoder, frags_pre2, device=args.device)
                     g_pre2 = build_observation_graph(region_pre2, fe_pre2,
                                                      side="pre", k_spatial=args.k_spatial)
-                    pred_pre2 = partition_observations_cc(
-                        model, g_pre2, bias=args.cc_bias, device=args.device)
+                    if pre_tile and g_pre2.n_nodes > pre_tile:
+                        pred_pre2 = partition_observations_tiled(
+                            model, g_pre2, tile_size=pre_tile,
+                            bias=args.cc_bias, device=args.device)
+                    else:
+                        pred_pre2 = partition_observations_cc(
+                            model, g_pre2, bias=args.cc_bias, device=args.device)
                     # Partition post side.
                     fe_post = encode_fragments(encoder, frags_post, device=args.device)
                     g_post = build_observation_graph(region_post, fe_post,
