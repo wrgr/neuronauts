@@ -2,8 +2,11 @@
 cache, committing+pushing after each region so the (expensive) fetch is durably
 persisted the moment it completes — surviving container reclaim.
 
-Usage:
+Usage (serial, commit-per-region):
     PYTHONPATH=. python scripts/warm_cache.py [REGION ...]
+
+Usage (parallel — no git, caller commits):
+    PYTHONPATH=. python scripts/warm_cache.py --no-git [REGION ...]
 
 With no args, warms all eval (T1-T4) + train (A-E) regions. Each region build
 calls l2_skeleton per fragment; results land in cache/l2_skeleton/ (with
@@ -48,7 +51,6 @@ def _git(*args: str) -> int:
 
 def _commit_push(region: str, nfrag: int, dt: float) -> None:
     _git("add", "cache/l2_skeleton", "cache/synapse")
-    # Nothing staged → skip (region added no new entries).
     if subprocess.call(["git", "diff", "--cached", "--quiet"], cwd=str(REPO)) == 0:
         print(f"  [{region}] no new cache entries to commit", flush=True)
         return
@@ -63,9 +65,13 @@ def _commit_push(region: str, nfrag: int, dt: float) -> None:
 
 
 def main() -> int:
-    only = sys.argv[1:] if len(sys.argv) > 1 else list(REGIONS)
+    args = sys.argv[1:]
+    no_git = "--no-git" in args
+    args = [a for a in args if a != "--no-git"]
+    only = args if args else list(REGIONS)
+
     cdir = L._l2_cache_dir()
-    print(f"Warming regions: {', '.join(only)}", flush=True)
+    print(f"Warming regions: {', '.join(only)} (no-git={no_git})", flush=True)
     print(f"L2 cache → {cdir}", flush=True)
     print(f"Synapse cache → {L._synapse_cache_dir()}", flush=True)
     for name in only:
@@ -75,7 +81,7 @@ def main() -> int:
             frags, region, _ = build_region_world(
                 bbox, version=1718, side="pre", max_synapses=MAX_SYN,
                 min_syn_per_fragment=5, seed=0, verbose=False, l2_skeletons=True)
-        except Exception as exc:  # network blip — record + move on
+        except Exception as exc:
             print(f"[{name}] ERROR: {exc}", flush=True)
             continue
         dt = time.time() - t0
@@ -83,7 +89,8 @@ def main() -> int:
         nent = len(list(cdir.glob("*.npz"))) if cdir else 0
         print(f"[{name}] {n} fragments in {dt/60:.1f} min "
               f"({n/dt:.2f} frag/s) — cache now {nent} entries", flush=True)
-        _commit_push(name, n, dt)
+        if not no_git:
+            _commit_push(name, n, dt)
     print("DONE", flush=True)
     return 0
 
