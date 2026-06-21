@@ -42,7 +42,7 @@ REGIONS = {
     "E": ((750_000, 1_000_000, z0), (950_000, 1_070_000, z1)),
 }
 BRANCH = "claude/tree-dna-phase-1-G1DNn"
-MAX_SYN = 50_000
+MAX_SYN = 1_000_000
 
 
 def _git(*args: str) -> int:
