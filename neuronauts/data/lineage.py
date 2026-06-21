@@ -698,6 +698,94 @@ def fetch_region_synapses(
     return result
 
 
+def fetch_region_synapses_tiled(
+    bbox_nm: tuple,
+    *,
+    version: int = 1718,
+    side: str = "pre",
+    tile_x_nm: float = 40_000,
+    per_tile_limit: int = 200_000,
+    token: str = DEFAULT_TOKEN,
+) -> Optional[dict]:
+    """Fetch all synapses in a bbox by splitting into x-axis tiles.
+
+    CAVE's spatial query API caps at ~250k rows per request. Tiling bypasses
+    this by fetching one 40 µm x-tile at a time (~100k synapses/tile), each
+    safely under the cap. Every tile is individually cached via
+    ``fetch_region_synapses``; the combined result is not (a second call with
+    the same arguments yields the same data via tile-level cache hits).
+
+    Parameters
+    ----------
+    tile_x_nm:
+        Width of each x-tile in nm (default 40,000 = 40 µm; ~5 tiles per
+        200 µm training region).
+    per_tile_limit:
+        Max synapses per tile request (default 200,000 — 2× headroom over the
+        ~100k synapses expected per 40 µm tile at MICrONS density).
+
+    Returns
+    -------
+    Same dict format as ``fetch_region_synapses``, or ``None`` if all tiles fail.
+    """
+    (x0, y0, z0), (x1, y1, z1) = bbox_nm
+
+    # Build half-open x-tile boundaries [cur_x, next_x)
+    tile_bboxes = []
+    cur_x = float(x0)
+    while cur_x < float(x1):
+        next_x = min(cur_x + tile_x_nm, float(x1))
+        tile_bboxes.append(((cur_x, y0, z0), (next_x, y1, z1)))
+        cur_x = next_x
+
+    parts: dict[str, list] = {
+        "positions_nm": [], "supervoxel_ids": [], "root_ids": [],
+        "other_root_ids": [], "other_positions_nm": [],
+        "other_supervoxel_ids": [], "synapse_ids": [],
+    }
+    n_tiles_ok = 0
+    for tile_bbox in tile_bboxes:
+        tile = fetch_region_synapses(
+            tile_bbox, version=version, side=side,
+            limit=per_tile_limit, token=token)
+        if tile is None:
+            continue
+        n_tiles_ok += 1
+        for key in parts:
+            parts[key].append(tile[key])
+
+    if n_tiles_ok == 0:
+        return None
+
+    result: dict[str, np.ndarray] = {}
+    for key, arrays in parts.items():
+        if arrays:
+            result[key] = np.concatenate(arrays, axis=0)
+        elif key.endswith("_nm"):
+            result[key] = np.zeros((0, 3), dtype=np.float32)
+        elif key == "synapse_ids":
+            result[key] = np.zeros(0, dtype=np.int64)
+        else:
+            result[key] = np.zeros(0, dtype=np.uint64)
+
+    # Deduplicate synapses that straddle a tile boundary (CAVE inclusive bbox).
+    # Synapse ids are globally unique, so a duplicate can only appear once.
+    syn_ids = result["synapse_ids"]
+    if np.any(syn_ids >= 0):
+        # np.unique returns the FIRST occurrence of each id — preserves tile order
+        _, first_idx = np.unique(syn_ids, return_index=True)
+        result = {k: v[first_idx] for k, v in result.items()}
+        syn_ids = result["synapse_ids"]
+
+    # Final canonical sort (same as single-tile fetch)
+    if np.any(syn_ids >= 0):
+        order = np.argsort(syn_ids, kind="stable")
+    else:
+        pos = result["positions_nm"]
+        order = np.lexsort((pos[:, 2], pos[:, 1], pos[:, 0]))
+    return {k: v[order] for k, v in result.items()}
+
+
 # ---------------------------------------------------------------------------
 # L2 cache: real skeleton from L2-node representative coordinates
 # ---------------------------------------------------------------------------

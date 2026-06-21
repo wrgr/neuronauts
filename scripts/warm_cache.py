@@ -80,7 +80,8 @@ def main() -> int:
         try:
             frags, region, _ = build_region_world(
                 bbox, version=1718, side="pre", max_synapses=MAX_SYN,
-                min_syn_per_fragment=5, seed=0, verbose=False, l2_skeletons=True)
+                min_syn_per_fragment=5, seed=0, verbose=False, l2_skeletons=True,
+                tile_x_nm=40_000, per_tile_limit=200_000)
         except Exception as exc:
             print(f"[{name}] ERROR: {exc}", flush=True)
             continue

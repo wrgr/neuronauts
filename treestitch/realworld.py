@@ -298,6 +298,8 @@ def build_region_world(
     seed: int = 0,
     verbose: bool = True,
     l2_skeletons: bool = True,
+    tile_x_nm: float = 0,
+    per_tile_limit: int = 200_000,
 ) -> tuple:
     """Assemble a real f(v117→v{version}) partition world from a spatial bbox.
 
@@ -342,18 +344,32 @@ def build_region_world(
               f"side={side} …")
 
     syn = None
-    effective_limit = max_synapses
-    while effective_limit >= 1000:
-        syn = L.fetch_region_synapses(bbox_nm, version=version, side=side,
-                                       limit=effective_limit, token=tok)
-        if syn is not None:
-            break
+    if tile_x_nm > 0:
         if verbose:
-            print(f"  limit={effective_limit} failed, retrying at {effective_limit // 2} …")
-        effective_limit //= 2
-    if syn is None or len(syn["positions_nm"]) == 0:
-        raise RuntimeError(
-            "No synapses returned for bbox — check network/token/version/bbox")
+            n_tiles = max(1, int(np.ceil(
+                (bbox_nm[1][0] - bbox_nm[0][0]) / tile_x_nm)))
+            print(f"  tiled fetch: {n_tiles} x-tiles × {tile_x_nm/1000:.0f} µm, "
+                  f"limit={per_tile_limit}/tile …")
+        syn = L.fetch_region_synapses_tiled(
+            bbox_nm, version=version, side=side,
+            tile_x_nm=tile_x_nm, per_tile_limit=per_tile_limit, token=tok)
+        if syn is None or len(syn["positions_nm"]) == 0:
+            raise RuntimeError(
+                "No synapses from tiled fetch — check network/token/version/bbox")
+    else:
+        effective_limit = max_synapses
+        while effective_limit >= 1000:
+            syn = L.fetch_region_synapses(bbox_nm, version=version, side=side,
+                                           limit=effective_limit, token=tok)
+            if syn is not None:
+                break
+            if verbose:
+                print(f"  limit={effective_limit} failed, retrying at "
+                      f"{effective_limit // 2} …")
+            effective_limit //= 2
+        if syn is None or len(syn["positions_nm"]) == 0:
+            raise RuntimeError(
+                "No synapses returned for bbox — check network/token/version/bbox")
 
     pos = syn["positions_nm"]
     sv_ids = syn["supervoxel_ids"]
@@ -507,6 +523,8 @@ def build_region_world_dual(
     verbose: bool = True,
     l2_skeletons_pre: bool = True,
     l2_skeletons_post: bool = False,
+    tile_x_nm: float = 0,
+    per_tile_limit: int = 200_000,
 ) -> tuple:
     """Build pre- and post-side worlds for the SAME synapses from a single fetch.
 
@@ -539,15 +557,24 @@ def build_region_world_dual(
               f"(single fetch, both sides) …")
 
     syn = None
-    effective_limit = max_synapses
-    while effective_limit >= 1000:
-        syn = L.fetch_region_synapses(bbox_nm, version=version, side="pre",
-                                       limit=effective_limit, token=tok)
-        if syn is not None:
-            break
-        effective_limit //= 2
-    if syn is None or len(syn["positions_nm"]) == 0:
-        raise RuntimeError("No synapses returned for bbox — check network/token/version/bbox")
+    if tile_x_nm > 0:
+        syn = L.fetch_region_synapses_tiled(
+            bbox_nm, version=version, side="pre",
+            tile_x_nm=tile_x_nm, per_tile_limit=per_tile_limit, token=tok)
+        if syn is None or len(syn["positions_nm"]) == 0:
+            raise RuntimeError(
+                "No synapses from tiled fetch — check network/token/version/bbox")
+    else:
+        effective_limit = max_synapses
+        while effective_limit >= 1000:
+            syn = L.fetch_region_synapses(bbox_nm, version=version, side="pre",
+                                           limit=effective_limit, token=tok)
+            if syn is not None:
+                break
+            effective_limit //= 2
+        if syn is None or len(syn["positions_nm"]) == 0:
+            raise RuntimeError(
+                "No synapses returned for bbox — check network/token/version/bbox")
 
     # Pre side = queried side; post side = the OTHER endpoint of the same rows.
     pos_pre = syn["positions_nm"]
