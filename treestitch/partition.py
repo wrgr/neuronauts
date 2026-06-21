@@ -194,6 +194,7 @@ def train_edge_partition(
     max_edges_per_epoch: int = 4000,
     hard_neg_frac: float = 0.5,
     franken_hard_frac: float = 0.1,
+    max_train_nodes: int = 0,
     device: str = "cpu",
     seed: int = 42,
     log_every: int = 10,
@@ -212,6 +213,10 @@ def train_edge_partition(
     are drawn from frankenmerge cut edges (type-0 same-fragment edges that cross
     a neuron boundary), explicitly oversampling the rarest but most important
     training signal.
+
+    ``max_train_nodes``: when > 0 and graph has more nodes, each epoch trains on a
+    random spatial subgraph of this many nodes instead of the full graph.  Prevents
+    OOM on large training regions (e.g. 178k nodes / 3M edges).
 
     Returns
     -------
@@ -233,6 +238,7 @@ def train_edge_partition(
         max_edges_per_epoch=max_edges_per_epoch,
         hard_neg_frac=hard_neg_frac,
         franken_hard_frac=franken_hard_frac,
+        max_train_nodes=max_train_nodes,
         device=device,
         seed=seed,
         log_every=log_every,
@@ -404,6 +410,7 @@ def train_edge_partition_multi_region(
     max_edges_per_epoch: int = 4000,
     hard_neg_frac: float = 0.5,
     franken_hard_frac: float = 0.3,
+    max_train_nodes: int = 0,
     device: str = "cpu",
     seed: int = 42,
     log_every: int = 10,
@@ -451,6 +458,7 @@ def train_edge_partition_multi_region(
         max_edges_per_epoch=max_edges_per_epoch,
         hard_neg_frac=hard_neg_frac,
         franken_hard_frac=franken_hard_frac,
+        max_train_nodes=max_train_nodes,
         device=device,
         seed=seed,
         log_every=log_every,
@@ -480,20 +488,19 @@ def _extract_subgraph(g, node_indices: np.ndarray):
     remapped to 0…len(node_indices)-1.
     """
     from treestitch.schemas import ObservationGraph
+    node_indices = np.asarray(node_indices, dtype=np.int64)
     n_orig = g.n_nodes
-    keep_set = set(node_indices.tolist())
     remap = np.full(n_orig, -1, dtype=np.int64)
     remap[node_indices] = np.arange(len(node_indices), dtype=np.int64)
-    edge_mask = np.array(
-        [int(s) in keep_set and int(d) in keep_set
-         for s, d in zip(g.edge_src.tolist(), g.edge_dst.tolist())],
-        dtype=bool,
-    )
+    # Vectorized edge mask: both endpoints must be in the keep set
+    src_remap = remap[g.edge_src]
+    dst_remap = remap[g.edge_dst]
+    edge_mask = (src_remap >= 0) & (dst_remap >= 0)
     return ObservationGraph(
         node_feat=g.node_feat[node_indices],
         node_pos=g.node_pos[node_indices],
-        edge_src=remap[g.edge_src[edge_mask]],
-        edge_dst=remap[g.edge_dst[edge_mask]],
+        edge_src=src_remap[edge_mask],
+        edge_dst=dst_remap[edge_mask],
         edge_type=g.edge_type[edge_mask],
         edge_feat=g.edge_feat[edge_mask],
         labels=g.labels[node_indices],

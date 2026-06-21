@@ -188,6 +188,11 @@ def main() -> int:
                         "full-population coverage on dense regions.")
     p.add_argument("--per-tile-limit", type=int, default=200_000,
                    help="Max synapses per tile when --tile-x-nm > 0 (default 200k).")
+    p.add_argument("--train-max-nodes", type=int, default=30_000,
+                   help="Max observation-graph nodes per GNN training epoch. When the "
+                        "training graph exceeds this, each epoch trains on a random "
+                        "spatial subgraph of this size to keep GPU memory bounded. "
+                        "0 = train on full graph (can OOM on large regions).")
     p.add_argument("--no-train-l2", action="store_true",
                    help="Use synapse point-cloud fragments for training (no L2 "
                         "skeleton fetches). Fast when the L2 cache is not yet "
@@ -388,6 +393,7 @@ def main() -> int:
                 train_graphs,
                 n_epochs=args.partition_epochs, lr=1e-3,
                 franken_hard_frac=args.franken_hard_frac,
+                max_train_nodes=args.train_max_nodes,
                 device=args.device, seed=args.seed, log_every=25)
 
             # Derive kwargs to match what train_edge_partition_gnn actually used
@@ -431,6 +437,7 @@ def main() -> int:
                 post_graphs,
                 n_epochs=args.partition_epochs, lr=1e-3,
                 franken_hard_frac=args.franken_hard_frac,
+                max_train_nodes=args.train_max_nodes,
                 device=args.device, seed=args.seed, log_every=25)
             _pef = post_graphs[0]
             _pefd = int(_pef.edge_feat.shape[1]) if _pef.edge_feat.ndim == 2 else 0

@@ -172,6 +172,7 @@ def train_edge_partition_gnn(
     max_edges_per_epoch: int = 4000,
     hard_neg_frac: float = 0.5,
     franken_hard_frac: float = 0.1,
+    max_train_nodes: int = 0,
     device: str = "cpu",
     seed: int = 42,
     log_every: int = 10,
@@ -246,129 +247,216 @@ def train_edge_partition_gnn(
         model.eval()
         return model, history
 
-    valid_idx = np.where(valid_np)[0]
-    tgt_all = target_np[valid_idx]
-
-    pos_idx_valid = valid_idx[tgt_all > 0.5]   # indices into full edge array
-    neg_idx_valid = valid_idx[tgt_all < 0.5]
-
-    # Hard-negative pool: cross-neuron spatial (type 1) and endpoint-adj (type 2) edges
-    hard_neg_idx: list[int] = []
-    for i in range(len(graph.edge_src)):
-        if graph.edge_type[i] not in (1, 2):
-            continue
-        u, v = int(graph.edge_src[i]), int(graph.edge_dst[i])
-        lu, lv = int(graph.labels[u]), int(graph.labels[v])
-        if lu != 0 and lv != 0 and lu != lv:
-            hard_neg_idx.append(i)
-    hard_neg_arr = np.array(hard_neg_idx, dtype=np.int64) if hard_neg_idx else None
-
-    # Frankenmerge cut pool: type-0 same-fragment edges that cross a neuron boundary.
-    # These are the rarest negatives (~0.8% of type-0 edges) but the critical signal
-    # for detecting and splitting frankenmerge fragments.  Explicit oversampling via
-    # franken_hard_frac ensures the classifier sees them despite their rarity.
-    franken_cut_idx: list[int] = []
-    for i in range(len(graph.edge_src)):
-        if graph.edge_type[i] != 0:
-            continue
-        u, v = int(graph.edge_src[i]), int(graph.edge_dst[i])
-        lu, lv = int(graph.labels[u]), int(graph.labels[v])
-        if lu != 0 and lv != 0 and lu != lv:
-            franken_cut_idx.append(i)
-    franken_cut_arr = np.array(franken_cut_idx, dtype=np.int64) if franken_cut_idx else None
-
     rng = np.random.default_rng(seed)
     half = max(1, max_edges_per_epoch // 2)
 
-    n_all_pos = len(pos_idx_valid)
-    n_all_neg = len(neg_idx_valid)
-    n_all_valid = n_all_pos + n_all_neg
-    pw = (max(n_all_neg, 1.0) / max(n_all_pos, 1.0)) if pos_weight is None else float(pos_weight)
-    pos_weight_t = torch.tensor([pw], device=device)
+    # Pre-build edge type arrays as masks for fast vectorized pool building
+    etype = graph.edge_type
+    labels = graph.labels
+    esrc, edst = graph.edge_src, graph.edge_dst
 
-    node_feat_t = torch.from_numpy(graph.node_feat).to(device)
-    edge_src_t = torch.from_numpy(graph.edge_src).long().to(device)
-    edge_dst_t = torch.from_numpy(graph.edge_dst).long().to(device)
-    edge_type_t = torch.from_numpy(graph.edge_type).long().to(device)
-    edge_feat_dim = graph.edge_feat.shape[1] if graph.edge_feat.ndim == 2 else 0
-    edge_feat_t = (
-        torch.from_numpy(graph.edge_feat).float().to(device)
-        if edge_feat_dim > 0
-        else None
-    )
-    target_t_full = torch.from_numpy(target_np.astype(np.float32)).to(device)
+    def _build_pools(valid_mask, tgt, etype_arr):
+        """Compute pos/neg/hard_neg/franken pools given per-edge valid+target arrays.
 
-    # For full-eval metrics (reporting), build full valid mask
-    valid_t_full = torch.from_numpy(valid_np).to(device)
+        ``etype_arr`` must be the same length as ``valid_mask`` and ``tgt``.
+        """
+        vi = np.where(valid_mask)[0]
+        ta = tgt[vi]
+        pos_i = vi[ta > 0.5]
+        neg_i = vi[ta < 0.5]
+        # Hard-negative: type 1/2 cross-neuron edges
+        mask_hard = ((etype_arr == 1) | (etype_arr == 2)) & valid_mask & (tgt < 0.5)
+        hn = np.where(mask_hard)[0] if mask_hard.any() else None
+        # Franken cut: type-0 same-frag cross-neuron edges
+        mask_fk = (etype_arr == 0) & valid_mask & (tgt < 0.5)
+        fk = np.where(mask_fk)[0] if mask_fk.any() else None
+        return pos_i, neg_i, hn, fk
 
-    for epoch in range(1, n_epochs + 1):
-        model.train()
-        opt.zero_grad()
+    def _sample_batch(pos_i, neg_i, hn, fk, pw_val):
+        """Sample balanced mini-batch; return (batch_idx, pos_weight_tensor)."""
+        n_pos = min(half, len(pos_i))
+        n_neg = min(half, len(neg_i))
+        bp = pos_i[rng.choice(len(pos_i), n_pos, replace=len(pos_i) < n_pos)]
+        parts = []
+        rem = n_neg
+        if hn is not None and rem > 0:
+            nh = min(int(n_neg * hard_neg_frac), len(hn))
+            parts.append(hn[rng.choice(len(hn), nh, replace=len(hn) < nh)])
+            rem -= nh
+        if fk is not None and rem > 0:
+            nf = min(int(n_neg * franken_hard_frac), len(fk))
+            parts.append(fk[rng.choice(len(fk), nf, replace=len(fk) < nf)])
+            rem -= nf
+        if rem > 0:
+            parts.append(neg_i[rng.choice(len(neg_i), rem, replace=len(neg_i) < rem)])
+        bn = np.concatenate(parts) if parts else np.array([], dtype=np.int64)
+        return np.concatenate([bp, bn])
 
-        # Sample balanced mini-batch
-        n_pos_batch = min(half, n_all_pos)
-        n_neg_batch = min(half, n_all_neg)
+    use_subgraph = max_train_nodes > 0 and graph.n_nodes > max_train_nodes
 
-        pos_sel = rng.choice(n_all_pos, n_pos_batch, replace=n_all_pos < n_pos_batch)
-        batch_pos = pos_idx_valid[pos_sel]
+    if not use_subgraph:
+        # Full graph: load once to device (original path)
+        pos_iv, neg_iv, hard_neg_arr, franken_cut_arr = _build_pools(valid_np, target_np, etype)
+        n_all_pos, n_all_neg = len(pos_iv), len(neg_iv)
+        pw = (max(n_all_neg, 1.0) / max(n_all_pos, 1.0)) if pos_weight is None else float(pos_weight)
+        pos_weight_t = torch.tensor([pw], device=device)
 
-        if n_neg_batch > 0:
-            parts = []
-            remaining = n_neg_batch
-            if hard_neg_arr is not None:
-                n_hard = min(int(n_neg_batch * hard_neg_frac), len(hard_neg_arr))
-                hard_sel = rng.choice(len(hard_neg_arr), n_hard,
-                                      replace=len(hard_neg_arr) < n_hard)
-                parts.append(hard_neg_arr[hard_sel])
-                remaining -= n_hard
-            if franken_cut_arr is not None:
-                n_franken = min(int(n_neg_batch * franken_hard_frac), len(franken_cut_arr))
-                franken_sel = rng.choice(len(franken_cut_arr), n_franken,
-                                         replace=len(franken_cut_arr) < n_franken)
-                parts.append(franken_cut_arr[franken_sel])
-                remaining -= n_franken
-            rand_sel = rng.choice(n_all_neg, max(remaining, 0),
-                                  replace=n_all_neg < max(remaining, 0))
-            parts.append(neg_idx_valid[rand_sel])
-            batch_neg = np.concatenate(parts) if parts else np.array([], dtype=np.int64)
-        else:
-            batch_neg = np.array([], dtype=np.int64)
-
-        batch_idx = np.concatenate([batch_pos, batch_neg])
-        batch_t = torch.from_numpy(batch_idx).long().to(device)
-
-        _, logits = model(node_feat_t, edge_src_t, edge_dst_t, edge_type_t, edge_feat_t)
-        logits_batch = logits[batch_t]
-        tgt_batch = target_t_full[batch_t]
-
-        loss = F.binary_cross_entropy_with_logits(
-            logits_batch, tgt_batch, pos_weight=pos_weight_t
+        node_feat_t = torch.from_numpy(graph.node_feat).to(device)
+        edge_src_t = torch.from_numpy(esrc).long().to(device)
+        edge_dst_t = torch.from_numpy(edst).long().to(device)
+        edge_type_t = torch.from_numpy(etype).long().to(device)
+        efd = graph.edge_feat.shape[1] if graph.edge_feat.ndim == 2 else 0
+        edge_feat_t = (
+            torch.from_numpy(graph.edge_feat).float().to(device) if efd > 0 else None
         )
-        loss.backward()
-        opt.step()
+        target_t_full = torch.from_numpy(target_np.astype(np.float32)).to(device)
+        valid_t_full = torch.from_numpy(valid_np).to(device)
 
-        with torch.no_grad():
-            # Report on the full valid set
-            logits_v = logits[valid_t_full].detach()
-            probs_v = torch.sigmoid(logits_v)
-            tgt_v = target_t_full[valid_t_full]
-            pos_full = tgt_v > 0.5
-            neg_full = ~pos_full
-            p_pos = float(probs_v[pos_full].mean().item()) if pos_full.any() else 0.0
-            p_neg = float(probs_v[neg_full].mean().item()) if neg_full.any() else 0.0
-            pred_link = probs_v > 0.5
-            edge_acc = float((pred_link == (tgt_v > 0.5)).float().mean().item())
+        for epoch in range(1, n_epochs + 1):
+            model.train()
+            opt.zero_grad()
 
-        history["loss"].append(float(loss.item()))
-        history["p_pos"].append(p_pos)
-        history["p_neg"].append(p_neg)
-        history["edge_acc"].append(edge_acc)
+            batch_idx = _sample_batch(pos_iv, neg_iv, hard_neg_arr, franken_cut_arr, pw)
+            batch_t = torch.from_numpy(batch_idx).long().to(device)
 
-        if log_every > 0 and (epoch % log_every == 0 or epoch == 1):
-            print(
-                f"  epoch {epoch:4d}: loss={loss.item():.4f}  "
-                f"p_pos={p_pos:.3f}  p_neg={p_neg:.3f}  edge_acc={edge_acc:.3f}"
+            _, logits = model(node_feat_t, edge_src_t, edge_dst_t, edge_type_t, edge_feat_t)
+            logits_batch = logits[batch_t]
+            tgt_batch = target_t_full[batch_t]
+
+            loss = F.binary_cross_entropy_with_logits(
+                logits_batch, tgt_batch, pos_weight=pos_weight_t
             )
+            loss.backward()
+            opt.step()
+
+            with torch.no_grad():
+                logits_v = logits[valid_t_full].detach()
+                probs_v = torch.sigmoid(logits_v)
+                tgt_v = target_t_full[valid_t_full]
+                pos_full = tgt_v > 0.5
+                p_pos = float(probs_v[pos_full].mean().item()) if pos_full.any() else 0.0
+                p_neg = float(probs_v[~pos_full].mean().item()) if (~pos_full).any() else 0.0
+                pred_link = probs_v > 0.5
+                edge_acc = float((pred_link == (tgt_v > 0.5)).float().mean().item())
+
+            history["loss"].append(float(loss.item()))
+            history["p_pos"].append(p_pos)
+            history["p_neg"].append(p_neg)
+            history["edge_acc"].append(edge_acc)
+
+            if log_every > 0 and (epoch % log_every == 0 or epoch == 1):
+                print(
+                    f"  epoch {epoch:4d}: loss={loss.item():.4f}  "
+                    f"p_pos={p_pos:.3f}  p_neg={p_neg:.3f}  edge_acc={edge_acc:.3f}"
+                )
+    else:
+        # Subgraph-sampling path: sample max_train_nodes nodes per epoch,
+        # extract their local subgraph, push only that to device.
+        # Avoids loading the full 3M-edge graph onto GPU.
+        # Node features have positions in the first 3 columns (normalised).
+        # Sort by spatial dimension with greatest spread for coherent tiles.
+        node_pos = graph.node_pos if hasattr(graph, 'node_pos') else graph.node_feat[:, :3]
+        spread = node_pos.max(axis=0) - node_pos.min(axis=0)
+        sort_dim = int(np.argmax(spread))
+        sort_order = np.argsort(node_pos[:, sort_dim])  # spatial sort for locality
+
+        # Pre-build a fast remap buffer and edge endpoint arrays
+        n_total = graph.n_nodes
+        remap_buf = np.full(n_total, -1, dtype=np.int64)
+        efd = graph.edge_feat.shape[1] if graph.edge_feat.ndim == 2 else 0
+        # Global pos_weight (approximate over full graph)
+        gv_np, gt_np = valid_np, target_np
+        n_all_pos_g = int((gv_np & (gt_np > 0.5)).sum())
+        n_all_neg_g = int((gv_np & (gt_np < 0.5)).sum())
+        pw = (max(n_all_neg_g, 1.0) / max(n_all_pos_g, 1.0)) if pos_weight is None else float(pos_weight)
+        pos_weight_t = torch.tensor([pw], device=device)
+
+        # Tile stride: shift the window each epoch to cover the full graph
+        n_tiles = max(1, -(-n_total // max_train_nodes))  # ceil div
+        tile_stride = n_total // n_tiles
+
+        for epoch in range(1, n_epochs + 1):
+            model.train()
+            opt.zero_grad()
+
+            # Pick a random starting offset within the sorted order, take a contiguous block
+            tile_start = int(rng.integers(0, n_total))
+            raw_idx = (tile_start + np.arange(max_train_nodes)) % n_total
+            node_idx = sort_order[raw_idx]  # actual node indices in graph
+
+            # Extract subgraph (vectorized) — reuse remap_buf for both passes.
+            node_idx_sorted = np.sort(node_idx)
+            remap_buf[node_idx_sorted] = np.arange(len(node_idx_sorted), dtype=np.int64)
+            src_r = remap_buf[esrc]  # local src index (-1 if not in tile)
+            dst_r = remap_buf[edst]  # local dst index (-1 if not in tile)
+            emask = (src_r >= 0) & (dst_r >= 0)
+            remap_buf[node_idx_sorted] = -1  # reset
+
+            # Sub-edge indices into full graph edge array; local node indices
+            sub_edge_full_idx = np.where(emask)[0]
+            if len(sub_edge_full_idx) == 0:
+                history["loss"].append(0.0)
+                history["p_pos"].append(0.0)
+                history["p_neg"].append(0.0)
+                history["edge_acc"].append(0.0)
+                continue
+
+            sub_valid = valid_np[sub_edge_full_idx]
+            sub_target = target_np[sub_edge_full_idx]
+
+            sub_etype = etype[sub_edge_full_idx]
+            pos_iv, neg_iv, hard_arr, fk_arr = _build_pools(sub_valid, sub_target, sub_etype)
+            if len(pos_iv) == 0 and len(neg_iv) == 0:
+                history["loss"].append(0.0)
+                history["p_pos"].append(0.0)
+                history["p_neg"].append(0.0)
+                history["edge_acc"].append(0.0)
+                continue
+
+            batch_local = _sample_batch(pos_iv, neg_iv, hard_arr, fk_arr, pw)
+
+            # Tensors for the subgraph only — local edge indices from src_r/dst_r
+            sub_node_feat_t = torch.from_numpy(graph.node_feat[node_idx_sorted]).to(device)
+            sub_src_t = torch.from_numpy(src_r[sub_edge_full_idx]).long().to(device)
+            sub_dst_t = torch.from_numpy(dst_r[sub_edge_full_idx]).long().to(device)
+            sub_etype_t = torch.from_numpy(sub_etype).long().to(device)
+            sub_efeat_t = (
+                torch.from_numpy(graph.edge_feat[sub_edge_full_idx]).float().to(device)
+                if efd > 0 else None
+            )
+            sub_target_t = torch.from_numpy(sub_target.astype(np.float32)).to(device)
+
+            _, logits = model(sub_node_feat_t, sub_src_t, sub_dst_t, sub_etype_t, sub_efeat_t)
+            logits_batch = logits[batch_local]
+            tgt_batch = sub_target_t[batch_local]
+
+            loss = F.binary_cross_entropy_with_logits(
+                logits_batch, tgt_batch, pos_weight=pos_weight_t
+            )
+            loss.backward()
+            opt.step()
+
+            with torch.no_grad():
+                sub_valid_t = torch.from_numpy(sub_valid).to(device)
+                probs_v = torch.sigmoid(logits[sub_valid_t].detach())
+                tgt_v = sub_target_t[sub_valid_t]
+                pos_m = tgt_v > 0.5
+                p_pos = float(probs_v[pos_m].mean().item()) if pos_m.any() else 0.0
+                p_neg = float(probs_v[~pos_m].mean().item()) if (~pos_m).any() else 0.0
+                pred_link = probs_v > 0.5
+                edge_acc = float((pred_link == (tgt_v > 0.5)).float().mean().item())
+
+            history["loss"].append(float(loss.item()))
+            history["p_pos"].append(p_pos)
+            history["p_neg"].append(p_neg)
+            history["edge_acc"].append(edge_acc)
+
+            if log_every > 0 and (epoch % log_every == 0 or epoch == 1):
+                print(
+                    f"  epoch {epoch:4d}: loss={loss.item():.4f}  "
+                    f"p_pos={p_pos:.3f}  p_neg={p_neg:.3f}  edge_acc={edge_acc:.3f}"
+                    f"  (subgraph {len(node_idx_sorted)}n/{len(sub_edge_full_idx)}e)"
+                )
 
     model.eval()
     return model, history

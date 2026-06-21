@@ -261,44 +261,31 @@ def train_skeleton_gnn(
     if len(groups) < 2:
         raise ValueError("Need ≥2 neuron groups with ≥1 clean fragment each")
 
-    group_keys = [k for k, _ in groups]
     history: dict[str, list[float]] = {"loss": [], "pos_cos": [], "neg_cos": []}
 
-    # Pre-compute tensors for all fragments (skeleton graphs don't change)
-    frag_tensors = {
-        frag.base_root_id if root_label_map is None else next(iter(root_label_map.get(frag.base_root_id, {frag.base_root_id}))): None
-        for frag in all_frags
-    }
-    # Actually index by fragment object identity for simplicity
+    # Keep tensors on CPU; transfer per mini-batch to avoid holding all N graphs on device.
     frag_list_flat = all_frags
-    tensor_cache = [fragment_to_tensors(f, device) for f in frag_list_flat]
+    tensor_cache_cpu = [fragment_to_tensors(f, "cpu") for f in frag_list_flat]
     frag_to_idx = {id(f): i for i, f in enumerate(frag_list_flat)}
+
+    n_pairs = 256
+    pos_groups = [(k, v) for k, v in groups if len(v) >= 2]
 
     for epoch in range(1, n_epochs + 1):
         gnn.train()
         opt.zero_grad()
 
-        # Encode all fragments
-        embeddings = []
-        for tensors in tensor_cache:
-            nf, es, ed, ef = tensors
-            emb = gnn(nf, es, ed, ef)
-            embeddings.append(emb)
-        embs = torch.stack(embeddings, dim=0)          # [N, output_dim]
-        embs_norm = F.normalize(embs, p=2, dim=-1)
+        # --- Sample pairs first, then encode only the needed fragments ---
+        pos_pairs: list[tuple[int, int]] = []
+        neg_pairs: list[tuple[int, int]] = []
 
-        # Sample positive pairs
-        n_pairs = 256
-        pos_pairs, neg_pairs = [], []
-
-        pos_groups = [(k, v) for k, v in groups if len(v) >= 2]
         for _ in range(n_pairs):
             if not pos_groups:
                 break
-            gk, frags = pos_groups[int(rng.integers(len(pos_groups)))]
-            ia, ib = rng.choice(len(frags), size=2, replace=False)
-            pos_pairs.append((frag_to_idx[id(frags[int(ia)])],
-                               frag_to_idx[id(frags[int(ib)])]))
+            gk, gfrags = pos_groups[int(rng.integers(len(pos_groups)))]
+            ia, ib = rng.choice(len(gfrags), size=2, replace=False)
+            pos_pairs.append((frag_to_idx[id(gfrags[int(ia)])],
+                               frag_to_idx[id(gfrags[int(ib)])]))
 
         for _ in range(n_pairs):
             ga_i, gb_i = rng.choice(len(groups), size=2, replace=False)
@@ -315,19 +302,37 @@ def train_skeleton_gnn(
             history["neg_cos"].append(0.0)
             continue
 
+        # Collect unique fragment indices needed; encode only those.
+        all_pair_indices = list({i for pair in pos_pairs + neg_pairs for i in pair})
+        all_pair_indices.sort()
+        local_idx = {g: li for li, g in enumerate(all_pair_indices)}
+
+        mini_embs = []
+        for g_idx in all_pair_indices:
+            nf, es, ed, ef = tensor_cache_cpu[g_idx]
+            nf = nf.to(device); es = es.to(device)
+            ed = ed.to(device); ef = ef.to(device)
+            mini_embs.append(gnn(nf, es, ed, ef))
+        embs = torch.stack(mini_embs, dim=0)           # [M, output_dim]
+        embs_norm = F.normalize(embs, p=2, dim=-1)
+
         loss = torch.tensor(0.0, device=device)
         pos_sims, neg_sims = [], []
 
         if pos_pairs:
-            src = torch.tensor([p[0] for p in pos_pairs], dtype=torch.long, device=device)
-            dst = torch.tensor([p[1] for p in pos_pairs], dtype=torch.long, device=device)
+            src = torch.tensor([local_idx[p[0]] for p in pos_pairs],
+                                dtype=torch.long, device=device)
+            dst = torch.tensor([local_idx[p[1]] for p in pos_pairs],
+                                dtype=torch.long, device=device)
             sim = (embs_norm[src] * embs_norm[dst]).sum(dim=-1)
             loss = loss + (1.0 - sim).mean()
             pos_sims = sim.detach().cpu().tolist()
 
         if neg_pairs:
-            src = torch.tensor([p[0] for p in neg_pairs], dtype=torch.long, device=device)
-            dst = torch.tensor([p[1] for p in neg_pairs], dtype=torch.long, device=device)
+            src = torch.tensor([local_idx[p[0]] for p in neg_pairs],
+                                dtype=torch.long, device=device)
+            dst = torch.tensor([local_idx[p[1]] for p in neg_pairs],
+                                dtype=torch.long, device=device)
             sim = (embs_norm[src] * embs_norm[dst]).sum(dim=-1)
             loss = loss + F.relu(sim - (1.0 - margin)).mean()
             neg_sims = sim.detach().cpu().tolist()
