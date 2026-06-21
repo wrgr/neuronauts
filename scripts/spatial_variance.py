@@ -175,6 +175,23 @@ def main() -> int:
                         "(e.g. 50k → 1000–2400 fragment nodes). Same tiling + "
                         "same-fragment-edge reconciliation as --post-tile-size. "
                         "Recommended: 600 (matches typical training graph size).")
+    p.add_argument("--train-regions", default=None,
+                   help="Comma-separated subset of train regions to use, e.g. 'E,D'. "
+                        "Default: use all (A,B,C,D,E).")
+    p.add_argument("--eval-regions", default=None,
+                   help="Comma-separated subset of in-column eval regions, e.g. 'T4'. "
+                        "Default: use all (T1,T2,T3,T4).")
+    p.add_argument("--tile-x-nm", type=float, default=0,
+                   help="x-tile width in nm for synapse fetches (0=disabled). "
+                        "Set to 40000 to use the tiled synapse cache that bypasses "
+                        "CAVE's ~250k per-request row cap. Required for honest "
+                        "full-population coverage on dense regions.")
+    p.add_argument("--per-tile-limit", type=int, default=200_000,
+                   help="Max synapses per tile when --tile-x-nm > 0 (default 200k).")
+    p.add_argument("--no-train-l2", action="store_true",
+                   help="Use synapse point-cloud fragments for training (no L2 "
+                        "skeleton fetches). Fast when the L2 cache is not yet "
+                        "warm for newly-discovered fragments.")
     p.add_argument("--post-cc-bias", type=float, default=None,
                    help="cc_bias override for the POST side partition (--dual-side). "
                         "Defaults to --cc-bias. Try 0.0, 1.0, 2.0 to loosen "
@@ -237,25 +254,34 @@ def main() -> int:
     y0, y1 = 930_000, 1_000_000   # dense y-extent
     z0, z1 = 780_000, 880_000
     buf = args.seam_buffer
-    train_bboxes = [
-        ((750_000,  y0, z0), (950_000,             y1, z1)),  # A
-        ((950_000,  y0, z0), (1_150_000 - buf,     y1, z1)),  # B (seam-buffered)
-        ((1_350_000 + buf, y0, z0), (1_550_000,    y1, z1)),  # C (seam-buffered)
-        ((1_550_000 + buf, y0, z0), (1_750_000,    y1, z1)),  # D (seam-buffered)
-        ((750_000, 1_000_000, z0), (950_000, 1_070_000, z1)), # E y-north band
+    _ALL_TRAIN = [
+        ("A", ((750_000,  y0, z0), (950_000,             y1, z1))),
+        ("B", ((950_000,  y0, z0), (1_150_000 - buf,     y1, z1))),  # seam-buffered
+        ("C", ((1_350_000 + buf, y0, z0), (1_550_000,    y1, z1))),  # seam-buffered
+        ("D", ((1_550_000 + buf, y0, z0), (1_750_000,    y1, z1))),  # seam-buffered
+        ("E", ((750_000, 1_000_000, z0), (950_000, 1_070_000, z1))), # y-north band
     ]
+    if args.train_regions:
+        _sel = set(r.strip().upper() for r in args.train_regions.split(","))
+        _ALL_TRAIN = [(n, b) for n, b in _ALL_TRAIN if n in _sel]
+    train_labels = [n for n, _ in _ALL_TRAIN]
+    train_bboxes = [b for _, b in _ALL_TRAIN]
 
     # ── Test bboxes ─────────────────────────────────────────────────────────
-    IN_COLUMN = [
-        ("T1 x=1150-1350k (reference)",
+    _ALL_IN_COL = [
+        ("T1", "T1 x=1150-1350k (reference)",
          ((1_150_000, y0, z0), (1_350_000, y1, z1))),
-        ("T2 x=550-750k (west of A)",
+        ("T2", "T2 x=550-750k (west of A)",
          ((550_000, y0, z0), (750_000, y1, z1))),
-        ("T3 y-shift south (y=870-940k)",
+        ("T3", "T3 y-shift south (y=870-940k)",
          ((1_150_000, 870_000, z0), (1_350_000, 940_000, z1))),
-        ("T4 y-shift north (y=1000-1070k)",
+        ("T4", "T4 y-shift north (y=1000-1070k)",
          ((1_150_000, 1_000_000, z0), (1_350_000, 1_070_000, z1))),
     ]
+    if args.eval_regions:
+        _esel = set(r.strip().upper() for r in args.eval_regions.split(","))
+        _ALL_IN_COL = [(k, n, b) for k, n, b in _ALL_IN_COL if k in _esel]
+    IN_COLUMN = [(n, b) for _, n, b in _ALL_IN_COL]
     OUT_OF_COLUMN = [
         ("OOC1 x=200-400k (reference)",
          ((200_000, 500_000, 700_000), (400_000, 570_000, 800_000))),
@@ -267,7 +293,7 @@ def main() -> int:
 
     print("=" * 68)
     print(f"Spatial variance study  (v117 → v{args.version})")
-    print(f"  Train: {len(train_bboxes)} regions (A/B/C/D/E, seam buffer={buf//1000}µm)")
+    print(f"  Train: {len(train_bboxes)} regions ({','.join(train_labels)}, seam buffer={buf//1000}µm)")
     print(f"  In-column test locations: {len(IN_COLUMN)}")
     print(f"  OOC test locations:       {len(OUT_OF_COLUMN)}")
     print("=" * 68)
@@ -301,14 +327,15 @@ def main() -> int:
 
     if need_train_graph or not (args.checkpoint and Path(args.checkpoint).exists()):
         all_frags, all_regions, all_label_maps = [], [], []
-        for i, bbox in enumerate(train_bboxes):
-            label = chr(65 + i)
+        for i, (label, bbox) in enumerate(zip(train_labels, train_bboxes)):
             print(f"\n[TRAIN {label}] Building world …")
             frags, region, lmap = build_region_world(
                 bbox, version=args.version, side=args.side,
                 max_synapses=args.max_synapses,
                 min_syn_per_fragment=args.min_syn_per_fragment,
-                seed=args.seed, verbose=True)
+                seed=args.seed, verbose=True,
+                l2_skeletons=not args.no_train_l2,
+                tile_x_nm=args.tile_x_nm, per_tile_limit=args.per_tile_limit)
             all_frags.append(frags)
             all_regions.append(region)
             all_label_maps.append(lmap)
@@ -328,7 +355,7 @@ def main() -> int:
 
         train_graphs = []
         for i, (frags, region) in enumerate(zip(all_frags, all_regions)):
-            label = chr(65 + i)
+            label = train_labels[i]
             frags_enc = encode_fragments(encoder, frags, device=args.device)
             g = build_observation_graph(region, frags_enc, side=args.side,
                                         k_spatial=args.k_spatial)
@@ -340,7 +367,8 @@ def main() -> int:
                     max_synapses=args.max_synapses,
                     min_syn_per_fragment=args.min_syn_per_fragment,
                     seed=args.seed, verbose=False,
-                    side="post", l2_skeletons=False)
+                    side="post", l2_skeletons=False,
+                    tile_x_nm=args.tile_x_nm, per_tile_limit=args.per_tile_limit)
                 fe_p = encode_fragments(encoder, frags_p, device=args.device)
                 g_p = build_observation_graph(region_p, fe_p, side="post",
                                               k_spatial=args.k_spatial)
@@ -385,14 +413,15 @@ def main() -> int:
             print(f"\nTraining dedicated post-side model ({args.partition_epochs} epochs) …")
             post_graphs = []
             for i, bbox in enumerate(train_bboxes):
-                label = chr(65 + i)
+                label = train_labels[i]
                 print(f"  [post-only train {label}] Building world …")
                 frags_p, region_p, _ = build_region_world(
                     bbox, version=args.version,
                     max_synapses=args.max_synapses,
                     min_syn_per_fragment=args.min_syn_per_fragment,
                     seed=args.seed, verbose=False,
-                    side="post", l2_skeletons=False)
+                    side="post", l2_skeletons=False,
+                    tile_x_nm=args.tile_x_nm, per_tile_limit=args.per_tile_limit)
                 fe_p = encode_fragments(encoder, frags_p, device=args.device)
                 g_p = build_observation_graph(region_p, fe_p, side="post",
                                               k_spatial=args.k_spatial)
@@ -465,7 +494,8 @@ def main() -> int:
                 max_synapses=eval_max_syn,
                 min_syn_per_fragment=args.min_syn_per_fragment,
                 seed=args.seed, verbose=True,
-                l2_skeletons=not args.no_eval_l2)
+                l2_skeletons=not args.no_eval_l2,
+                tile_x_nm=args.tile_x_nm, per_tile_limit=args.per_tile_limit)
 
             n_fk = sum(1 for v in lmap.values() if len(v) > 1)
             if n_fk == 0:
@@ -640,7 +670,8 @@ def main() -> int:
                             min_syn_per_fragment=args.min_syn_per_fragment,
                             seed=args.seed, verbose=True,
                             l2_skeletons_pre=not args.no_eval_l2,
-                            l2_skeletons_post=args.dual_post_l2 and not args.no_eval_l2)
+                            l2_skeletons_post=args.dual_post_l2 and not args.no_eval_l2,
+                            tile_x_nm=args.tile_x_nm, per_tile_limit=args.per_tile_limit)
                     # Partition pre side.
                     fe_pre2 = encode_fragments(encoder, frags_pre2, device=args.device)
                     g_pre2 = build_observation_graph(region_pre2, fe_pre2,
@@ -767,7 +798,8 @@ def main() -> int:
                 max_synapses=eval_max_syn,
                 min_syn_per_fragment=args.min_syn_per_fragment,
                 seed=args.seed, verbose=True,
-                l2_skeletons=not args.no_eval_l2)
+                l2_skeletons=not args.no_eval_l2,
+                tile_x_nm=args.tile_x_nm, per_tile_limit=args.per_tile_limit)
 
             n_fk = sum(1 for v in lmap.values() if len(v) > 1)
             print(f"  Edit signal: {n_fk} frankenmerges "
