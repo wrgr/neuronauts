@@ -584,3 +584,89 @@ def partition_observations_tiled(
             next_id += 1
         result[node] = canonical[root]
     return result
+
+
+def fragment_completeness(
+    root_label_map: dict[int, set[int]],
+) -> dict[int, bool]:
+    """Classify each v117 fragment as complete (no edit needed) or not.
+
+    A fragment is *complete* when it maps 1-to-1 with a single v1718 neuron:
+    the v117 root and the v1718 root are already identical — no merging with
+    other fragments is needed, and it isn't a frankenmerge that needs splitting.
+
+    Parameters
+    ----------
+    root_label_map:
+        ``{v117_root: set_of_v1718_roots}`` as returned by
+        ``build_region_world``.  Entries with ``len > 1`` are frankenmerges.
+
+    Returns
+    -------
+    dict[int, bool]
+        ``True``  → fragment already correct, no edit needed.
+        ``False`` → fragment needs merging with others, or is a frankenmerge.
+    """
+    # Invert: v1718 → all v117 roots that map to it
+    v1718_to_v117s: dict[int, list[int]] = {}
+    for v117, v1718s in root_label_map.items():
+        for v1718 in v1718s:
+            v1718_to_v117s.setdefault(v1718, []).append(v117)
+
+    result: dict[int, bool] = {}
+    for v117, v1718s in root_label_map.items():
+        if len(v1718s) != 1:
+            # frankenmerge: straddles two v1718 neurons → needs splitting
+            result[v117] = False
+            continue
+        (v1718,) = v1718s
+        # complete only if this is the sole contributor to the v1718 neuron
+        result[v117] = len(v1718_to_v117s[v1718]) == 1
+
+    return result
+
+
+def completeness_metrics(
+    root_label_map: dict[int, set[int]],
+    pred_completeness: dict[int, bool],
+) -> dict:
+    """Precision / recall / F1 for completeness prediction.
+
+    Parameters
+    ----------
+    root_label_map:
+        Ground-truth ``{v117_root: set_of_v1718_roots}`` from world-building.
+    pred_completeness:
+        ``{v117_root: predicted_complete_bool}`` from a model or heuristic.
+
+    Returns
+    -------
+    dict with keys: precision, recall, f1, accuracy, n_complete_gt, n_fragments.
+    """
+    gt = fragment_completeness(root_label_map)
+    common = [f for f in gt if f in pred_completeness]
+    if not common:
+        return {"precision": float("nan"), "recall": float("nan"),
+                "f1": float("nan"), "accuracy": float("nan"),
+                "n_complete_gt": sum(gt.values()), "n_fragments": len(gt)}
+
+    y_true = np.array([gt[f] for f in common], dtype=bool)
+    y_pred = np.array([pred_completeness[f] for f in common], dtype=bool)
+
+    tp = int((y_true & y_pred).sum())
+    fp = int((~y_true & y_pred).sum())
+    fn = int((y_true & ~y_pred).sum())
+    acc = float((y_true == y_pred).mean())
+    prec = tp / (tp + fp) if (tp + fp) > 0 else float("nan")
+    rec  = tp / (tp + fn) if (tp + fn) > 0 else float("nan")
+    f1   = (2 * prec * rec / (prec + rec)
+            if prec + rec > 0 else float("nan"))
+
+    return {
+        "precision": prec,
+        "recall": rec,
+        "f1": f1,
+        "accuracy": acc,
+        "n_complete_gt": int(y_true.sum()),
+        "n_fragments": len(common),
+    }

@@ -277,6 +277,7 @@ def main() -> int:
         evaluate_partition, merge_metrics,
         partition_observations_cc, partition_observations_tiled,
         train_edge_partition_multi_region,
+        fragment_completeness, completeness_metrics,
     )
     from treestitch.realworld import build_region_world, build_region_world_dual
 
@@ -298,6 +299,9 @@ def main() -> int:
     train_bboxes = [b for _, b in _ALL_TRAIN]
 
     # ── Test bboxes ─────────────────────────────────────────────────────────
+    # P1 is in the proofread-dense column (y=1170-1570k nm), where nucleus-level
+    # edit rate is ~100% and L2-level v117 fragmentation is substantial.  It lies
+    # well above the training y-band (930-1000k nm) so there is no train/test leakage.
     _ALL_IN_COL = [
         ("T1", "T1 x=1150-1350k (reference)",
          ((1_150_000, y0, z0), (1_350_000, y1, z1))),
@@ -307,6 +311,8 @@ def main() -> int:
          ((1_150_000, 870_000, z0), (1_350_000, 940_000, z1))),
         ("T4", "T4 y-shift north (y=1000-1070k)",
          ((1_150_000, 1_000_000, z0), (1_350_000, 1_070_000, z1))),
+        ("P1", "P1 proofread-dense column (y=1170-1570k, z=794-1194k)",
+         ((1_437_000, 1_170_000, 794_000), (1_837_000, 1_570_000, 1_194_000))),
     ]
     if args.eval_regions:
         _esel = set(r.strip().upper() for r in args.eval_regions.split(","))
@@ -554,6 +560,22 @@ def main() -> int:
             ev = evaluate_partition(pred, graph.labels)
             mm = merge_metrics(graph, pred)
 
+            # Completeness: which v117 roots need no further merging?
+            # Predicted complete = all its synapses fall in a singleton cluster
+            # (model kept it isolated, no merges triggered).
+            _fids = graph.fragment_id
+            _frag_clusters: dict[int, set] = {}
+            _cluster_frags: dict[int, set] = {}
+            for _f, _c in zip(_fids.tolist(), pred.tolist()):
+                if _c >= 0:
+                    _frag_clusters.setdefault(int(_f), set()).add(int(_c))
+                    _cluster_frags.setdefault(int(_c), set()).add(int(_f))
+            pred_completeness = {
+                f: (len(cs) == 1 and len(_cluster_frags[next(iter(cs))]) == 1)
+                for f, cs in _frag_clusters.items()
+            }
+            cm = completeness_metrics(lmap, pred_completeness)
+
             # Synapse count distribution across predicted fragments (pre-side).
             _, _pre_counts = np.unique(pred, return_counts=True)
             syn_pre_min = int(_pre_counts.min())
@@ -642,6 +664,13 @@ def main() -> int:
                   f"soma={soma_frac:.1%}" if nucleus_pos_nm is not None
                   else f"  cable_med={cable_med:.0f}µm  max_path={max_path_med:.0f}µm  "
                        f"tort={tort_med:.2f}  is_tree={is_tree:.3f}  n_neurons={len(shapes)}")
+            n_complete_gt = cm["n_complete_gt"]
+            n_frags_total = cm["n_fragments"]
+            print(f"  completeness: P={cm['precision']:.3f}  R={cm['recall']:.3f}  "
+                  f"F1={cm['f1']:.3f}  acc={cm['accuracy']:.3f}  "
+                  f"(GT complete: {n_complete_gt}/{n_frags_total} "
+                  f"= {n_complete_gt/n_frags_total:.0%} of fragments)")
+
             if has_conn:
                 print(f"  conn_edge_F1(dir)={conn['conn_edge_f1']:.3f}  "
                       f"P={conn['conn_edge_precision']:.3f}  R={conn['conn_edge_recall']:.3f}  "
@@ -667,6 +696,12 @@ def main() -> int:
                 "over": mm["over_merge_rate"],
                 "under": mm["under_merge_rate"],
                 "fk": mm["frankenmerge_split_recall"],
+                "complete_p": cm["precision"],
+                "complete_r": cm["recall"],
+                "complete_f1": cm["f1"],
+                "complete_acc": cm["accuracy"],
+                "n_complete_gt": n_complete_gt,
+                "complete_frac_gt": n_complete_gt / n_frags_total if n_frags_total else float("nan"),
                 "syn_pre_min": syn_pre_min,
                 "syn_pre_max": syn_pre_max,
                 "syn_pre_med": syn_pre_med,
@@ -992,6 +1027,12 @@ def main() -> int:
               f"range=[{min(aris):.3f}, {max(aris):.3f}]")
         print(f"    merge_P:   mean={np.mean(mps):.3f}   std={np.std(mps):.3f}  "
               f"range=[{min(mps):.3f}, {max(mps):.3f}]")
+        cmplt_f1s = [r["complete_f1"] for r in good_in
+                     if r.get("complete_f1") == r.get("complete_f1")]
+        if cmplt_f1s:
+            print(f"    cmplt_F1:  mean={np.mean(cmplt_f1s):.3f}  "
+                  f"std={np.std(cmplt_f1s):.3f}  "
+                  f"range=[{min(cmplt_f1s):.3f}, {max(cmplt_f1s):.3f}]")
         if cf1s:
             print(f"    conn_F1:   mean={np.mean(cf1s):.3f}  std={np.std(cf1s):.3f}  "
                   f"range=[{min(cf1s):.3f}, {max(cf1s):.3f}]")
@@ -1006,6 +1047,22 @@ def main() -> int:
             print(f"    lg_pre_F1: mean={np.mean(lg_pre_f1s):.3f}  "
                   f"std={np.std(lg_pre_f1s):.3f}  "
                   f"range=[{min(lg_pre_f1s):.3f}, {max(lg_pre_f1s):.3f}]")
+
+    # ── Completeness summary ─────────────────────────────────────────────────
+    cmp_rows = [r for r in good_in if "complete_f1" in r]
+    if cmp_rows:
+        print(f"\n  Completeness (predict which v117 roots need no edit):")
+        print(f"  {'Location':<38} {'F1':>6} {'P':>6} {'R':>6} {'acc':>6} "
+              f"{'%GT_cmplt':>10}")
+        for r in cmp_rows:
+            cf1  = f"{r['complete_f1']:.3f}"  if r['complete_f1']  == r['complete_f1']  else "n/a"
+            cp   = f"{r['complete_p']:.3f}"   if r['complete_p']   == r['complete_p']   else "n/a"
+            cr   = f"{r['complete_r']:.3f}"   if r['complete_r']   == r['complete_r']   else "n/a"
+            cacc = f"{r['complete_acc']:.3f}" if r['complete_acc'] == r['complete_acc'] else "n/a"
+            pct  = f"{r.get('complete_frac_gt', float('nan')):.0%}" \
+                   if r.get('complete_frac_gt', float('nan')) == r.get('complete_frac_gt', float('nan')) \
+                   else "n/a"
+            print(f"  {r['name']:<38} {cf1:>6} {cp:>6} {cr:>6} {cacc:>6} {pct:>10}")
 
     # ── Soma summary ────────────────────────────────────────────────────────
     soma_rows = [r for r in good_in if r.get("soma_frac") == r.get("soma_frac")]
