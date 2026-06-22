@@ -53,6 +53,9 @@ import json
 import sys
 from pathlib import Path
 
+import gc
+import math
+
 import numpy as np
 
 
@@ -79,6 +82,21 @@ def _fmt_in(ev: dict, mm: dict) -> str:
             f"over={mm['over_merge_rate']:.3f}  "
             f"under={mm['under_merge_rate']:.3f}  "
             f"fk={mm['frankenmerge_split_recall']:.3f}")
+
+
+def _tile_bbox_x(bbox, n_tiles: int):
+    """Split a bbox into n_tiles equal sub-bboxes along the x-axis.
+
+    OOC regions can have 10-20k fragments — 3-5× more than typical training
+    regions. Large fragment counts cause OOM during L2 skeleton fetching and
+    observation-graph construction. Splitting along x keeps each tile at a
+    manageable fragment count (~3-5k) while preserving the full y/z extent.
+    Metrics are averaged across tiles (weighted by n_nodes for rates).
+    """
+    (x0, y0, z0), (x1, y1, z1) = bbox
+    w = (x1 - x0) / n_tiles
+    return [((x0 + i * w, y0, z0), (x0 + (i + 1) * w, y1, z1))
+            for i in range(n_tiles)]
 
 
 def _fmt_ooc(over: float, cable_med: float, is_tree: float) -> str:
@@ -197,6 +215,13 @@ def main() -> int:
                    help="Use synapse point-cloud fragments for training (no L2 "
                         "skeleton fetches). Fast when the L2 cache is not yet "
                         "warm for newly-discovered fragments.")
+    p.add_argument("--ooc-x-tiles", type=int, default=4,
+                   help="Number of x-axis tiles to split each OOC bbox into "
+                        "(default 4). OOC regions often have 10-20k fragments "
+                        "vs ~3-5k per training region, causing OOM during L2 "
+                        "skeleton fetch and observation-graph construction. "
+                        "Tiling evaluates each sub-bbox independently and "
+                        "averages shape metrics. Set to 1 to disable tiling.")
     p.add_argument("--post-cc-bias", type=float, default=None,
                    help="cc_bias override for the POST side partition (--dual-side). "
                         "Defaults to --cc-bias. Try 0.0, 1.0, 2.0 to loosen "
@@ -481,6 +506,11 @@ def main() -> int:
         ece_train = float("nan")
         train_graphs = []   # not available when loading checkpoint
 
+    # Release training data (fragment tensors, observation graphs) before eval.
+    # Python's allocator may not return memory to the OS immediately, but
+    # explicit collection prevents runaway growth across the eval regions.
+    gc.collect()
+
     # ── Evaluate in-column bboxes ────────────────────────────────────────
     print(f"\n{'='*68}")
     print("IN-COLUMN EVALUATION  (v1718 GT available)")
@@ -602,6 +632,11 @@ def main() -> int:
                   f"out_cands={n_output_cands}  "
                   f"n_merges={mm['n_merges_pred']}  n_splits={mm['n_splits_pred']}  "
                   f"n_true_merges={mm['n_true_merges']}")
+            # Confusion-matrix breakdown: TP/FP/FN/TN over all evaluated edges
+            print(f"  edge decisions: "
+                  f"TP={mm.get('tp_merges',0)}  FP={mm.get('fp_merges',0)}  "
+                  f"FN={mm.get('fn_merges',0)}  TN={mm.get('tn_splits',0)}  "
+                  f"(n_eval={mm['n_edges_eval']})")
             print(f"  cable_med={cable_med:.0f}µm  max_path={max_path_med:.0f}µm  "
                   f"tort={tort_med:.2f}  is_tree={is_tree:.3f}  n_neurons={len(shapes)}  "
                   f"soma={soma_frac:.1%}" if nucleus_pos_nm is not None
@@ -790,62 +825,91 @@ def main() -> int:
         except Exception as exc:
             print(f"  ERROR: {exc}")
             in_col_results.append({"name": name, "error": str(exc)})
+        gc.collect()
 
     # ── Evaluate OOC bboxes ───────────────────────────────────────────────
     print(f"\n{'='*68}")
     print("OUT-OF-COLUMN EVALUATION  (shape plausibility — no GT)")
     print(f"{'='*68}")
 
+    def _eval_ooc_tile(tile_bbox, tile_label):
+        """Evaluate one OOC sub-bbox. Returns metrics dict with shape stats."""
+        frags_t, region_t, lmap_t = build_region_world(
+            tile_bbox, version=args.version, side=args.side,
+            max_synapses=eval_max_syn,
+            min_syn_per_fragment=args.min_syn_per_fragment,
+            seed=args.seed, verbose=True,
+            l2_skeletons=not args.no_eval_l2,
+            tile_x_nm=args.tile_x_nm, per_tile_limit=args.per_tile_limit)
+
+        frags_enc_t = encode_fragments(encoder, frags_t, device=args.device)
+        graph_t = build_observation_graph(region_t, frags_enc_t, side=args.side,
+                                          k_spatial=args.k_spatial)
+
+        pre_tile = args.pre_tile_size
+        if pre_tile and graph_t.n_nodes > pre_tile:
+            print(f"  [{tile_label}] tiled partition "
+                  f"({graph_t.n_nodes} nodes → tiles of {pre_tile})")
+            pred_t = partition_observations_tiled(
+                model, graph_t, tile_size=pre_tile,
+                bias=args.cc_bias, device=args.device)
+        else:
+            pred_t = partition_observations_cc(
+                model, graph_t, bias=args.cc_bias, device=args.device)
+
+        mm_t = merge_metrics(graph_t, pred_t, ignore_label=0)
+        shapes_t = assemble_partition_shapes(
+            frags_t, pred_t, graph_t.fragment_id, stitch_radius_nm=5_000.0)
+        mlist_t = [neuron_shape_metrics(s) for s in shapes_t.values()]
+
+        n_fk_t = sum(1 for v in lmap_t.values() if len(v) > 1)
+        return {
+            "n_nodes": graph_t.n_nodes,
+            "n_franken": n_fk_t,
+            "over": mm_t["over_merge_rate"],
+            "cable_med": float(np.median([m['cable_length_um'] for m in mlist_t])) if mlist_t else 0.0,
+            "max_path_med": float(np.median([m['max_path_length_um'] for m in mlist_t])) if mlist_t else 0.0,
+            "tort_med": float(np.nanmedian([m['tortuosity'] for m in mlist_t])) if mlist_t else float("nan"),
+            "is_tree": float(np.mean([m['is_tree'] for m in mlist_t])) if mlist_t else 0.0,
+            "fully_conn": float(np.mean([m['n_connected_components'] == 1 for m in mlist_t])) if mlist_t else 0.0,
+            "n_neurons": len(shapes_t),
+        }
+
     ooc_results = []
     for name, bbox in OUT_OF_COLUMN:
         print(f"\n[{name}]")
         try:
-            frags, region, lmap = build_region_world(
-                bbox, version=args.version, side=args.side,
-                max_synapses=eval_max_syn,
-                min_syn_per_fragment=args.min_syn_per_fragment,
-                seed=args.seed, verbose=True,
-                l2_skeletons=not args.no_eval_l2,
-                tile_x_nm=args.tile_x_nm, per_tile_limit=args.per_tile_limit)
+            # Tile the OOC bbox along x to keep each tile at ~3-5k fragments.
+            # OOC regions span novel brain areas with mostly uncached L2
+            # skeletons; at 15k+ fragments the L2 fetch + observation graph
+            # construction can exhaust the container's 15 GB memory limit.
+            # We split into args.ooc_x_tiles sub-bboxes, evaluate each
+            # independently, and report weighted-average shape metrics.
+            n_ooc_tiles = max(1, args.ooc_x_tiles)
+            sub_bboxes = _tile_bbox_x(bbox, n_ooc_tiles)
+            tile_results = []
+            n_fk_total = 0
 
-            n_fk = sum(1 for v in lmap.values() if len(v) > 1)
-            print(f"  Edit signal: {n_fk} frankenmerges "
-                  f"({'⚠ some edits' if n_fk > 0 else '✓ unproofread'})")
+            for ti, sub_bbox in enumerate(sub_bboxes):
+                tile_label = f"x-tile {ti+1}/{n_ooc_tiles}"
+                print(f"  [{tile_label}] bbox x={sub_bbox[0][0]/1e3:.0f}-{sub_bbox[1][0]/1e3:.0f}k …")
+                tr = _eval_ooc_tile(sub_bbox, tile_label)
+                tile_results.append(tr)
+                n_fk_total += tr["n_franken"]
+                gc.collect()
 
-            frags_enc = encode_fragments(encoder, frags, device=args.device)
-            graph = build_observation_graph(region, frags_enc, side=args.side,
-                                            k_spatial=args.k_spatial)
+            # Weighted average by n_nodes for rates; median over tiles for
+            # shape metrics (median of medians is a conservative estimator).
+            total_nodes = sum(t["n_nodes"] for t in tile_results) or 1
+            over      = sum(t["over"] * t["n_nodes"] for t in tile_results) / total_nodes
+            cable_med = float(np.median([t["cable_med"] for t in tile_results]))
+            max_path_med = float(np.median([t["max_path_med"] for t in tile_results]))
+            tort_med  = float(np.nanmedian([t["tort_med"] for t in tile_results]))
+            is_tree   = sum(t["is_tree"] * t["n_nodes"] for t in tile_results) / total_nodes
+            fully_conn = sum(t["fully_conn"] * t["n_nodes"] for t in tile_results) / total_nodes
+            n_neurons_total = sum(t["n_neurons"] for t in tile_results)
 
-            # pseudo-labels: each v117 root = 1 neuron
-            frag_id_to_idx = {int(fid): i + 1
-                              for i, fid in enumerate(np.unique(graph.fragment_id))}
-            pseudo_labels = np.array([frag_id_to_idx[int(f)]
-                                      for f in graph.fragment_id], dtype=np.int64)
-
-            pre_tile = args.pre_tile_size
-            if pre_tile and graph.n_nodes > pre_tile:
-                print(f"  tiled pre-side partition "
-                      f"({graph.n_nodes} nodes → tiles of {pre_tile})")
-                pred = partition_observations_tiled(
-                    model, graph, tile_size=pre_tile,
-                    bias=args.cc_bias, device=args.device)
-            else:
-                pred = partition_observations_cc(model, graph, bias=args.cc_bias,
-                                                 device=args.device)
-
-            mm_pseudo = merge_metrics(graph, pred, ignore_label=0)
-            over = mm_pseudo["over_merge_rate"]
-
-            shapes = assemble_partition_shapes(frags, pred, graph.fragment_id,
-                                               stitch_radius_nm=5_000.0)
-            mlist = [neuron_shape_metrics(s) for s in shapes.values()]
-            cable_med    = float(np.median([m['cable_length_um'] for m in mlist])) if mlist else 0.0
-            max_path_med = float(np.median([m['max_path_length_um'] for m in mlist])) if mlist else 0.0
-            tort_med     = float(np.nanmedian([m['tortuosity'] for m in mlist])) if mlist else float("nan")
-            is_tree      = float(np.mean([m['is_tree'] for m in mlist])) if mlist else 0.0
-            fully_conn   = float(np.mean([m['n_connected_components'] == 1
-                                          for m in mlist])) if mlist else 0.0
-
+            print(f"  {n_ooc_tiles} x-tiles aggregated: {n_neurons_total} neurons, {n_fk_total} frankenmerges")
             print(f"  {_fmt_ooc(over, cable_med, is_tree)}  "
                   f"max_path={max_path_med:.0f}µm  tort={tort_med:.2f}  fully_conn={fully_conn:.1%}")
             cable_ok = 500 <= cable_med <= 20_000
@@ -855,11 +919,13 @@ def main() -> int:
                 "name": name, "over": over, "cable_med": cable_med,
                 "max_path_med": max_path_med, "tort_med": tort_med,
                 "is_tree": is_tree, "fully_conn": fully_conn,
-                "n_neurons": len(shapes), "n_franken": n_fk,
+                "n_neurons": n_neurons_total, "n_franken": n_fk_total,
+                "n_ooc_tiles": n_ooc_tiles,
             })
         except Exception as exc:
             print(f"  ERROR: {exc}")
             ooc_results.append({"name": name, "error": str(exc)})
+        gc.collect()
 
     # ── Save bundle ───────────────────────────────────────────────────────
     if args.save_bundle is not None:
