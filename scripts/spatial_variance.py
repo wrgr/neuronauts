@@ -822,8 +822,16 @@ def main() -> int:
             pseudo_labels = np.array([frag_id_to_idx[int(f)]
                                       for f in graph.fragment_id], dtype=np.int64)
 
-            pred = partition_observations_cc(model, graph, bias=args.cc_bias,
-                                             device=args.device)
+            pre_tile = args.pre_tile_size
+            if pre_tile and graph.n_nodes > pre_tile:
+                print(f"  tiled pre-side partition "
+                      f"({graph.n_nodes} nodes → tiles of {pre_tile})")
+                pred = partition_observations_tiled(
+                    model, graph, tile_size=pre_tile,
+                    bias=args.cc_bias, device=args.device)
+            else:
+                pred = partition_observations_cc(model, graph, bias=args.cc_bias,
+                                                 device=args.device)
 
             mm_pseudo = merge_metrics(graph, pred, ignore_label=0)
             over = mm_pseudo["over_merge_rate"]
