@@ -511,6 +511,338 @@ def _assemble_world_arrays(
     return fragments, region, root_label_map
 
 
+# ---------------------------------------------------------------------------
+# L2-node substrate (large-scale merge signal)
+# ---------------------------------------------------------------------------
+#
+# The synapse substrate (build_region_world) samples observations at synapse
+# positions and sliver-filters v117 fragments with < min_syn_per_fragment
+# synapses.  In dense proofread regions this drops the small axon/dendrite
+# fragments — exactly the *merge tail*.  The merge signal we want lives in the
+# L2 arbor, not the sparse synapse cloud.
+#
+# build_region_world_l2 builds the same (fragments, region, root_label_map)
+# contract, but observations are **L2 nodes** (one rep_coord_nm per node) clipped
+# to the bbox.  It is synapse-free: it seeds from nucleus somas in the bbox,
+# walks each proofread (v{version}) neuron's L2 graph, and labels every in-bbox
+# L2 node with its v117 fragment root.  post_root_id is left at 0 (no
+# connectivity); connectome metrics are naturally skipped for this substrate.
+
+
+def _load_nucleus_somas(cache_path: Optional[str] = None) -> np.ndarray:
+    """Return nucleus somas as a structured array ``(sv_id, x_nm, y_nm, z_nm)``.
+
+    Parses the raw merged nucleus CSV directly.  Its columns are
+    ``(id, volume, supervoxel_id, root_id_v1412, x_vox, y_vox, z_vox)`` with
+    voxel size **(4, 4, 40) nm** (mip0) — the same nm frame as the L2 cache's
+    ``rep_coord_nm``, so soma positions and L2 node positions are directly
+    comparable.  (``load_nucleus_positions`` both mis-parses the columns and
+    uses an (8, 8, 40) scale, which double-counts x/y; we parse correctly here.)
+    Rows without a supervoxel (sv == 0) are excluded.
+    """
+    import gzip, io, os
+    import requests
+    from neuronauts.data.loaders import _NUCLEUS_URL
+
+    if cache_path is not None and os.path.exists(cache_path):
+        d = np.load(cache_path)
+        return d["somas"]
+
+    resp = requests.get(_NUCLEUS_URL, timeout=60)
+    resp.raise_for_status()
+    recs: list[tuple] = []
+    with gzip.open(io.BytesIO(resp.content)) as fh:
+        for line in fh:
+            p = line.decode().strip().split(",")
+            if len(p) < 7:
+                continue
+            try:
+                sv = int(p[2]); x = int(p[4]); y = int(p[5]); z = int(p[6])
+            except ValueError:
+                continue
+            if sv > 0:
+                recs.append((sv, x * 4.0, y * 4.0, z * 40.0))
+    dt = np.dtype([("sv", np.uint64), ("x_nm", np.float64),
+                   ("y_nm", np.float64), ("z_nm", np.float64)])
+    somas = np.array(recs, dtype=dt)
+    if cache_path is not None:
+        np.savez_compressed(cache_path, somas=somas)
+    return somas
+
+
+def _l2_nodes_with_coords(root_id: int, *, token: str, bounds_seg_vox=None):
+    """Return ``(l2_ids[uint64], coords_nm[float32, (N,3)])`` for a root.
+
+    Walks the root's L2 nodes (``root_leaves`` at ``stop_layer=2``) and fetches
+    ``rep_coord_nm`` from the L2 attribute cache.  L2 nodes without a cached
+    coordinate are dropped.  Returns ``(empty, empty)`` on any failure.
+
+    ``bounds_seg_vox`` is an optional ``((x0,x1),(y0,y1),(z0,z1))`` in
+    **(8,8,40) nm segmentation voxels**.  When given, the chunkedgraph restricts
+    the returned L2 nodes to chunks intersecting that box — a large speedup for
+    big arbors (the caller still filters by rep_coord for an exact clip).
+    """
+    import requests
+    from neuronauts.data import lineage as L
+
+    params = {"stop_layer": 2}
+    if bounds_seg_vox is not None:
+        (bx0, bx1), (by0, by1), (bz0, bz1) = bounds_seg_vox
+        params["bounds"] = f"{int(bx0)}-{int(bx1)}_{int(by0)}-{int(by1)}_{int(bz0)}-{int(bz1)}"
+        url = (f"{L.CG_SERVER}/segmentation/api/v1/table/{L.SEG_TABLE}"
+               f"/node/{int(root_id)}/leaves")
+        try:
+            resp = requests.get(url, headers=L._headers(token), params=params, timeout=120)
+            l2ids = (np.asarray(resp.json()["leaf_ids"], dtype=np.uint64)
+                     if resp.status_code == 200 else None)
+        except Exception:
+            l2ids = None
+    else:
+        l2ids = L.root_leaves(int(root_id), stop_layer=2, token=token)
+    if l2ids is None or len(l2ids) == 0:
+        return np.zeros(0, np.uint64), np.zeros((0, 3), np.float32)
+
+    url = f"{L.L2_CACHE_SERVER}/l2cache/api/v1/table/{L.L2_TABLE}/attributes"
+    hdr = {**L._headers(token), "Content-Type": "application/json"}
+    coords: dict[int, np.ndarray] = {}
+    try:
+        for start in range(0, len(l2ids), L._L2_BATCH):
+            chunk = l2ids[start:start + L._L2_BATCH].tolist()
+            body = {"l2_ids": chunk, "attribute_names": ["rep_coord_nm"]}
+            resp = requests.post(url, headers=hdr, json=body, timeout=120)
+            if resp.status_code != 200:
+                continue
+            for id_str, attrs in resp.json().items():
+                c = attrs.get("rep_coord_nm")
+                if c is not None and len(c) == 3:
+                    coords[int(id_str)] = np.asarray(c, dtype=np.float32)
+    except Exception:
+        return np.zeros(0, np.uint64), np.zeros((0, 3), np.float32)
+
+    if not coords:
+        return np.zeros(0, np.uint64), np.zeros((0, 3), np.float32)
+    ids = np.array(list(coords.keys()), dtype=np.uint64)
+    pts = np.stack([coords[int(i)] for i in ids], axis=0).astype(np.float32)
+    return ids, pts
+
+
+def build_region_world_l2(
+    bbox_nm: tuple,
+    *,
+    version: int = 1718,
+    max_neurons: int = 0,
+    min_l2_per_fragment: int = 2,
+    v117_timestamp: Optional[int] = None,
+    token: Optional[str] = None,
+    seed: int = 0,
+    verbose: bool = True,
+    nucleus_cache_path: Optional[str] = None,
+    cache_path: Optional[str] = None,
+) -> tuple:
+    """Assemble an L2-node f(v117→v{version}) partition world from a bbox.
+
+    Observations are **L2 nodes** (not synapses), so the small axon/dendrite
+    fragments that carry the merge signal survive.  Seeds from nucleus somas in
+    the bbox, walks each proofread neuron's L2 graph, clips to the bbox, and
+    tags every L2 node with its v117 fragment root.
+
+    Parameters
+    ----------
+    bbox_nm:
+        ``((x0, y0, z0), (x1, y1, z1))`` in nm.
+    version:
+        Proofread label materialization (default 1718).
+    max_neurons:
+        Cap the number of seed neurons (0 = all somas in bbox).  Useful to
+        bound runtime on large/dense boxes.
+    min_l2_per_fragment:
+        Discard v117 fragments with fewer than this many in-bbox L2 nodes.
+        Default 2 (far less aggressive than the synapse sliver filter, by design
+        — the whole point is to keep the small fragments).
+    nucleus_cache_path:
+        Optional cache path for the nucleus position table.
+    cache_path:
+        Optional ``.npz`` path caching the assembled L2-node arrays
+        (pos / frag / label / l2 id) for this bbox.  The L2 walk is the
+        expensive step (~seconds per neuron); with a cache, reruns are instant.
+
+    Returns
+    -------
+    (fragments, region, root_label_map)
+        Same contract as ``build_region_world`` — drop-in for
+        ``build_observation_graph`` and the partition pipeline.  ``post_root_id``
+        is all-zero (no connectivity on this substrate).
+    """
+    import os
+    from neuronauts.data import lineage as L
+    from neuronauts.data.loaders import DEFAULT_TOKEN
+    from neuronauts.schemas import Region
+
+    tok = token or DEFAULT_TOKEN
+    v117_ts = v117_timestamp if v117_timestamp is not None else L.V117_TIMESTAMP
+    v_ts = L.version_timestamp(version)
+    rng = np.random.default_rng(seed)
+
+    (x0, y0, z0), (x1, y1, z1) = bbox_nm
+    if verbose:
+        print(f"Building L2 region world v117→v{version}: "
+              f"[{x0:.0f},{y0:.0f},{z0:.0f}]–[{x1:.0f},{y1:.0f},{z1:.0f}] nm …")
+
+    cached_arrays = None
+    if cache_path is not None and os.path.exists(cache_path):
+        d = np.load(cache_path)
+        cached_arrays = (d["pos"], d["frag_ids"], d["labels"], d["l2_ids"])
+        if verbose:
+            print(f"  loaded cached L2 arrays: {len(d['pos'])} nodes")
+
+    if cached_arrays is not None:
+        pos, frag_ids, labels, l2_ids = cached_arrays
+        pos = pos.astype(np.float32)
+        frag_ids = frag_ids.astype(np.int64)
+        labels = labels.astype(np.int64)
+        l2_ids = l2_ids.astype(np.uint64)
+        return _assemble_l2_world(
+            pos, frag_ids, labels, l2_ids, version=version,
+            min_l2_per_fragment=min_l2_per_fragment, verbose=verbose)
+
+    # 1. Nucleus somas in the bbox → seed v{version} roots.
+    somas = _load_nucleus_somas(cache_path=nucleus_cache_path)
+    in_box = ((somas["x_nm"] >= x0) & (somas["x_nm"] < x1) &
+              (somas["y_nm"] >= y0) & (somas["y_nm"] < y1) &
+              (somas["z_nm"] >= z0) & (somas["z_nm"] < z1))
+    soma = somas[in_box]
+    sv_seed = soma["sv"].astype(np.uint64)
+    sv_seed = sv_seed[sv_seed > 0]
+    if len(sv_seed) == 0:
+        raise RuntimeError("No nucleus somas with supervoxels in bbox")
+
+    seed_roots = L.roots_at(sv_seed, v_ts, token=tok)
+    seed_roots = np.unique(seed_roots[seed_roots > 0])
+    if max_neurons and len(seed_roots) > max_neurons:
+        seed_roots = rng.choice(seed_roots, max_neurons, replace=False)
+    if verbose:
+        print(f"  {len(soma)} somas in bbox → {len(seed_roots)} seed v{version} neurons"
+              f"{f' (capped from more)' if max_neurons else ''}")
+
+    # 2. Walk each neuron's L2 graph, clip to bbox, tag with v117 fragment.
+    #    Restrict the L2 walk to chunks intersecting the bbox (8,8,40 seg voxels)
+    #    so big arbors don't pull their whole (often volume-spanning) node set.
+    bounds_seg_vox = ((x0 / 8, x1 / 8), (y0 / 8, y1 / 8), (z0 / 40, z1 / 40))
+    all_pos: list[np.ndarray] = []
+    all_frag: list[np.ndarray] = []
+    all_label: list[np.ndarray] = []
+    all_l2: list[np.ndarray] = []
+    n_done = 0
+    for rt in seed_roots:
+        ids, pts = _l2_nodes_with_coords(int(rt), token=tok,
+                                         bounds_seg_vox=bounds_seg_vox)
+        if len(ids) == 0:
+            continue
+        keep = ((pts[:, 0] >= x0) & (pts[:, 0] < x1) &
+                (pts[:, 1] >= y0) & (pts[:, 1] < y1) &
+                (pts[:, 2] >= z0) & (pts[:, 2] < z1))
+        ids, pts = ids[keep], pts[keep]
+        if len(ids) == 0:
+            continue
+        v117 = L.roots_at(ids, v117_ts, token=tok)
+        ok = v117 > 0
+        if not ok.any():
+            continue
+        all_pos.append(pts[ok])
+        all_frag.append(v117[ok].astype(np.int64))
+        all_label.append(np.full(int(ok.sum()), int(rt), dtype=np.int64))
+        all_l2.append(ids[ok])
+        n_done += 1
+        if verbose and n_done % 25 == 0:
+            print(f"    {n_done}/{len(seed_roots)} neurons walked, "
+                  f"{sum(len(p) for p in all_pos)} L2 nodes so far …")
+
+    if not all_pos:
+        raise RuntimeError("No in-bbox L2 nodes resolved — check bbox/network")
+
+    pos = np.concatenate(all_pos).astype(np.float32)
+    frag_ids = np.concatenate(all_frag)
+    labels = np.concatenate(all_label)
+    l2_ids = np.concatenate(all_l2)
+
+    if cache_path is not None:
+        np.savez_compressed(cache_path, pos=pos, frag_ids=frag_ids,
+                            labels=labels, l2_ids=l2_ids)
+        if verbose:
+            print(f"  cached {len(pos)} L2 nodes → {cache_path}")
+
+    return _assemble_l2_world(
+        pos, frag_ids, labels, l2_ids, version=version,
+        min_l2_per_fragment=min_l2_per_fragment, verbose=verbose)
+
+
+def _assemble_l2_world(pos, frag_ids, labels, l2_ids, *, version,
+                       min_l2_per_fragment, verbose):
+    """Sliver-filter L2 nodes, build per-v117 fragments + Region + label map.
+
+    Shared by the fresh-walk and cached paths of ``build_region_world_l2``.
+    """
+    from neuronauts.schemas import Region
+
+    # Sliver filter on fragments (keep the tail: default min=2).
+    fu, fc = np.unique(frag_ids, return_counts=True)
+    keep_frags = {int(f) for f, c in zip(fu, fc) if c >= min_l2_per_fragment}
+    mask = np.array([int(f) in keep_frags for f in frag_ids])
+    pos, frag_ids, labels, l2_ids = pos[mask], frag_ids[mask], labels[mask], l2_ids[mask]
+    n_obs = len(pos)
+    if n_obs == 0:
+        raise RuntimeError(
+            f"No fragments with ≥{min_l2_per_fragment} L2 nodes survived; "
+            f"max observed was {int(fc.max()) if len(fc) else 0}.")
+
+    # Build per-v117 fragments (point-cloud / kNN skeleton over their L2 nodes).
+    fragments = []
+    root_label_map: dict[int, set[int]] = {}
+    for fr in np.unique(frag_ids):
+        idxs = np.where(frag_ids == fr)[0]
+        fragments.append(
+            _cloud_fragment(int(fr), f"minnie65_v{version}", pos[idxs], idxs))
+        root_label_map.setdefault(int(fr), set()).update(
+            int(x) for x in np.unique(labels[idxs]))
+
+    n_franken = sum(1 for v in root_label_map.values() if len(v) > 1)
+
+    mins, maxs = pos.min(0), pos.max(0)
+    pad = 5000.0
+    region_bbox = (tuple(float(v) for v in mins - pad),
+                   tuple(float(v) for v in maxs + pad))
+    zeros = np.zeros(n_obs, dtype=np.int64)
+    region = Region(
+        region_id=f"minnie65_v{version}_l2",
+        bbox_nm=region_bbox,
+        voxel_size_nm=(8.0, 8.0, 40.0),
+        seg_version=117,
+        label_version=version,
+        pre_pt_nm=pos,
+        post_pt_nm=pos.copy(),
+        pre_root_id=labels,
+        post_root_id=zeros.copy(),     # no connectivity on the L2 substrate
+        synapse_id=l2_ids.astype(np.int64),  # L2 node id as the observation id
+        pre_seg_id=frag_ids,
+        post_seg_id=zeros.copy(),
+    ).validate()
+
+    if verbose:
+        n_neurons = len(np.unique(labels[labels > 0]))
+        frag_per_neuron: dict[int, int] = {}
+        for f, ls in root_label_map.items():
+            for l in ls:
+                frag_per_neuron[l] = frag_per_neuron.get(l, 0) + 1
+        fpn = np.array(list(frag_per_neuron.values()))
+        print(f"\n  → {n_neurons} neurons, {len(fragments)} v117 fragments, "
+              f"{n_obs} L2 nodes, {n_franken} frankenmerges")
+        print(f"     v117 fragments/neuron: median={np.median(fpn):.0f} "
+              f"mean={fpn.mean():.1f} max={fpn.max()} "
+              f"(≥2 merges: {int((fpn >= 2).sum())}/{len(fpn)})")
+
+    return fragments, region, root_label_map
+
+
 def build_region_world_dual(
     bbox_nm: tuple,
     *,

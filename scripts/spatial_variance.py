@@ -299,9 +299,12 @@ def main() -> int:
     train_bboxes = [b for _, b in _ALL_TRAIN]
 
     # ── Test bboxes ─────────────────────────────────────────────────────────
-    # P1 is in the proofread-dense column (y=1170-1570k nm), where nucleus-level
-    # edit rate is ~100% and L2-level v117 fragmentation is substantial.  It lies
-    # well above the training y-band (930-1000k nm) so there is no train/test leakage.
+    # P1 is the proofread-dense region found by scanning nucleus edit-rate
+    # (~100% of somas here have v117 != v1718). Coordinates are in TRUE nm —
+    # the (4,4,40) nm frame used by fetch_region_synapses and the L2 cache's
+    # rep_coord_nm. It sits south of the training y-band (930-1000k nm) so there
+    # is no train/test leakage. Used by both substrates: the synapse pipeline
+    # (build_region_world) and the L2 pipeline (build_region_world_l2).
     _ALL_IN_COL = [
         ("T1", "T1 x=1150-1350k (reference)",
          ((1_150_000, y0, z0), (1_350_000, y1, z1))),
@@ -311,8 +314,8 @@ def main() -> int:
          ((1_150_000, 870_000, z0), (1_350_000, 940_000, z1))),
         ("T4", "T4 y-shift north (y=1000-1070k)",
          ((1_150_000, 1_000_000, z0), (1_350_000, 1_070_000, z1))),
-        ("P1", "P1 proofread-dense column (y=1170-1570k, z=794-1194k)",
-         ((1_437_000, 1_170_000, 794_000), (1_837_000, 1_570_000, 1_194_000))),
+        ("P1", "P1 proofread-dense region (true-nm x=818-918k, y=685-785k, z=794-994k)",
+         ((818_500, 685_000, 794_000), (918_500, 785_000, 994_000))),
     ]
     if args.eval_regions:
         _esel = set(r.strip().upper() for r in args.eval_regions.split(","))
