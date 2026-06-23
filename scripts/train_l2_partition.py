@@ -174,7 +174,7 @@ def main() -> int:
     p.add_argument("--buffer-frac", type=float, default=0.08,
                    help="x-range fraction dropped as a train/test buffer.")
     p.add_argument("--k-spatial", type=int, default=6)
-    p.add_argument("--embed-epochs", type=int, default=15)
+    p.add_argument("--embed-epochs", type=int, default=60)
     p.add_argument("--partition-epochs", type=int, default=120)
     p.add_argument("--train-max-nodes", type=int, default=25_000)
     p.add_argument("--tile-size", type=int, default=4_000)
@@ -188,7 +188,7 @@ def main() -> int:
     import torch  # noqa: F401
     from treestitch.checkpoint import save_checkpoint
     from treestitch.embed import (
-        FragmentEncoder, encode_fragments, train_fragment_encoder)
+        FragmentEncoder, encode_fragments_morphological, train_fragment_encoder)
     from treestitch.graph import build_observation_graph
     from treestitch.partition import (
         evaluate_partition, merge_metrics,
@@ -239,16 +239,17 @@ def main() -> int:
           f"{sum(1 for v in te_lmap.values() if len(v) > 1)} frankenmerges, "
           f"GT complete {n_te_complete}/{len(te_lmap)} = {n_te_complete/len(te_lmap):.0%}")
 
-    # ── Train encoder + partition GNN on the L2 substrate ─────────────────
+    # ── Encode fragments (morphological descriptor, no training needed) ──────
+    # The GNN encoder collapses on the L2 substrate: centroid-normalised mean
+    # pooling produces near-constant outputs (cos sim ≈ 0.97 at init) so no
+    # contrastive objective can distinguish fragments.  A deterministic PCA-based
+    # descriptor (size, spread, elongation, radii stats) encodes genuine shape
+    # information without collapse and costs zero training time.
     enc_kwargs = dict(node_input_dim=4, d_model=64, output_dim=32)
-    encoder = FragmentEncoder(**enc_kwargs)
-    print(f"\nTraining FragmentEncoder ({args.embed_epochs} epochs) …")
-    if args.embed_epochs > 0:
-        train_fragment_encoder(encoder, [tr_frags], n_epochs=args.embed_epochs,
-                               lr=1e-3, margin=1.0, device=args.device,
-                               root_label_map=tr_lmap, log_every=5)
+    encoder = FragmentEncoder(**enc_kwargs)  # kept for checkpoint compatibility
+    print(f"\nEncoding fragments (morphological descriptor, {args.embed_epochs} encoder epochs skipped) …")
 
-    tr_enc = encode_fragments(encoder, tr_frags, device=args.device)
+    tr_enc = encode_fragments_morphological(tr_frags)
     tr_graph = build_observation_graph(tr_region, tr_enc, side="pre",
                                        k_spatial=args.k_spatial)
     print(f"  train graph: {tr_graph.n_nodes} nodes, {tr_graph.n_edges} edges")
@@ -273,7 +274,7 @@ def main() -> int:
     print(f"  checkpoint → {args.save_checkpoint}")
 
     # ── Eval sweep: merge precision is the trust metric ───────────────────
-    te_enc = encode_fragments(encoder, te_frags, device=args.device)
+    te_enc = encode_fragments_morphological(te_frags)
     te_graph = build_observation_graph(te_region, te_enc, side="pre",
                                        k_spatial=args.k_spatial)
     print(f"\nTest graph: {te_graph.n_nodes} nodes, {te_graph.n_edges} edges")

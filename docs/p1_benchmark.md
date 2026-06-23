@@ -99,10 +99,12 @@ east split:
 |---|---|---|---|---|---|---|---|
 | −6 | 0.652 | 0.998 | 0.997 | **0.001** | 0.465 | 1.000 | 0.635 |
 | −4 | 0.652 | 0.998 | 0.997 | **0.001** | 0.465 | 1.000 | 0.635 |
-| **−2** | **0.581** | 0.994 | 0.997 | **0.005** | 0.533 | 0.912 | **0.673** |
-| 0 | 0.295 | 0.984 | 0.998 | 0.012 | 0.585 | 0.775 | 0.667 |
-| +2 | 0.024 | 0.902 | 0.998 | 0.084 | 0.517 | 0.388 | 0.443 |
-| +4 | 0.001 | 0.781 | 0.999 | 0.217 | 0.400 | 0.075 | 0.126 |
+| **−2** | **0.606** | 0.995 | 0.997 | **0.004** | 0.514 | 0.912 | **0.658** |
+| 0 | 0.303 | 0.978 | 0.998 | 0.017 | 0.468 | 0.550 | 0.506 |
+| +2 | 0.019 | 0.881 | 0.998 | 0.105 | 0.532 | 0.312 | 0.394 |
+| +4 | 0.001 | 0.783 | 1.000 | 0.214 | 0.438 | 0.087 | 0.146 |
+
+*Numbers use the morphological fragment descriptor (v2) — see below.*
 
 Two results:
 
@@ -115,17 +117,30 @@ Two results:
    **1 false merge per ~1000 edges** (over_merge 0.001) while still recovering the
    real merges (merge_R 0.997). False merges are the errors a proofreader cannot
    cheaply undo, so a near-zero over-merge scaffold is one you can build on. The best
-   all-round point is **`cc_bias −2`**: ARI 0.58, over_merge 0.005, and the peak
-   completeness F1 (0.673) — i.e. it also best predicts which v117 roots are already
-   done. Pushing past 0 trades that trust away fast (over_merge 0.08→0.22, ARI
-   collapses).
+   all-round point is **`cc_bias −2`**: ARI 0.61, over_merge 0.004, edge_acc 0.965.
+   Pushing past 0 trades that trust away fast (over_merge 0.10→0.21, ARI collapses).
 
-Checkpoint: `models/neuronauts_l2_partition.pt`. The encoder/DNA branch still
-collapses (pos_cos≈neg_cos≈1) — the partition GNN currently leans on position + the
-same-fragment/spatial edge structure rather than learned morphology, so a better
-fragment encoder is the obvious next lever. Generalization here is held-out *space
-within P1*; cross-region L2 training (build L2 worlds for A–E) is the next step for an
-out-of-region claim.
+## Fragment encoder: morphological descriptor (v2)
+
+The original trained `SkeletonGNN` encoder collapsed on the L2 substrate
+(pos_cos≈neg_cos≈1 throughout training). Root cause: with centroid-normalised
+xyz inputs, the mean-pool readout produces **the same 64D vector for every
+fragment** (`mean(x-cx) = 0` by construction), so the GNN output sits at
+cosine similarity ≈ 0.97 at random init and no contrastive objective can make
+progress from that collapsed starting point.
+
+The fix is `encode_fragments_morphological` (`treestitch/embed.py`): a **deterministic
+PCA-based descriptor** (log node count, centroid-distance radii stats, PCA spread
+along three axes, elongation ratio, endpoint distance). No training, no collapse,
+and the cosine similarity distribution across fragments drops to mean 0.68 (vs 0.97).
+The partition GNN benefits: ARI at `cc_bias −2` rises 0.581→0.606, over_merge drops
+0.005→0.004, and edge classification accuracy reaches 0.965 (vs 0.942 with the
+collapsed GNN). The remaining gap to a *learned* morphological representation is
+the obvious next lever for cross-region generalisation.
+
+Checkpoint: `models/neuronauts_l2_partition.pt`. Generalization here is held-out
+*space within P1*; cross-region L2 training (build L2 worlds for A–E) is the next
+step for an out-of-region claim.
 
 ## Reproduce
 

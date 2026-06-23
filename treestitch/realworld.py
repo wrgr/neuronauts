@@ -116,9 +116,13 @@ def _cloud_fragment(frag_id: int, region_id: str, points: np.ndarray,
         axis = centered[np.argmax(np.linalg.norm(centered, axis=1))]
         proj = centered @ (axis / (np.linalg.norm(axis) + 1e-8))
         endpoints = pts[[int(np.argmin(proj)), int(np.argmax(proj))]]
+        # radius_nm: distance from fragment centroid — encodes local scale
+        # so the GNN mean-pool varies per fragment (breaks constant-feature collapse)
+        radii = np.linalg.norm(centered, axis=1).astype(np.float32)
     else:
         edges = np.zeros((0, 2), dtype=np.int64)
         endpoints = pts.copy()
+        radii = np.zeros(m, dtype=np.float32)
 
     return Fragment(
         fragment_id=frag_id,
@@ -127,7 +131,7 @@ def _cloud_fragment(frag_id: int, region_id: str, points: np.ndarray,
         vertices_nm=pts,
         edges=edges,
         endpoints_nm=endpoints,
-        radius_nm=np.full(m, 200.0, dtype=np.float32),
+        radius_nm=radii,
         synapse_indices=np.asarray(syn_indices, dtype=np.int64),
         dna=None,
     ).validate()
