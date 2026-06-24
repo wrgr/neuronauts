@@ -34,6 +34,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -45,6 +46,16 @@ if str(_ROOT) not in sys.path:
 
 P1_BBOX = ((818_500, 685_000, 794_000), (918_500, 785_000, 994_000))
 L2_CACHE = str(_ROOT / "cache" / "l2_world" / "p1_full.npz")
+L2_WORLD_DIR = str(_ROOT / "cache" / "l2_world")
+
+# Training region bboxes (matches spatial_variance.py _ALL_TRAIN with seam_buffer=50k)
+_TRAIN_REGION_BBOXES = {
+    "A": ((750_000,  930_000, 780_000), (950_000,   1_000_000, 880_000)),
+    "B": ((950_000,  930_000, 780_000), (1_100_000, 1_000_000, 880_000)),  # 50k seam
+    "C": ((1_400_000, 930_000, 780_000), (1_550_000, 1_000_000, 880_000)), # 50k seam
+    "D": ((1_600_000, 930_000, 780_000), (1_750_000, 1_000_000, 880_000)), # 50k seam
+    "E": ((750_000, 1_000_000, 780_000), (950_000,  1_070_000, 880_000)),
+}
 
 
 def _farthest_point_subsample(pts: np.ndarray, k: int, rng) -> np.ndarray:
@@ -183,6 +194,17 @@ def main() -> int:
     p.add_argument("--device", default="cpu")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--save-checkpoint", default="/tmp/neuronauts_l2.pt")
+    p.add_argument("--train-regions", default="",
+                   help="Comma-separated region names (A–E) to train cross-region. "
+                        "Empty = P1-only backward-compat mode. When set, model is "
+                        "trained on named regions; P1 east split is evaluation-only.")
+    p.add_argument("--l2-world-dir", default=L2_WORLD_DIR,
+                   help="Directory for per-region L2 world .npz cache files.")
+    p.add_argument("--cave-token", default="",
+                   help="CAVE chunkedgraph token (falls back to $token env var).")
+    p.add_argument("--nucleus-cache",
+                   default=str(_ROOT / "cache" / "l2_world" / "nucleus_somas.npz"),
+                   help="Nucleus soma position cache for build_region_world_l2.")
     args = p.parse_args()
 
     import torch  # noqa: F401
@@ -247,30 +269,77 @@ def main() -> int:
     # information without collapse and costs zero training time.
     enc_kwargs = dict(node_input_dim=4, d_model=64, output_dim=32)
     encoder = FragmentEncoder(**enc_kwargs)  # kept for checkpoint compatibility
-    print(f"\nEncoding fragments (morphological descriptor, {args.embed_epochs} encoder epochs skipped) …")
 
-    tr_enc = encode_fragments_morphological(tr_frags)
-    tr_graph = build_observation_graph(tr_region, tr_enc, side="pre",
-                                       k_spatial=args.k_spatial)
-    print(f"  train graph: {tr_graph.n_nodes} nodes, {tr_graph.n_edges} edges")
+    # ── Build training graphs ─────────────────────────────────────────────────
+    print(f"\nEncoding fragments (morphological descriptor) …")
+    train_graphs = []
 
-    print(f"\nTraining EdgePartitionGNN ({args.partition_epochs} epochs) …")
+    if args.train_regions:
+        # Cross-region mode: train on external named regions; P1 is eval-only.
+        region_names = [r.strip().upper() for r in args.train_regions.split(",")
+                        if r.strip()]
+        unknown = set(region_names) - set(_TRAIN_REGION_BBOXES)
+        if unknown:
+            p.error(f"Unknown training regions: {sorted(unknown)}; "
+                    f"choices: {sorted(_TRAIN_REGION_BBOXES)}")
+        tok = args.cave_token or os.environ.get("token", "")
+        for name in region_names:
+            bbox = _TRAIN_REGION_BBOXES[name]
+            npz_path = str(Path(args.l2_world_dir) / f"{name}_full.npz")
+            if not Path(npz_path).exists():
+                print(f"\nBuilding {name} L2 world (CAVE API, ~30–60 min) …")
+                from treestitch.realworld import build_region_world_l2
+                build_region_world_l2(
+                    bbox, version=args.version, token=tok,
+                    nucleus_cache_path=args.nucleus_cache, cache_path=npz_path)
+            print(f"\nLoading {name} from {npz_path} …")
+            d2 = np.load(npz_path)
+            r_pos = d2["pos"].astype(np.float32)
+            r_frag = d2["frag_ids"].astype(np.int64)
+            r_label = d2["labels"].astype(np.int64)
+            fu2, fc2 = np.unique(r_frag, return_counts=True)
+            keep2 = {int(f) for f, c in zip(fu2, fc2) if c >= args.min_l2_per_fragment}
+            m2 = np.array([int(f) in keep2 for f in r_frag])
+            r_pos, r_frag, r_label = r_pos[m2], r_frag[m2], r_label[m2]
+            print(f"  {name}: {len(keep2)} fragments, {int(m2.sum())} L2 nodes")
+            reg_frags, reg_region, _ = _build_split_world(
+                r_pos, r_frag, r_label, keep2,
+                version=args.version, k_nodes=args.k_nodes, rng=rng)
+            reg_enc = encode_fragments_morphological(reg_frags)
+            reg_graph = build_observation_graph(
+                reg_region, reg_enc, side="pre", k_spatial=args.k_spatial)
+            print(f"  {name} graph: {reg_graph.n_nodes} nodes, {reg_graph.n_edges} edges")
+            train_graphs.append(reg_graph)
+        print(f"\nCross-region training: {len(train_graphs)} region graphs; "
+              f"P1 east split is held-out eval only")
+    else:
+        # P1-only mode (backward compat): train on west spatial split.
+        tr_enc = encode_fragments_morphological(tr_frags)
+        tr_graph = build_observation_graph(tr_region, tr_enc, side="pre",
+                                           k_spatial=args.k_spatial)
+        print(f"  P1 train graph: {tr_graph.n_nodes} nodes, {tr_graph.n_edges} edges")
+        train_graphs = [tr_graph]
+
+    print(f"\nTraining EdgePartitionGNN ({args.partition_epochs} epochs, "
+          f"{len(train_graphs)} graph(s)) …")
     model, _ = train_edge_partition_multi_region(
-        [tr_graph], n_epochs=args.partition_epochs, lr=1e-3,
+        train_graphs, n_epochs=args.partition_epochs, lr=1e-3,
         franken_hard_frac=0.30, max_train_nodes=args.train_max_nodes,
         device=args.device, seed=args.seed, log_every=20)
 
     # ── Save checkpoint ───────────────────────────────────────────────────
-    _et = tr_graph.edge_type
+    _ref_graph = train_graphs[0]  # use first training graph for architecture inference
+    _et = _ref_graph.edge_type
     n_et = int(max(2, int(_et.max()) + 1)) if len(_et) else 2
-    efd = int(tr_graph.edge_feat.shape[1]) if tr_graph.edge_feat.ndim == 2 else 0
-    gnn_kwargs = dict(input_dim=tr_graph.node_feat.shape[1], d_model=64,
+    efd = int(_ref_graph.edge_feat.shape[1]) if _ref_graph.edge_feat.ndim == 2 else 0
+    gnn_kwargs = dict(input_dim=_ref_graph.node_feat.shape[1], d_model=64,
                       n_edge_types=n_et, output_dim=32, dropout=0.1,
                       edge_feat_dim=efd)
     save_checkpoint(args.save_checkpoint, encoder, model,
                     encoder_kwargs=enc_kwargs, gnn_kwargs=gnn_kwargs,
                     extra={"substrate": "l2", "bbox": P1_BBOX,
-                           "version": args.version, "k_nodes": args.k_nodes})
+                           "version": args.version, "k_nodes": args.k_nodes,
+                           "train_regions": args.train_regions or "P1"})
     print(f"  checkpoint → {args.save_checkpoint}")
 
     # ── Eval sweep: merge precision is the trust metric ───────────────────
