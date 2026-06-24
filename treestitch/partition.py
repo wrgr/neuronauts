@@ -478,6 +478,9 @@ __all__ = [
     "merge_metrics",
     "assemble_partition_shapes",
     "neuron_shape_metrics",
+    "fragment_completeness",
+    "pred_fragment_completeness",
+    "completeness_metrics",
 ]
 
 
@@ -626,6 +629,45 @@ def fragment_completeness(
     return result
 
 
+def pred_fragment_completeness(
+    fragment_id: np.ndarray,
+    pred_labels: np.ndarray,
+    *,
+    ignore_label: int = -1,
+) -> dict[int, bool]:
+    """Classify each v117 fragment as complete according to a partition prediction.
+
+    A fragment is predicted *complete* when all of its observation nodes land in
+    exactly one cluster **and** that cluster contains no observations from any other
+    fragment.  Matches the semantics of ``fragment_completeness`` so the two dicts
+    can be compared by ``completeness_metrics``.
+
+    Parameters
+    ----------
+    fragment_id:
+        [N] array mapping each observation node to its v117 fragment root.
+    pred_labels:
+        [N] predicted cluster assignment per observation node.  Nodes with
+        label == ``ignore_label`` are excluded (treated as unassigned).
+
+    Returns
+    -------
+    dict[int, bool]
+        ``{v117_root: is_predicted_complete}``
+    """
+    frag_clusters: dict[int, set] = {}
+    cluster_frags: dict[int, set] = {}
+    for f, c in zip(fragment_id.tolist(), pred_labels.tolist()):
+        if int(c) == ignore_label:
+            continue
+        frag_clusters.setdefault(int(f), set()).add(int(c))
+        cluster_frags.setdefault(int(c), set()).add(int(f))
+    return {
+        f: (len(cs) == 1 and len(cluster_frags[next(iter(cs))]) == 1)
+        for f, cs in frag_clusters.items()
+    }
+
+
 def completeness_metrics(
     root_label_map: dict[int, set[int]],
     pred_completeness: dict[int, bool],
@@ -662,6 +704,7 @@ def completeness_metrics(
     f1   = (2 * prec * rec / (prec + rec)
             if prec + rec > 0 else float("nan"))
 
+    tn = int((~y_true & ~y_pred).sum())
     return {
         "precision": prec,
         "recall": rec,
@@ -669,4 +712,8 @@ def completeness_metrics(
         "accuracy": acc,
         "n_complete_gt": int(y_true.sum()),
         "n_fragments": len(common),
+        "tp_complete": tp,
+        "fp_complete": fp,
+        "fn_complete": fn,
+        "tn_complete": tn,
     }

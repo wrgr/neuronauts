@@ -216,7 +216,10 @@ def main() -> int:
         evaluate_partition, merge_metrics,
         partition_observations_cc, partition_observations_tiled,
         train_edge_partition_multi_region,
-        completeness_metrics, fragment_completeness)
+        completeness_metrics, fragment_completeness,
+        pred_fragment_completeness)
+    from treestitch.metrics import (
+        compute_full_metrics, print_dashboard, print_boundary_report)
 
     rng = np.random.default_rng(args.seed)
 
@@ -260,6 +263,11 @@ def main() -> int:
     print(f"  test:  {len(te_frags)} frags, {te_region.n_synapses} L2 nodes, "
           f"{sum(1 for v in te_lmap.values() if len(v) > 1)} frankenmerges, "
           f"GT complete {n_te_complete}/{len(te_lmap)} = {n_te_complete/len(te_lmap):.0%}")
+
+    # Boundary-clip diagnostic: how many test fragments are near bbox edges?
+    te_pos  = pos[np.isin(frag, list(test_frags))]
+    te_fids = frag[np.isin(frag, list(test_frags))]
+    print_boundary_report(te_pos, te_fids, P1_BBOX, te_lmap, title="P1 east test split")
 
     # ── Encode fragments (morphological descriptor, no training needed) ──────
     # The GNN encoder collapses on the L2 substrate: centroid-normalised mean
@@ -347,9 +355,6 @@ def main() -> int:
     te_graph = build_observation_graph(te_region, te_enc, side="pre",
                                        k_spatial=args.k_spatial)
     print(f"\nTest graph: {te_graph.n_nodes} nodes, {te_graph.n_edges} edges")
-    print("\nOperating-point sweep (held-out east split):")
-    print(f"  {'cc_bias':>8} {'ARI':>6} {'merge_P':>8} {'merge_R':>8} {'over':>6} "
-          f"{'cmpl_P':>7} {'cmpl_R':>7} {'cmpl_F1':>8}")
     biases = [float(b) for b in args.cc_bias.split(",")]
     for b in biases:
         if te_graph.n_nodes > args.tile_size:
@@ -358,12 +363,9 @@ def main() -> int:
         else:
             pred = partition_observations_cc(model, te_graph, bias=b, device=args.device)
         pred = _reconcile_same_fragment(pred, te_graph.fragment_id)
-        ev = evaluate_partition(pred, te_graph.labels)
-        mm = merge_metrics(te_graph, pred)
-        cm = completeness_metrics(te_lmap, _pred_completeness(te_graph.fragment_id, pred))
-        print(f"  {b:>8.1f} {ev['ari']:>6.3f} {mm['merge_precision']:>8.3f} "
-              f"{mm['merge_recall']:>8.3f} {mm.get('over_merge_rate', 0):>6.3f} "
-              f"{cm['precision']:>7.3f} {cm['recall']:>7.3f} {cm['f1']:>8.3f}")
+        m = compute_full_metrics(pred, te_graph, te_region, te_lmap)
+        train_label = args.train_regions or "P1"
+        print_dashboard(m, title=f"cc_bias={b:+.0f}   train={train_label}  eval=P1-east")
 
     print("\nDONE")
     return 0
