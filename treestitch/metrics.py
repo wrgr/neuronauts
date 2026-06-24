@@ -69,6 +69,15 @@ def _population_stats(
                                       dtype=np.float32)
     merges_pred = int(n_v117 - n_pred)
 
+    # Fragment-level false merges: predicted clusters spanning ≥2 GT neurons
+    n_false_merge_clusters = 0
+    for cl, frags in cluster_to_frags.items():
+        neurons_in_cluster: set = set()
+        for fr in frags:
+            neurons_in_cluster.update(root_label_map.get(int(fr), set()))
+        if len(neurons_in_cluster) > 1:
+            n_false_merge_clusters += 1
+
     # Pred: how many clusters a single v1718 neuron was split into (splits per GT neuron)
     # For each v1718 neuron, collect the set of predicted clusters for its v117 frags
     v1718_to_clusters: dict[int, set] = {}
@@ -115,6 +124,7 @@ def _population_stats(
         "pop_n_pred_clusters":    n_pred,
         "pop_merges_needed_gt":   merges_needed_gt,
         "pop_merges_predicted":   merges_pred,
+        "pop_false_merge_clusters": n_false_merge_clusters,
         # GT fragmentation per neuron
         "pop_frags_per_neuron_mean":   fpn_mean,
         "pop_frags_per_neuron_median": fpn_med,
@@ -226,6 +236,27 @@ def compute_full_metrics(
     m["cmpl_fn"] = cm.get("fn_complete", float("nan"))
     m["cmpl_tn"] = cm.get("tn_complete", float("nan"))
 
+    # 3b. Naive baseline: each v117 fragment = its own cluster (no merging)
+    n_frags_eval = m.get("cmpl_n_fragments", 0)
+    n_gt_cmpl    = m.get("cmpl_n_complete_gt", 0)
+    if n_frags_eval > 0:
+        naive_prec = n_gt_cmpl / n_frags_eval
+        naive_rec  = 1.0
+        m["naive_cmpl_precision"] = naive_prec
+        m["naive_cmpl_recall"]    = naive_rec
+        m["naive_cmpl_f1"]        = (
+            2 * naive_prec * naive_rec / (naive_prec + naive_rec)
+            if (naive_prec + naive_rec) > 0 else float("nan")
+        )
+    else:
+        m["naive_cmpl_precision"] = float("nan")
+        m["naive_cmpl_recall"]    = float("nan")
+        m["naive_cmpl_f1"]        = float("nan")
+    # Naive ARI: use fragment_id as pred (one cluster per v117 fragment)
+    naive_ev = evaluate_partition(graph.fragment_id, graph.labels,
+                                  ignore_label=ignore_label)
+    m["naive_ari"] = naive_ev.get("ari", float("nan"))
+
     # 4. Connectome accuracy (may be unavailable if region has no post labels)
     try:
         from treestitch.connectivity import connectome_accuracy
@@ -302,6 +333,7 @@ def format_dashboard(
     n_pred  = metrics.get("pop_n_pred_clusters", "?")
     mg_gt   = metrics.get("pop_merges_needed_gt",  0)
     mg_pr   = metrics.get("pop_merges_predicted",  0)
+    n_fm_cl = metrics.get("pop_false_merge_clusters", 0)
 
     fpn_m   = metrics.get("pop_frags_per_neuron_mean",   float("nan"))
     fpn_md  = metrics.get("pop_frags_per_neuron_median", float("nan"))
@@ -324,7 +356,27 @@ def format_dashboard(
     lines.append(f"    neurons   v1718 (GT):          {n_v1718:6}  ← target")
     lines.append(f"    clusters  predicted:            {n_pred:6}  ← model output")
     lines.append(f"    merges needed (GT):   {mg_gt:5}   "
-                 f"merges predicted:  {mg_pr:5}")
+                 f"merges predicted: {mg_pr:5}   "
+                 f"false-merge clusters: {n_fm_cl}")
+
+    # Naive baseline comparison
+    naive_ari  = metrics.get("naive_ari",      float("nan"))
+    naive_cf1  = metrics.get("naive_cmpl_f1",  float("nan"))
+    model_ari  = metrics.get("ari",            float("nan"))
+    model_cf1  = metrics.get("cmpl_f1",        float("nan"))
+
+    def _delta(model_v, naive_v):
+        if math.isnan(model_v) or math.isnan(naive_v):
+            return ""
+        d = model_v - naive_v
+        return f"  ({d:+.3f} vs naive)"
+
+    lines.append(f"    NAIVE baseline (0 merges):  ARI {_fmt(naive_ari)}  "
+                 f"cmpl_F1 {_fmt(naive_cf1)}")
+    lines.append(f"    MODEL  (this eval):         ARI {_fmt(model_ari)}"
+                 f"{_delta(model_ari, naive_ari)}  "
+                 f"cmpl_F1 {_fmt(model_cf1)}"
+                 f"{_delta(model_cf1, naive_cf1)}")
     lines.append(f"    GT frags/neuron  mean {fpn_m:.2f}  median {fpn_md:.0f}  max {fpn_mx:.0f}")
     lines.append(f"    pred clusters/GT-neuron  "
                  f"mean {_fmt(cpv_m)}  median {cpv_md:.0f}  max {cpv_mx:.0f}  "
