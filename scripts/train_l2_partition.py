@@ -194,6 +194,8 @@ def main() -> int:
     p.add_argument("--device", default="cpu")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--save-checkpoint", default="/tmp/neuronauts_l2.pt")
+    p.add_argument("--load-checkpoint", default="",
+                   help="Load an existing checkpoint and skip training (eval-only).")
     p.add_argument("--train-regions", default="",
                    help="Comma-separated region names (A–E) to train cross-region. "
                         "Empty = P1-only backward-compat mode. When set, model is "
@@ -205,6 +207,9 @@ def main() -> int:
     p.add_argument("--nucleus-cache",
                    default=str(_ROOT / "cache" / "l2_world" / "nucleus_somas.npz"),
                    help="Nucleus soma position cache for build_region_world_l2.")
+    p.add_argument("--boundary-margin", type=float, default=10_000.0,
+                   help="nm from bbox face; fragments within this margin are reported "
+                        "separately as 'boundary-clipped' in the eval sweep (default 10µm).")
     args = p.parse_args()
 
     import torch  # noqa: F401
@@ -328,33 +333,60 @@ def main() -> int:
         print(f"  P1 train graph: {tr_graph.n_nodes} nodes, {tr_graph.n_edges} edges")
         train_graphs = [tr_graph]
 
-    print(f"\nTraining EdgePartitionGNN ({args.partition_epochs} epochs, "
-          f"{len(train_graphs)} graph(s)) …")
-    model, _ = train_edge_partition_multi_region(
-        train_graphs, n_epochs=args.partition_epochs, lr=1e-3,
-        franken_hard_frac=0.30, max_train_nodes=args.train_max_nodes,
-        device=args.device, seed=args.seed, log_every=20)
+    if args.load_checkpoint:
+        # ── Eval-only: load existing checkpoint, skip training ────────────
+        from treestitch.checkpoint import load_checkpoint
+        import torch as _torch
+        print(f"\nLoading checkpoint from {args.load_checkpoint} …")
+        encoder, model = load_checkpoint(args.load_checkpoint)
+        _raw = _torch.load(args.load_checkpoint, map_location="cpu", weights_only=False)
+        _trained_on = _raw.get("extra", {}).get("train_regions", "?")
+        print(f"  loaded (trained on: {_trained_on})")
+    else:
+        print(f"\nTraining EdgePartitionGNN ({args.partition_epochs} epochs, "
+              f"{len(train_graphs)} graph(s)) …")
+        model, _ = train_edge_partition_multi_region(
+            train_graphs, n_epochs=args.partition_epochs, lr=1e-3,
+            franken_hard_frac=0.30, max_train_nodes=args.train_max_nodes,
+            device=args.device, seed=args.seed, log_every=20)
 
-    # ── Save checkpoint ───────────────────────────────────────────────────
-    _ref_graph = train_graphs[0]  # use first training graph for architecture inference
-    _et = _ref_graph.edge_type
-    n_et = int(max(2, int(_et.max()) + 1)) if len(_et) else 2
-    efd = int(_ref_graph.edge_feat.shape[1]) if _ref_graph.edge_feat.ndim == 2 else 0
-    gnn_kwargs = dict(input_dim=_ref_graph.node_feat.shape[1], d_model=64,
-                      n_edge_types=n_et, output_dim=32, dropout=0.1,
-                      edge_feat_dim=efd)
-    save_checkpoint(args.save_checkpoint, encoder, model,
-                    encoder_kwargs=enc_kwargs, gnn_kwargs=gnn_kwargs,
-                    extra={"substrate": "l2", "bbox": P1_BBOX,
-                           "version": args.version, "k_nodes": args.k_nodes,
-                           "train_regions": args.train_regions or "P1"})
-    print(f"  checkpoint → {args.save_checkpoint}")
+        # ── Save checkpoint ───────────────────────────────────────────────────
+        _ref_graph = train_graphs[0]
+        _et = _ref_graph.edge_type
+        n_et = int(max(2, int(_et.max()) + 1)) if len(_et) else 2
+        efd = int(_ref_graph.edge_feat.shape[1]) if _ref_graph.edge_feat.ndim == 2 else 0
+        gnn_kwargs = dict(input_dim=_ref_graph.node_feat.shape[1], d_model=64,
+                          n_edge_types=n_et, output_dim=32, dropout=0.1,
+                          edge_feat_dim=efd)
+        save_checkpoint(args.save_checkpoint, encoder, model,
+                        encoder_kwargs=enc_kwargs, gnn_kwargs=gnn_kwargs,
+                        extra={"substrate": "l2", "bbox": P1_BBOX,
+                               "version": args.version, "k_nodes": args.k_nodes,
+                               "train_regions": args.train_regions or "P1"})
+        print(f"  checkpoint → {args.save_checkpoint}")
 
     # ── Eval sweep: merge precision is the trust metric ───────────────────
+    from treestitch.metrics import boundary_clip_stats
     te_enc = encode_fragments_morphological(te_frags)
     te_graph = build_observation_graph(te_region, te_enc, side="pre",
                                        k_spatial=args.k_spatial)
     print(f"\nTest graph: {te_graph.n_nodes} nodes, {te_graph.n_edges} edges")
+
+    # Identify boundary-adjacent fragments once (same for all bias points)
+    bcs = boundary_clip_stats(te_pos, te_fids, P1_BBOX,
+                              margin_nm=args.boundary_margin)
+    boundary_set = set(bcs["boundary_frag_ids"].tolist())
+    interior_set = {int(f) for f in np.unique(te_fids) if f not in boundary_set}
+
+    def _mask_to_ignore(graph, keep_frag_set):
+        """Return a copy of labels with boundary/interior nodes zeroed out."""
+        mask = np.array([int(f) in keep_frag_set
+                         for f in graph.fragment_id], dtype=bool)
+        masked_labels = graph.labels.copy()
+        masked_labels[~mask] = 0   # ignore_label = 0
+        return masked_labels
+
+    train_label = args.train_regions or "P1"
     biases = [float(b) for b in args.cc_bias.split(",")]
     for b in biases:
         if te_graph.n_nodes > args.tile_size:
@@ -363,9 +395,33 @@ def main() -> int:
         else:
             pred = partition_observations_cc(model, te_graph, bias=b, device=args.device)
         pred = _reconcile_same_fragment(pred, te_graph.fragment_id)
-        m = compute_full_metrics(pred, te_graph, te_region, te_lmap)
-        train_label = args.train_regions or "P1"
-        print_dashboard(m, title=f"cc_bias={b:+.0f}   train={train_label}  eval=P1-east")
+
+        # Pass 1: ALL test fragments
+        m_all = compute_full_metrics(pred, te_graph, te_region, te_lmap)
+        print_dashboard(m_all,
+                        title=f"cc_bias={b:+.0f}  ALL {len(te_frags)} frags"
+                              f"  train={train_label}  eval=P1-east")
+
+        # Pass 2: INTERIOR only (fragments >{margin}µm from every bbox face)
+        if interior_set:
+            # Subset lmap and re-score on interior nodes only
+            # We pass a filtered graph view by zeroing out non-interior labels
+            class _InteriorView:
+                labels      = _mask_to_ignore(te_graph, interior_set)
+                fragment_id = te_graph.fragment_id
+                edge_src    = te_graph.edge_src
+                edge_dst    = te_graph.edge_dst
+                edge_type   = te_graph.edge_type
+                edge_feat   = te_graph.edge_feat
+                n_nodes     = te_graph.n_nodes
+
+            int_lmap = {k: v for k, v in te_lmap.items() if k in interior_set}
+            m_int = compute_full_metrics(pred, _InteriorView(), te_region, int_lmap)
+            n_int = len(interior_set)
+            margin_um = int(args.boundary_margin / 1000)
+            print_dashboard(m_int,
+                            title=f"cc_bias={b:+.0f}  INTERIOR {n_int} frags "
+                                  f"(>{margin_um}µm from face)  train={train_label}")
 
     print("\nDONE")
     return 0
