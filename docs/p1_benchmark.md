@@ -120,6 +120,40 @@ Two results:
    all-round point is **`cc_bias −2`**: ARI 0.61, over_merge 0.004, edge_acc 0.965.
    Pushing past 0 trades that trust away fast (over_merge 0.10→0.21, ARI collapses).
 
+## Cross-region generalisation
+
+To make an honest out-of-region claim, we train on five geographically separate
+regions (A–E, none overlapping P1) and evaluate on the same P1 east split.
+
+**Training regions** (L2 worlds built from CAVE API, cached to `cache/l2_world/`):
+
+| Region | Neurons | Fragments | L2 nodes |
+|--------|---------|-----------|----------|
+| A | 432 | 484 | 720k |
+| B | 305 | 302 | 503k |
+| C | 175 | 199 | 200k |
+| D | 200 | 221 | 37k |
+| E | 313 | 345 | 661k |
+| **Total** | **1,425** | **1,551** | **2.1M** |
+
+Conservatism sweep on P1 east (172 fragments, **never seen during training**):
+
+| cc_bias | ARI | merge_P | merge_R | **over_merge** | cmpl_P | cmpl_R | cmpl_F1 |
+|---|---|---|---|---|---|---|---|
+| −6 | **0.652** | 0.998 | 0.997 | **0.001** | 0.465 | 1.000 | 0.635 |
+| −4 | **0.652** | 0.998 | 0.997 | **0.001** | 0.465 | 1.000 | 0.635 |
+| −2 | **0.652** | 0.998 | 0.997 | **0.001** | 0.465 | 1.000 | 0.635 |
+| 0 | 0.006 | 0.826 | 0.999 | 0.162 | 0.455 | 0.188 | 0.265 |
+| +2 | −0.000 | 0.775 | 1.000 | 0.225 | 0.250 | 0.013 | 0.024 |
+
+**Cross-region model matches the P1-trained model at the trustworthy operating
+point** (ARI 0.652, over_merge 0.001), trained entirely on A–E. The conservative
+plateau extends one bias step further (cc_bias −2 stays at the −4/−6 quality rather
+than relaxing as it does for the P1-trained model), but the peak ARI is identical.
+This confirms the L2 substrate and morphological descriptor generalise across regions.
+
+Checkpoint: `models/neuronauts_l2_partition_xregion.pt`.
+
 ## Fragment encoder: morphological descriptor (v2)
 
 The original trained `SkeletonGNN` encoder collapsed on the L2 substrate
@@ -163,3 +197,13 @@ The L2 world (533 neurons, 1.38M nodes, ~52 min to build) is cached to
 `cache/l2_world/p1_full.npz` (git-lfs); reruns load in seconds. P1 is also wired into
 `scripts/spatial_variance.py` as in-column eval region `P1`. The L2-trained
 checkpoint is `models/neuronauts_l2_partition.pt`.
+
+```bash
+# train cross-region (A–E → P1 eval; caches load instantly, training ~15 min):
+PYTHONPATH=$PWD python3 scripts/train_l2_partition.py \
+  --train-regions A,B,C,D,E \
+  --save-checkpoint models/neuronauts_l2_partition_xregion.pt
+```
+
+Region L2 worlds (A–E) are cached to `cache/l2_world/{A,B,C,D,E}_full.npz` (git-lfs).
+The cross-region checkpoint is `models/neuronauts_l2_partition_xregion.pt`.
