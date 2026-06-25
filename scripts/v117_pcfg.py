@@ -289,9 +289,14 @@ def _cross_box_analysis(
           f"max={neg_dists.max()/1e3:.1f} µm")
     print()
     _run_cv(X_xb[:, dist_idx], y_xb, n_folds, seed, "distance only (1 feat)")
+    print("-- LR --")
     _run_cv(X_xb[:, bg_idx],   y_xb, n_folds, seed, "bigram-syntax (16+16 feats)")
     _run_cv(X_xb[:, be_idx],   y_xb, n_folds, seed, "bigram + entropy (17+17 feats)")
     _run_cv(X_xb,               y_xb, n_folds, seed, "bigram + entropy + dist (35 feats)")
+    print("-- RF --")
+    _run_cv(X_xb[:, bg_idx],   y_xb, n_folds, seed, "bigram-syntax RF (16+16 feats)", classifier="rf")
+    _run_cv(X_xb[:, be_idx],   y_xb, n_folds, seed, "bigram + entropy RF (17+17 feats)", classifier="rf")
+    _run_cv(X_xb,               y_xb, n_folds, seed, "bigram + entropy + dist RF (35 feats)", classifier="rf")
 
 
 # ---------------------------------------------------------------------------
@@ -364,9 +369,14 @@ def _run_cv(
     n_folds: int,
     seed: int,
     label: str,
+    classifier: str = "lr",
 ) -> float:
-    """Stratified k-fold CV with LogisticRegression; returns mean ROC-AUC."""
+    """Stratified k-fold CV; returns mean ROC-AUC.
+
+    classifier: 'lr' = LogisticRegression (default), 'rf' = RandomForest
+    """
     try:
+        from sklearn.ensemble import RandomForestClassifier
         from sklearn.linear_model import LogisticRegression
         from sklearn.metrics import roc_auc_score
         from sklearn.model_selection import StratifiedKFold
@@ -387,10 +397,16 @@ def _run_cv(
         scaler = StandardScaler()
         X_tr = scaler.fit_transform(np.nan_to_num(X[train_idx]))
         X_va = scaler.transform(np.nan_to_num(X[val_idx]))
-        clf = LogisticRegression(
-            max_iter=1000, class_weight="balanced", random_state=seed
-        )
-        clf.fit(X_tr, y[train_idx])
+        if classifier == "rf":
+            clf = RandomForestClassifier(
+                n_estimators=200, class_weight="balanced", random_state=seed, n_jobs=-1
+            )
+            clf.fit(X_tr, y[train_idx])
+        else:
+            clf = LogisticRegression(
+                max_iter=1000, class_weight="balanced", random_state=seed
+            )
+            clf.fit(X_tr, y[train_idx])
         probs[val_idx] = clf.predict_proba(X_va)[:, 1]
 
     auc = float(roc_auc_score(y, probs))
@@ -519,10 +535,14 @@ def main() -> None:
     _run_cv(X[:, dist_idx], y,      args.cv_folds, args.seed, "distance only (1 feat)")
     _run_cv(X,              y_perm, args.cv_folds, args.seed, "permuted labels (null)")
     print()
-    print("-- Grammar --")
+    print("-- Grammar (LR) --")
     _run_cv(X[:, bg_idx], y, args.cv_folds, args.seed, "bigram-syntax (16+16 feats)")
     _run_cv(X[:, be_idx], y, args.cv_folds, args.seed, "bigram + entropy (17+17 feats)")
     _run_cv(X,            y, args.cv_folds, args.seed, "bigram + entropy + dist (35 feats)")
+    print("-- Grammar (RF, non-linear) --")
+    _run_cv(X[:, bg_idx], y, args.cv_folds, args.seed, "bigram-syntax RF (16+16 feats)", classifier="rf")
+    _run_cv(X[:, be_idx], y, args.cv_folds, args.seed, "bigram + entropy RF (17+17 feats)", classifier="rf")
+    _run_cv(X,            y, args.cv_folds, args.seed, "bigram + entropy + dist RF (35 feats)", classifier="rf")
     _merge_report(X, y, all_partitions, args.cv_folds, args.seed)
 
     # -- Distance-matched negatives (honest grammar test) -----------------
@@ -539,10 +559,14 @@ def main() -> None:
     _run_cv(X_md[:, dist_idx], y_md,      args.cv_folds, args.seed, "distance only (1 feat) [should be ~0.5]")
     _run_cv(X_md,              y_perm_md, args.cv_folds, args.seed, "permuted labels (null)")
     print()
-    print("-- Grammar (honest) --")
+    print("-- Grammar (honest, LR) --")
     _run_cv(X_md[:, bg_idx], y_md, args.cv_folds, args.seed, "bigram-syntax (16+16 feats)")
     _run_cv(X_md[:, be_idx], y_md, args.cv_folds, args.seed, "bigram + entropy (17+17 feats)")
     _run_cv(X_md,            y_md, args.cv_folds, args.seed, "bigram + entropy + dist (35 feats)")
+    print("-- Grammar (honest, RF) --")
+    _run_cv(X_md[:, bg_idx], y_md, args.cv_folds, args.seed, "bigram-syntax RF (16+16 feats)", classifier="rf")
+    _run_cv(X_md[:, be_idx], y_md, args.cv_folds, args.seed, "bigram + entropy RF (17+17 feats)", classifier="rf")
+    _run_cv(X_md,            y_md, args.cv_folds, args.seed, "bigram + entropy + dist RF (35 feats)", classifier="rf")
 
     # -- Cross-box analysis (only meaningful when n_boxes > 1) -------------
     if n_boxes_used > 1:
