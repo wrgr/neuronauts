@@ -208,6 +208,93 @@ def _fetch_one_box(
 
 
 # ---------------------------------------------------------------------------
+# Cross-box analysis (honest grammar test)
+# ---------------------------------------------------------------------------
+
+def _cross_box_analysis(
+    all_partitions: list,
+    box_ids: list,
+    n_folds: int,
+    seed: int,
+    rng: np.random.Generator,
+    max_neg_ratio: float,
+) -> None:
+    """Grammar evaluation on cross-box positive pairs only.
+
+    Cross-box positives: same v1412 root, partitions from *different* boxes.
+    Their centroid distances are on the order of box offsets (~30 um), which
+    overlaps the negative pair range — so distance carries no free signal and
+    the grammar must do the work.
+    """
+    from itertools import combinations as _comb
+    from experiments.pcfg_synapse_partitions.pcfg_partitions import (
+        partition_features, BIGRAM_DIM, FEAT_DIM,
+    )
+
+    feats     = [partition_features(p) for p in all_partitions]
+    centroids = [p.pts.mean(axis=0) for p in all_partitions]
+    v18xx     = [p.v18xx_root for p in all_partitions]
+
+    pos_rows: list = []
+    neg_rows: list = []
+
+    for i, j in _comb(range(len(all_partitions)), 2):
+        if box_ids[i] == box_ids[j]:
+            continue  # same box — skip
+        if all_partitions[i].root_id == all_partitions[j].root_id:
+            continue  # identical root ID (shouldn't happen across boxes but guard it)
+        dist = float(np.linalg.norm(centroids[i] - centroids[j]))
+        if v18xx[i] == v18xx[j]:
+            pos_rows.append((feats[i], feats[j], dist, 1))
+        else:
+            neg_rows.append((feats[i], feats[j], dist, 0))
+
+    n_pos_xb = len(pos_rows)
+    if n_pos_xb == 0:
+        print()
+        print("Cross-box analysis: no cross-box positive pairs found.")
+        print("  (no v1412 root appears in more than one box)")
+        return
+
+    n_neg = min(len(neg_rows), max(1, int(n_pos_xb * max_neg_ratio)))
+    neg_rows.sort(key=lambda r: r[2])
+    neg_rows = neg_rows[:n_neg]
+
+    all_rows = pos_rows + neg_rows
+    order = rng.permutation(len(all_rows))
+    all_rows = [all_rows[k] for k in order]
+
+    X_xb = np.array(
+        [np.concatenate([fa, fb, [np.log1p(d)]]) for fa, fb, d, _ in all_rows],
+        dtype=np.float64,
+    )
+    y_xb = np.array([lbl for _, _, _, lbl in all_rows], dtype=np.int64)
+
+    bg_idx   = list(range(BIGRAM_DIM)) + list(range(FEAT_DIM, FEAT_DIM + BIGRAM_DIM))
+    be_idx   = list(range(FEAT_DIM))   + list(range(FEAT_DIM, FEAT_DIM * 2))
+    dist_idx = [X_xb.shape[1] - 1]
+
+    pct_pos = 100.0 * n_pos_xb / len(y_xb)
+    pos_dists = np.array([r[2] for r in pos_rows])
+    neg_dists = np.array([r[2] for r in neg_rows])
+
+    print()
+    print(f"Cross-box pairs only (n={len(y_xb):,} pairs, {pct_pos:.1f}% positive):")
+    print(f"  [honest grammar test: same-neuron fragments in spatially distinct boxes]")
+    print(f"  Positive dist: min={pos_dists.min()/1e3:.1f}  "
+          f"med={np.median(pos_dists)/1e3:.1f}  "
+          f"max={pos_dists.max()/1e3:.1f} µm")
+    print(f"  Negative dist: min={neg_dists.min()/1e3:.1f}  "
+          f"med={np.median(neg_dists)/1e3:.1f}  "
+          f"max={neg_dists.max()/1e3:.1f} µm")
+    print()
+    _run_cv(X_xb[:, dist_idx], y_xb, n_folds, seed, "distance only (1 feat)")
+    _run_cv(X_xb[:, bg_idx],   y_xb, n_folds, seed, "bigram-syntax (16+16 feats)")
+    _run_cv(X_xb[:, be_idx],   y_xb, n_folds, seed, "bigram + entropy (17+17 feats)")
+    _run_cv(X_xb,               y_xb, n_folds, seed, "bigram + entropy + dist (35 feats)")
+
+
+# ---------------------------------------------------------------------------
 # Partition-level merge evaluation
 # ---------------------------------------------------------------------------
 
@@ -331,9 +418,10 @@ def main() -> None:
     # -- Fetch one or more boxes ------------------------------------------
     centers = _sample_centers(args.center_nm, args.n_boxes, rng)
     all_partitions = []
+    all_box_ids: list[int] = []
     n_boxes_used = 0
 
-    for center_nm in centers:
+    for box_idx, center_nm in enumerate(centers):
         result = _fetch_one_box(center_nm, args.side_um, args.token)
         if result is None:
             continue
@@ -359,6 +447,7 @@ def main() -> None:
             )
 
         all_partitions.extend(parts)
+        all_box_ids.extend([box_idx] * len(parts))
         n_boxes_used += 1
 
     if not all_partitions:
@@ -409,7 +498,21 @@ def main() -> None:
     print(f"  Partitions:  {len(all_partitions)}")
     print(f"  Wall time:   {t_data:.1f} s  (fetch + remap, no skeletons)")
     print()
+    # Distance distribution diagnostic — shows whether distance alone separates
+    # positives from negatives (a key confound in the within-box setting).
+    pos_mask = (y == 1)
+    pos_dists_nm = np.expm1(X[pos_mask, -1])   # undo log1p on the distance feature
+    neg_dists_nm = np.expm1(X[~pos_mask, -1])
+
     print(f"Standard negatives (n={len(y):,} pairs, {pct_pos:.1f}% positive):")
+    print(f"  Positive centroid dist: "
+          f"min={pos_dists_nm.min()/1e3:.1f}  "
+          f"med={np.median(pos_dists_nm)/1e3:.1f}  "
+          f"max={pos_dists_nm.max()/1e3:.1f} µm")
+    print(f"  Negative centroid dist: "
+          f"min={neg_dists_nm.min()/1e3:.1f}  "
+          f"med={np.median(neg_dists_nm)/1e3:.1f}  "
+          f"max={neg_dists_nm.max()/1e3:.1f} µm")
     print("  [negatives = spatially nearest different-neuron pairs]")
     print()
     print("-- Baselines (delta-from-no-changes) --")
@@ -440,6 +543,17 @@ def main() -> None:
     _run_cv(X_md[:, bg_idx], y_md, args.cv_folds, args.seed, "bigram-syntax (16+16 feats)")
     _run_cv(X_md[:, be_idx], y_md, args.cv_folds, args.seed, "bigram + entropy (17+17 feats)")
     _run_cv(X_md,            y_md, args.cv_folds, args.seed, "bigram + entropy + dist (35 feats)")
+
+    # -- Cross-box analysis (only meaningful when n_boxes > 1) -------------
+    if n_boxes_used > 1:
+        _cross_box_analysis(
+            all_partitions,
+            all_box_ids,
+            args.cv_folds,
+            args.seed,
+            np.random.default_rng(args.seed),
+            args.max_neg_ratio,
+        )
 
     print()
     print("reference (same region, v117_coassign.py, 120 epochs, d_model=128):")
