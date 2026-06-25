@@ -193,12 +193,6 @@ def main() -> int:
                         "(e.g. 50k → 1000–2400 fragment nodes). Same tiling + "
                         "same-fragment-edge reconciliation as --post-tile-size. "
                         "Recommended: 600 (matches typical training graph size).")
-    p.add_argument("--tile-x-nm", type=float, default=0,
-                   help="If >0, fetch synapses via x-axis tiling (40000 = 40µm tiles). "
-                        "Matches warm_cache.py tiling so all tile cache entries are hits. "
-                        "Use with --per-tile-limit=200000 for full honest coverage.")
-    p.add_argument("--per-tile-limit", type=int, default=200_000,
-                   help="Max synapses per tile when --tile-x-nm>0 (default 200000).")
     p.add_argument("--train-regions", default=None,
                    help="Comma-separated subset of train regions to use, e.g. 'E,D'. "
                         "Default: use all (A,B,C,D,E).")
