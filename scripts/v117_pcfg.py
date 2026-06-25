@@ -203,6 +203,66 @@ def _fetch_one_box(
 
 
 # ---------------------------------------------------------------------------
+# Partition-level merge evaluation
+# ---------------------------------------------------------------------------
+
+def _merge_report(
+    X: np.ndarray,
+    y: np.ndarray,
+    partitions: list,
+    n_folds: int,
+    seed: int,
+) -> None:
+    """Report precision/recall/F1 of grammar-predicted merges vs the no-changes baseline.
+
+    The 'no-changes' baseline makes zero merges: recall=0, F1=0. Any F1 above
+    zero is the delta the grammar provides.  We also report how many merges the
+    grammar suggests so the user can gauge the edit budget.
+    """
+    try:
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.model_selection import StratifiedKFold
+        from sklearn.preprocessing import StandardScaler
+    except ImportError:
+        return
+
+    n_pos = int(y.sum())
+    n_neg = len(y) - n_pos
+    if n_pos < n_folds or n_neg < n_folds:
+        return
+
+    # Out-of-fold probabilities from the best classifier (full 35-dim features)
+    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=seed)
+    oof_prob = np.zeros(len(y), dtype=np.float64)
+    for tr, va in skf.split(X, y):
+        sc = StandardScaler()
+        X_tr = sc.fit_transform(np.nan_to_num(X[tr]))
+        X_va = sc.transform(np.nan_to_num(X[va]))
+        clf = LogisticRegression(max_iter=1000, class_weight="balanced", random_state=seed)
+        clf.fit(X_tr, y[tr])
+        oof_prob[va] = clf.predict_proba(X_va)[:, 1]
+
+    # Evaluate at threshold 0.5
+    pred = (oof_prob >= 0.5).astype(int)
+    tp = int(((pred == 1) & (y == 1)).sum())
+    fp = int(((pred == 1) & (y == 0)).sum())
+    fn = int(((pred == 0) & (y == 1)).sum())
+
+    prec  = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    rec   = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    f1    = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
+    n_suggested = tp + fp
+
+    print()
+    print("-- Merge decision (threshold=0.50) --")
+    print(f"  True merges needed:   {n_pos} pairs")
+    print(f"  Grammar suggests:     {n_suggested} merges ({tp} correct, {fp} wrong)")
+    print(f"  No-changes baseline:  P=1.00  R=0.00  F1=0.00  (0 merges made)")
+    print(f"  Grammar:              P={prec:.2f}  R={rec:.2f}  F1={f1:.2f}")
+    print(f"  Delta F1 over no-changes: +{f1:.2f}")
+
+
+# ---------------------------------------------------------------------------
 # CV helper (identical logic to run_experiment.py)
 # ---------------------------------------------------------------------------
 
@@ -323,8 +383,12 @@ def main() -> None:
 
     # -- Feature slices ---------------------------------------------------
     # Layout: [bigram_a(16) | entropy_a(1) | bigram_b(16) | entropy_b(1) | log_dist(1)]
-    bg_idx = list(range(BIGRAM_DIM)) + list(range(FEAT_DIM, FEAT_DIM + BIGRAM_DIM))
-    be_idx = list(range(FEAT_DIM)) + list(range(FEAT_DIM, FEAT_DIM * 2))
+    bg_idx   = list(range(BIGRAM_DIM)) + list(range(FEAT_DIM, FEAT_DIM + BIGRAM_DIM))
+    be_idx   = list(range(FEAT_DIM)) + list(range(FEAT_DIM, FEAT_DIM * 2))
+    dist_idx = [X.shape[1] - 1]  # last column: log1p(centroid_dist_nm)
+
+    # Permuted-label baseline: AUC should be ~0.50 — confirms CV is unbiased
+    y_perm = rng.permutation(y)
 
     # -- Results ----------------------------------------------------------
     print()
@@ -337,10 +401,17 @@ def main() -> None:
     print(f"  Wall time:   {t_data:.1f} s  (fetch + remap, no skeletons)")
     print()
     print(f"(n={len(y):,} pairs, {pct_pos:.1f}% positive):")
-
+    print()
+    print("-- Baselines (delta-from-no-changes) --")
+    _run_cv(X[:, dist_idx], y,      args.cv_folds, args.seed, "distance only (1 feat)")
+    _run_cv(X,              y_perm, args.cv_folds, args.seed, "permuted labels (null)")
+    print()
+    print("-- Grammar --")
     _run_cv(X[:, bg_idx], y, args.cv_folds, args.seed, "bigram-syntax (16+16 feats)")
     _run_cv(X[:, be_idx], y, args.cv_folds, args.seed, "bigram + entropy (17+17 feats)")
     _run_cv(X,            y, args.cv_folds, args.seed, "bigram + entropy + dist (35 feats)")
+
+    _merge_report(X, y, all_partitions, args.cv_folds, args.seed)
 
     print()
     print("reference (same region, v117_coassign.py, 120 epochs, d_model=128):")
