@@ -454,11 +454,17 @@ def main() -> None:
         )
         log.info("  -> %d half-partitions extracted", len(parts))
         if args.verbose:
-            from collections import Counter
-            v18xx_counts = Counter(p.v18xx_root for p in parts)
-            n_multi = sum(1 for cnt in v18xx_counts.values() if cnt >= 2)
+            from collections import Counter as _Counter
+            # Count unique v117 root IDs per v1412 root (true false-split pairs).
+            # Note: sides='both' creates 2 partitions per v117 root (pre+post), both
+            # sharing the same root_id — those are NOT positive pairs. Only partitions
+            # with *different* root_ids mapping to the same v1412 root are positives.
+            v18xx_by_root: dict = {}
+            for p in parts:
+                v18xx_by_root.setdefault(p.v18xx_root, set()).add(p.root_id)
+            n_multi = sum(1 for roots in v18xx_by_root.values() if len(roots) >= 2)
             log.info(
-                "    (%d v1412 roots with >=2 v117 fragments = potential positives)",
+                "    (%d v1412 roots with >=2 distinct v117 root IDs = potential positives)",
                 n_multi,
             )
 
