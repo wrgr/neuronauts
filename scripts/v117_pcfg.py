@@ -1,0 +1,353 @@
+#!/usr/bin/env python3
+"""PCFG synapse partition grammar on real v117 MICrONS data.
+
+Fetches the same spatial region as v117_coassign.py but uses the bigram
+grammar instead of a GNN -- no skeletons, no torch, no GPU required.
+Designed for a direct apples-to-apples comparison with v117_coassign.py.
+
+Usage
+-----
+    # Single 20 um box (same defaults as v117_coassign.py):
+    python scripts/v117_pcfg.py --token $CAVE_TOKEN
+
+    # Larger box for more data:
+    python scripts/v117_pcfg.py --token $CAVE_TOKEN --side-um 40
+
+    # Pool multiple boxes:
+    python scripts/v117_pcfg.py --token $CAVE_TOKEN --n-boxes 5
+
+    # Custom center:
+    python scripts/v117_pcfg.py --token $CAVE_TOKEN \\
+        --center-nm 733592 513592 595640 --side-um 30
+
+CAVE token
+----------
+Create a free account and token at https://global.daf-apis.com and pass
+it via --token or the CAVE_TOKEN environment variable.
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import os
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+
+# Allow running as a script directly from the repo root.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# ---------------------------------------------------------------------------
+# Logging -- mirrors v117_coassign.py setup
+# ---------------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+    force=True,
+)
+for _noisy in ("caveclient", "urllib3", "CAVEclient"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+logging.getLogger().setLevel(logging.WARNING)
+logging.getLogger("neuronauts").setLevel(logging.INFO)
+log = logging.getLogger("v117_pcfg")
+log.setLevel(logging.INFO)
+
+# Same default as v117_coassign.py -- a validated densely-proofread region
+DEFAULT_CENTER_NM = (733_592, 513_592, 595_640)
+DEFAULT_SIDE_UM = 20.0
+
+# MIP-2 voxel size in nm -- matches MIP_VOXEL_SIZES[2] in neuronauts/fetch.py
+_MIP2_VOX = np.array([32.0, 32.0, 40.0], dtype=np.float64)
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        description="PCFG synapse partition grammar on real v117 MICrONS data",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    p.add_argument(
+        "--token",
+        default=os.environ.get("CAVE_TOKEN"),
+        help="CAVE auth token (or set CAVE_TOKEN env var)",
+    )
+    p.add_argument(
+        "--center-nm",
+        nargs=3,
+        type=int,
+        default=list(DEFAULT_CENTER_NM),
+        metavar=("X", "Y", "Z"),
+        help="Bounding box center in global nm",
+    )
+    p.add_argument(
+        "--side-um",
+        type=float,
+        default=DEFAULT_SIDE_UM,
+        help="Bounding box side length in micrometers",
+    )
+    p.add_argument(
+        "--n-boxes",
+        type=int,
+        default=1,
+        help="Number of boxes to fetch (>1 pools partitions from shifted regions)",
+    )
+    p.add_argument(
+        "--side",
+        default="both",
+        choices=["pre", "post", "both"],
+        help="Which synapse side to use for half-partitions",
+    )
+    p.add_argument(
+        "--min-synapses",
+        type=int,
+        default=4,
+        help="Minimum synapses per half-partition",
+    )
+    p.add_argument(
+        "--max-neg-ratio",
+        type=float,
+        default=3.0,
+        help="Max ratio of negative to positive pairs",
+    )
+    p.add_argument(
+        "--cv-folds",
+        type=int,
+        default=5,
+        help="Number of stratified CV folds",
+    )
+    p.add_argument("--seed", type=int, default=42)
+    p.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print per-box stats",
+    )
+    return p.parse_args()
+
+
+# ---------------------------------------------------------------------------
+# Data helpers
+# ---------------------------------------------------------------------------
+
+def _sample_centers(
+    center_nm: list[int],
+    n_boxes: int,
+    rng: np.random.Generator,
+) -> list[tuple[int, ...]]:
+    """Return n_boxes centers: the requested center + random +/-30 um offsets."""
+    centers: list[tuple[int, ...]] = [tuple(center_nm)]
+    if n_boxes > 1:
+        # +/-30,000 nm = +/-30 um shifts; stays within the proofread core
+        offsets = rng.integers(-30_000, 30_000, size=(n_boxes - 1, 3))
+        for off in offsets:
+            c = tuple(int(center_nm[i] + int(off[i])) for i in range(3))
+            centers.append(c)
+    return centers
+
+
+def _fetch_one_box(
+    center_nm: tuple[int, ...],
+    side_um: float,
+    token: str | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict[int, int]] | None:
+    """Fetch synapses + v117->v1412 remap for one box.
+
+    Returns (pre_pt_nm, post_pt_nm, pre_root_id, post_root_id, remap)
+    or None when the box yields no usable data.
+    """
+    from neuronauts.fetch import fetch_synapses, make_cube_bbox_nm
+    from neuronauts.cave_root_mapping import map_roots_between_versions
+
+    bbox_nm = make_cube_bbox_nm(tuple(center_nm), side_um=side_um)
+    log.info("Fetching synapses in %.0f um box around %s ...", side_um, center_nm)
+
+    try:
+        syn = fetch_synapses(bbox_nm, version=117, token=token)
+    except Exception as exc:
+        log.warning("Synapse fetch failed for center %s: %s", center_nm, exc)
+        return None
+
+    if syn.n_synapses == 0:
+        log.warning("No synapses in box %s -- skipping", center_nm)
+        return None
+
+    log.info(
+        "  %d synapses  (%d unique pre roots, %d unique post roots)",
+        syn.n_synapses,
+        int(np.unique(syn.pre_root_id).shape[0]),
+        int(np.unique(syn.post_root_id).shape[0]),
+    )
+
+    # Box-relative MIP-2 voxels -> global nm
+    bbox_origin = np.array(bbox_nm[0], dtype=np.float64)
+    pre_pt_nm  = syn.pre_pt.astype(np.float64)  * _MIP2_VOX + bbox_origin
+    post_pt_nm = syn.post_pt.astype(np.float64) * _MIP2_VOX + bbox_origin
+
+    # Map all unique root IDs to v1412
+    all_roots = list(
+        set(syn.pre_root_id.tolist()) | set(syn.post_root_id.tolist())
+    )
+    log.info("  Mapping %d unique root IDs v117 -> v1412 ...", len(all_roots))
+    try:
+        remap = map_roots_between_versions(all_roots, 117, 1412, token=token)
+    except Exception as exc:
+        log.warning("Root mapping failed for center %s: %s", center_nm, exc)
+        return None
+
+    n_mapped = sum(1 for v in remap.values() if v > 0)
+    log.info("  %d / %d roots have a valid v1412 label", n_mapped, len(all_roots))
+
+    return pre_pt_nm, post_pt_nm, syn.pre_root_id, syn.post_root_id, remap
+
+
+# ---------------------------------------------------------------------------
+# CV helper (identical logic to run_experiment.py)
+# ---------------------------------------------------------------------------
+
+def _run_cv(
+    X: np.ndarray,
+    y: np.ndarray,
+    n_folds: int,
+    seed: int,
+    label: str,
+) -> float:
+    """Stratified k-fold CV with LogisticRegression; returns mean ROC-AUC."""
+    try:
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.metrics import roc_auc_score
+        from sklearn.model_selection import StratifiedKFold
+        from sklearn.preprocessing import StandardScaler
+    except ImportError:
+        print(f"  {label:47s} (sklearn not available)")
+        return float("nan")
+
+    n_pos = int(y.sum())
+    n_neg = len(y) - n_pos
+    if n_pos < n_folds or n_neg < n_folds:
+        print(f"  {label:47s} skipped (too few: {n_pos}+/{n_neg}-)")
+        return float("nan")
+
+    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=seed)
+    probs = np.zeros(len(y), dtype=np.float64)
+    for train_idx, val_idx in skf.split(X, y):
+        scaler = StandardScaler()
+        X_tr = scaler.fit_transform(np.nan_to_num(X[train_idx]))
+        X_va = scaler.transform(np.nan_to_num(X[val_idx]))
+        clf = LogisticRegression(
+            max_iter=1000, class_weight="balanced", random_state=seed
+        )
+        clf.fit(X_tr, y[train_idx])
+        probs[val_idx] = clf.predict_proba(X_va)[:, 1]
+
+    auc = float(roc_auc_score(y, probs))
+    print(f"  {label:47s} CV AUC = {auc:.2f}")
+    return auc
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    args = parse_args()
+
+    rng = np.random.default_rng(args.seed)
+    t0 = time.time()
+
+    from experiments.pcfg_synapse_partitions.pcfg_partitions import (
+        BIGRAM_DIM,
+        FEAT_DIM,
+        build_merge_pairs,
+        extract_partitions,
+    )
+
+    # -- Fetch one or more boxes ------------------------------------------
+    centers = _sample_centers(args.center_nm, args.n_boxes, rng)
+    all_partitions = []
+    n_boxes_used = 0
+
+    for center_nm in centers:
+        result = _fetch_one_box(center_nm, args.side_um, args.token)
+        if result is None:
+            continue
+        pre_pt_nm, post_pt_nm, pre_root_id, post_root_id, remap = result
+
+        parts = extract_partitions(
+            pre_pt_nm,
+            post_pt_nm,
+            pre_root_id,
+            post_root_id,
+            remap,
+            min_synapses=args.min_synapses,
+            sides=args.side,
+        )
+        log.info("  -> %d half-partitions extracted", len(parts))
+        if args.verbose:
+            from collections import Counter
+            v18xx_counts = Counter(p.v18xx_root for p in parts)
+            n_multi = sum(1 for cnt in v18xx_counts.values() if cnt >= 2)
+            log.info(
+                "    (%d v1412 roots with >=2 v117 fragments = potential positives)",
+                n_multi,
+            )
+
+        all_partitions.extend(parts)
+        n_boxes_used += 1
+
+    if not all_partitions:
+        sys.exit(
+            "No partitions found. Check your CAVE token and center coordinates.\n"
+            "The default center requires a valid token for minnie65_public at v117."
+        )
+
+    log.info(
+        "Total: %d half-partitions from %d box(es)",
+        len(all_partitions),
+        n_boxes_used,
+    )
+
+    # -- Build merge pair dataset -----------------------------------------
+    log.info("Building merge pairs (max_neg_ratio=%.1f) ...", args.max_neg_ratio)
+    X, y = build_merge_pairs(
+        all_partitions, max_neg_ratio=args.max_neg_ratio, rng=rng
+    )
+
+    if len(y) == 0:
+        sys.exit("No merge pairs generated. Try --min-synapses 2 or a larger box.")
+
+    n_pos = int(y.sum())
+    pct_pos = 100.0 * n_pos / len(y)
+    t_data = time.time() - t0
+
+    # -- Feature slices ---------------------------------------------------
+    # Layout: [bigram_a(16) | entropy_a(1) | bigram_b(16) | entropy_b(1) | log_dist(1)]
+    bg_idx = list(range(BIGRAM_DIM)) + list(range(FEAT_DIM, FEAT_DIM + BIGRAM_DIM))
+    be_idx = list(range(FEAT_DIM)) + list(range(FEAT_DIM, FEAT_DIM * 2))
+
+    # -- Results ----------------------------------------------------------
+    print()
+    print("=" * 60)
+    print("PCFG synapse partition grammar -- live v117 region")
+    print("=" * 60)
+    print(f"  Box:         {args.side_um:.0f} um around {tuple(args.center_nm)}")
+    print(f"  Boxes used:  {n_boxes_used}")
+    print(f"  Partitions:  {len(all_partitions)}")
+    print(f"  Wall time:   {t_data:.1f} s  (fetch + remap, no skeletons)")
+    print()
+    print(f"(n={len(y):,} pairs, {pct_pos:.1f}% positive):")
+
+    _run_cv(X[:, bg_idx], y, args.cv_folds, args.seed, "bigram-syntax (16+16 feats)")
+    _run_cv(X[:, be_idx], y, args.cv_folds, args.seed, "bigram + entropy (17+17 feats)")
+    _run_cv(X,            y, args.cv_folds, args.seed, "bigram + entropy + dist (35 feats)")
+
+    print()
+    print("reference (same region, v117_coassign.py, 120 epochs, d_model=128):")
+    print("  GNN  edge P/R = 0.82 / 0.92   partition F1 = 0.76   coverage@5 = False")
+    print("  Berlin bigram AUC = 0.95  (n=15, LOO)")
+    print("=" * 60)
+
+
+if __name__ == "__main__":
+    main()
