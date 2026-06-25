@@ -246,6 +246,7 @@ def build_merge_pairs(
     max_neg_ratio: float = 3.0,
     rng: np.random.Generator | None = None,
     match_distance: bool = False,
+    neg_k_neighbors: int = 50,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Build (X, y) arrays for merge binary classification.
 
@@ -257,10 +258,10 @@ def build_merge_pairs(
         Two partitions with different v18xx roots.  Subsampled to
         ``max_neg_ratio * n_positives``.
 
-        Default (match_distance=False): prefer spatially closest pairs.
+        Default (match_distance=False): prefer spatially closest pairs
+        (found via KD-tree k-nearest-neighbor search, O(N log N)).
         With match_distance=True: sample negatives whose centroid distance
-        distribution matches the positives, so distance carries no
-        discriminative power and the grammar features must do the work.
+        distribution matches the positives.
 
     Feature vector layout (35-dim total):
         cols  0-15 : bigram features of partition A          (16)
@@ -270,28 +271,34 @@ def build_merge_pairs(
         col  34    : log1p(centroid distance in nm)           (1)
 
     Falls back to same-root PCA-midpoint artificial positives when real
-    positives number fewer than 2, so there is always a training signal
-    even in boxes where v117 false-splits are rare.
+    positives number fewer than 2.
+
+    Scales to large N using:
+    - Positive enumeration: group by v18xx root (O(N))
+    - Negative sampling: KD-tree k-NN per partition (O(N log N))
     """
     if rng is None:
         rng = np.random.default_rng(42)
 
     feats = [partition_features(p) for p in partitions]
-    centroids = [p.pts.mean(axis=0) for p in partitions]
+    centroids_arr = np.array([p.pts.mean(axis=0) for p in partitions], dtype=np.float64)
     v18xx = [p.v18xx_root for p in partitions]
+    root_ids = [p.root_id for p in partitions]
 
-    # Tuples: (feat_a, feat_b, dist_nm, label)
+    # -- Positive pairs: group by v18xx root, enumerate pairs within each group --
     pos_rows: list[tuple[np.ndarray, np.ndarray, float, int]] = []
-    neg_rows: list[tuple[np.ndarray, np.ndarray, float, int]] = []
+    by_v18xx: dict[int, list[int]] = defaultdict(list)
+    for i, v in enumerate(v18xx):
+        by_v18xx[v].append(i)
 
-    for i, j in combinations(range(len(partitions)), 2):
-        if partitions[i].root_id == partitions[j].root_id:
-            continue  # same root — skip (identity pair)
-        dist = float(np.linalg.norm(centroids[i] - centroids[j]))
-        if v18xx[i] == v18xx[j]:
+    for group_indices in by_v18xx.values():
+        if len(group_indices) < 2:
+            continue
+        for i, j in combinations(group_indices, 2):
+            if root_ids[i] == root_ids[j]:
+                continue  # same v117 root (pre vs post side) — not a real merge
+            dist = float(np.linalg.norm(centroids_arr[i] - centroids_arr[j]))
             pos_rows.append((feats[i], feats[j], dist, 1))
-        else:
-            neg_rows.append((feats[i], feats[j], dist, 0))
 
     # Fall back to artificial positives if real ones are sparse
     if len(pos_rows) < 2:
@@ -304,30 +311,69 @@ def build_merge_pairs(
             np.zeros(0, dtype=np.int64),
         )
 
-    n_neg = min(len(neg_rows), max(1, int(len(pos_rows) * max_neg_ratio)))
+    n_neg_target = min(
+        max(1, int(len(pos_rows) * max_neg_ratio)),
+        len(partitions) * neg_k_neighbors,  # hard cap
+    )
+
+    # -- Negative pairs: KD-tree k-NN to find spatially nearest different-root pairs --
+    neg_rows: list[tuple[np.ndarray, np.ndarray, float, int]] = []
+    if n_neg_target > 0 and len(partitions) >= 2:
+        try:
+            from scipy.spatial import cKDTree
+            k = min(neg_k_neighbors + 1, len(partitions))
+            tree = cKDTree(centroids_arr)
+            dists_nn, idx_nn = tree.query(centroids_arr, k=k, workers=-1)
+            seen_pairs: set[tuple[int, int]] = set()
+            # Iterate partitions in random order to avoid bias toward low indices
+            perm = rng.permutation(len(partitions))
+            for i in perm:
+                for j_slot in range(1, k):  # skip slot 0 (self)
+                    j = int(idx_nn[i, j_slot])
+                    pair = (min(i, j), max(i, j))
+                    if pair in seen_pairs:
+                        continue
+                    if root_ids[i] == root_ids[j]:
+                        continue  # same v117 root
+                    if v18xx[i] == v18xx[j]:
+                        continue  # positive pair, not negative
+                    seen_pairs.add(pair)
+                    dist = float(dists_nn[i, j_slot])
+                    neg_rows.append((feats[i], feats[j], dist, 0))
+                    if len(neg_rows) >= n_neg_target * 5:
+                        break  # enough candidates; stop early
+                if len(neg_rows) >= n_neg_target * 5:
+                    break
+        except ImportError:
+            # scipy unavailable: fall back to random negative sampling
+            neg_candidates = [
+                i for i in range(len(partitions))
+                if len([j for j in range(len(partitions))
+                        if v18xx[j] != v18xx[i]]) > 0
+            ]
+            for _ in range(n_neg_target * 5):
+                i, j = rng.integers(0, len(partitions), size=2)
+                if i == j or root_ids[i] == root_ids[j] or v18xx[i] == v18xx[j]:
+                    continue
+                dist = float(np.linalg.norm(centroids_arr[i] - centroids_arr[j]))
+                neg_rows.append((feats[i], feats[j], dist, 0))
 
     if match_distance and pos_rows and neg_rows:
-        # Sample negatives whose log-distance histogram matches the positives.
-        # This removes centroid distance as a discriminative feature, forcing
-        # the grammar to carry the signal on its own.
         pos_log_dists = np.array([np.log1p(r[2]) for r in pos_rows])
         neg_log_dists = np.array([np.log1p(r[2]) for r in neg_rows])
-        pos_mean, pos_std = float(pos_log_dists.mean()), float(pos_log_dists.std() + 1e-6)
-        # Score each negative by how close its log-dist is to the positive mean
+        pos_mean = float(pos_log_dists.mean())
+        pos_std  = float(pos_log_dists.std() + 1e-6)
         scores = -np.abs(neg_log_dists - pos_mean) / pos_std
         probs = np.exp(scores - scores.max())
         probs = np.clip(probs, 1e-12, None)
         probs /= probs.sum()
-        k = min(n_neg, len(neg_rows))
-        # use replace=True when k > #nonzero entries to avoid ValueError
+        k = min(n_neg_target, len(neg_rows))
         n_nonzero = int((probs > 1e-10).sum())
-        chosen = rng.choice(len(neg_rows), size=k,
-                            replace=(k > n_nonzero), p=probs)
-        neg_rows = [neg_rows[k] for k in chosen]
+        chosen = rng.choice(len(neg_rows), size=k, replace=(k > n_nonzero), p=probs)
+        neg_rows = [neg_rows[c] for c in chosen]
     else:
-        # Default: prefer nearest neighbours
         neg_rows.sort(key=lambda r: r[2])
-        neg_rows = neg_rows[:n_neg]
+        neg_rows = neg_rows[:n_neg_target]
 
     all_rows = pos_rows + neg_rows
     order = rng.permutation(len(all_rows))
