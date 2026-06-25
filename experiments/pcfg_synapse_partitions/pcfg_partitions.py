@@ -245,6 +245,7 @@ def build_merge_pairs(
     *,
     max_neg_ratio: float = 3.0,
     rng: np.random.Generator | None = None,
+    match_distance: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Build (X, y) arrays for merge binary classification.
 
@@ -254,7 +255,12 @@ def build_merge_pairs(
 
     Negative pairs (y=0)
         Two partitions with different v18xx roots.  Subsampled to
-        ``max_neg_ratio * n_positives``, preferring spatially closest pairs.
+        ``max_neg_ratio * n_positives``.
+
+        Default (match_distance=False): prefer spatially closest pairs.
+        With match_distance=True: sample negatives whose centroid distance
+        distribution matches the positives, so distance carries no
+        discriminative power and the grammar features must do the work.
 
     Feature vector layout (35-dim total):
         cols  0-15 : bigram features of partition A          (16)
@@ -298,10 +304,30 @@ def build_merge_pairs(
             np.zeros(0, dtype=np.int64),
         )
 
-    # Subsample negatives: prefer spatially close pairs, cap ratio
-    neg_rows.sort(key=lambda r: r[2])
     n_neg = min(len(neg_rows), max(1, int(len(pos_rows) * max_neg_ratio)))
-    neg_rows = neg_rows[:n_neg]
+
+    if match_distance and pos_rows and neg_rows:
+        # Sample negatives whose log-distance histogram matches the positives.
+        # This removes centroid distance as a discriminative feature, forcing
+        # the grammar to carry the signal on its own.
+        pos_log_dists = np.array([np.log1p(r[2]) for r in pos_rows])
+        neg_log_dists = np.array([np.log1p(r[2]) for r in neg_rows])
+        pos_mean, pos_std = float(pos_log_dists.mean()), float(pos_log_dists.std() + 1e-6)
+        # Score each negative by how close its log-dist is to the positive mean
+        scores = -np.abs(neg_log_dists - pos_mean) / pos_std
+        probs = np.exp(scores - scores.max())
+        probs = np.clip(probs, 1e-12, None)
+        probs /= probs.sum()
+        k = min(n_neg, len(neg_rows))
+        # use replace=True when k > #nonzero entries to avoid ValueError
+        n_nonzero = int((probs > 1e-10).sum())
+        chosen = rng.choice(len(neg_rows), size=k,
+                            replace=(k > n_nonzero), p=probs)
+        neg_rows = [neg_rows[k] for k in chosen]
+    else:
+        # Default: prefer nearest neighbours
+        neg_rows.sort(key=lambda r: r[2])
+        neg_rows = neg_rows[:n_neg]
 
     all_rows = pos_rows + neg_rows
     order = rng.permutation(len(all_rows))

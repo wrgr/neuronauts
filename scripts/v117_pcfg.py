@@ -120,6 +120,11 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--seed", type=int, default=42)
     p.add_argument(
+        "--match-distance",
+        action="store_true",
+        help="Also run with distance-matched negatives (honest grammar-only test)",
+    )
+    p.add_argument(
         "--verbose",
         action="store_true",
         help="Print per-box stats",
@@ -371,7 +376,11 @@ def main() -> None:
     # -- Build merge pair dataset -----------------------------------------
     log.info("Building merge pairs (max_neg_ratio=%.1f) ...", args.max_neg_ratio)
     X, y = build_merge_pairs(
-        all_partitions, max_neg_ratio=args.max_neg_ratio, rng=rng
+        all_partitions, max_neg_ratio=args.max_neg_ratio, rng=rng, match_distance=False,
+    )
+    X_md, y_md = build_merge_pairs(
+        all_partitions, max_neg_ratio=args.max_neg_ratio,
+        rng=np.random.default_rng(args.seed), match_distance=True,
     )
 
     if len(y) == 0:
@@ -400,7 +409,8 @@ def main() -> None:
     print(f"  Partitions:  {len(all_partitions)}")
     print(f"  Wall time:   {t_data:.1f} s  (fetch + remap, no skeletons)")
     print()
-    print(f"(n={len(y):,} pairs, {pct_pos:.1f}% positive):")
+    print(f"Standard negatives (n={len(y):,} pairs, {pct_pos:.1f}% positive):")
+    print("  [negatives = spatially nearest different-neuron pairs]")
     print()
     print("-- Baselines (delta-from-no-changes) --")
     _run_cv(X[:, dist_idx], y,      args.cv_folds, args.seed, "distance only (1 feat)")
@@ -410,8 +420,26 @@ def main() -> None:
     _run_cv(X[:, bg_idx], y, args.cv_folds, args.seed, "bigram-syntax (16+16 feats)")
     _run_cv(X[:, be_idx], y, args.cv_folds, args.seed, "bigram + entropy (17+17 feats)")
     _run_cv(X,            y, args.cv_folds, args.seed, "bigram + entropy + dist (35 feats)")
-
     _merge_report(X, y, all_partitions, args.cv_folds, args.seed)
+
+    # -- Distance-matched negatives (honest grammar test) -----------------
+    # Negatives are sampled to have the same centroid-distance distribution as
+    # positives, so distance carries no signal.  Grammar must do the work.
+    print()
+    n_pos_md = int(y_md.sum())
+    pct_pos_md = 100.0 * n_pos_md / len(y_md)
+    print(f"Distance-matched negatives (n={len(y_md):,} pairs, {pct_pos_md:.1f}% positive):")
+    print("  [negatives matched to same distance distribution as positives]")
+    y_perm_md = np.random.default_rng(args.seed).permutation(y_md)
+    print()
+    print("-- Baselines --")
+    _run_cv(X_md[:, dist_idx], y_md,      args.cv_folds, args.seed, "distance only (1 feat) [should be ~0.5]")
+    _run_cv(X_md,              y_perm_md, args.cv_folds, args.seed, "permuted labels (null)")
+    print()
+    print("-- Grammar (honest) --")
+    _run_cv(X_md[:, bg_idx], y_md, args.cv_folds, args.seed, "bigram-syntax (16+16 feats)")
+    _run_cv(X_md[:, be_idx], y_md, args.cv_folds, args.seed, "bigram + entropy (17+17 feats)")
+    _run_cv(X_md,            y_md, args.cv_folds, args.seed, "bigram + entropy + dist (35 feats)")
 
     print()
     print("reference (same region, v117_coassign.py, 120 epochs, d_model=128):")

@@ -6,9 +6,9 @@ import numpy as np
 from caveclient import CAVEclient
 
 
-def get_client(version: int) -> CAVEclient:
+def get_client(version: int, token: str | None = None) -> CAVEclient:
     """Construct a CAVEclient for minnie65_public at a given materialization."""
-    client = CAVEclient("minnie65_public")
+    client = CAVEclient("minnie65_public", auth_token=token)
     client.version = version
     return client
 
@@ -19,6 +19,7 @@ def map_roots_between_versions(
     new_version: int,
     chunk_size: int = 100_000,
     verbose: bool = False,
+    token: str | None = None,
 ) -> Dict[int, int]:
     """
     Map a collection of root IDs from one materialization version to another.
@@ -47,7 +48,7 @@ def map_roots_between_versions(
         0 is always mapped to 0 in the result when present in the input.
     """
     # Note: the chunkedgraph mapping is anchored at the target version.
-    client = get_client(new_version)
+    client = get_client(new_version, token=token)
 
     # Force to numpy array of int64; drop invalid IDs (0 and negative) so the API doesn't 500
     raw = list(root_ids)
