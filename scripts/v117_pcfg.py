@@ -169,6 +169,12 @@ def _sample_centers(
 
 _GT_VERSION = 1718  # latest materialization; use 1412 for reproducibility vs older runs
 
+# Skeleton quality floor: principled, GT-free, stable across train/deploy.
+# A skeleton with < MIN_SKEL_VERTS vertices cannot produce a meaningful DFS path
+# sequence — the PCA frame is degenerate and path encoding is vacuous.
+# Do NOT tune this against AUC; it must mirror what the model sees at deploy time.
+_MIN_SKEL_VERTS = 10
+
 def _fetch_one_box(
     center_nm: tuple[int, ...],
     side_um: float,
@@ -717,7 +723,7 @@ def _run_skeleton_grammar(args, all_partitions, all_box_ids, n_boxes_used, rng):
     sk_partitions = []
     for p in all_partitions:
         sk = skeletons.get(p.root_id)
-        if sk is None or len(sk.vertices) < 3:
+        if sk is None or len(sk.vertices) < _MIN_SKEL_VERTS:
             continue
         sk_partitions.append(SkeletonPartition(
             root_id=p.root_id,
@@ -899,7 +905,7 @@ def _run_learned_grammar(args, all_partitions, all_box_ids, n_boxes_used, rng):
     sk_partitions = []
     for p in all_partitions:
         sk = skeletons.get(p.root_id)
-        if sk is None or len(sk.vertices) < 3:
+        if sk is None or len(sk.vertices) < _MIN_SKEL_VERTS:
             continue
         sk_partitions.append(SkeletonPartition(
             root_id=p.root_id,

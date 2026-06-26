@@ -173,7 +173,7 @@ def extract_partitions(
     post_pt: np.ndarray,
     pre_root_id: np.ndarray,
     post_root_id: np.ndarray,
-    root_remap: dict[int, int],
+    root_remap: dict[int, int] | None = None,
     *,
     min_synapses: int = 4,
     sides: str = 'both',
@@ -184,10 +184,16 @@ def extract_partitions(
     ----------
     pre_pt / post_pt     : (N, 3) synapse position arrays in nm
     pre_root_id / post_root_id : (N,) int64 v117 root ID arrays
-    root_remap           : mapping v117 root ID -> v18xx root ID
-    min_synapses         : drop partitions with fewer synapses
+    root_remap           : mapping v117 root ID -> v18xx root ID, or None for
+                           deploy-time inference (no GT filtering applied; all
+                           partitions get v18xx_root=0 as placeholder)
+    min_synapses         : minimum synapses to featurize a partition.  Principled
+                           floor: < 4 points cannot produce a meaningful PCA frame.
+                           Do NOT tune this threshold against AUC — it must be
+                           GT-free and stable across train/deploy.
     sides                : 'pre', 'post', or 'both'
     """
+    deploy = root_remap is None
     partitions: list[HalfPartition] = []
     candidates = []
     if sides in ('pre', 'both'):
@@ -201,9 +207,12 @@ def extract_partitions(
                 continue
             if len(indices) < min_synapses:
                 continue
-            target = root_remap.get(rid, 0)
-            if target == 0:
-                continue
+            if deploy:
+                target = 0  # no GT at deploy time; all partitions included
+            else:
+                target = root_remap.get(rid, 0)  # type: ignore[union-attr]
+                if target == 0:
+                    continue  # no v1718 label — skip during training only
             partitions.append(HalfPartition(
                 root_id=rid,
                 v18xx_root=target,
