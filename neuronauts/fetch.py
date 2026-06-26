@@ -432,6 +432,9 @@ def fetch_root_skeletons(
 
     client = CAVEclient(datastack, server_address=cave_server, auth_token=token)
     client.version = int(version)
+    # segmentation_cloudvolume() is used only for root-id validation inside get_skeleton;
+    # cloudvolume may be absent or broken in this environment — skip the check safely.
+    client.info.segmentation_cloudvolume = lambda **kw: None
     unique_roots = sorted({int(root_id) for root_id in np.asarray(root_ids, dtype=np.int64).tolist() if int(root_id) > 0})
     out: dict[int, SkeletonData] = {}
     for root_id in unique_roots:

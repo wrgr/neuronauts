@@ -1,14 +1,15 @@
 import argparse
+import datetime
 import time
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Optional
 
 import numpy as np
 from caveclient import CAVEclient
 
 
-def get_client(version: int) -> CAVEclient:
+def get_client(version: int, token: str | None = None) -> CAVEclient:
     """Construct a CAVEclient for minnie65_public at a given materialization."""
-    client = CAVEclient("minnie65_public")
+    client = CAVEclient("minnie65_public", auth_token=token)
     client.version = version
     return client
 
@@ -19,6 +20,8 @@ def map_roots_between_versions(
     new_version: int,
     chunk_size: int = 100_000,
     verbose: bool = False,
+    token: str | None = None,
+    timestamp: Optional[datetime.datetime] = None,
 ) -> Dict[int, int]:
     """
     Map a collection of root IDs from one materialization version to another.
@@ -37,6 +40,11 @@ def map_roots_between_versions(
         Number of IDs per chunk when calling get_latest_roots.
     verbose
         If True, print progress after each batch (count done, elapsed, rate).
+    timestamp
+        Optional datetime anchoring the chunkedgraph state. When None, the
+        materialization timestamp for ``new_version`` is fetched automatically
+        so results are reproducible. Pass datetime.datetime.max to use the
+        current live graph state.
 
     Returns
     -------
@@ -46,8 +54,14 @@ def map_roots_between_versions(
         0 or negative are never sent to the API (they would cause 500s);
         0 is always mapped to 0 in the result when present in the input.
     """
-    # Note: the chunkedgraph mapping is anchored at the target version.
-    client = get_client(new_version)
+    client = get_client(new_version, token=token)
+    # Setting client.version auto-anchors client._timestamp to the materialization
+    # timestamp (e.g. 2026-03-07 for v1718).  The chunkedgraph client inherits
+    # that default and silently applies it to get_latest_roots() even when we
+    # don't pass a timestamp explicitly.  Reset the private attr to get true live
+    # state when the caller wants no anchoring.
+    if timestamp is None:
+        client._timestamp = None
 
     # Force to numpy array of int64; drop invalid IDs (0 and negative) so the API doesn't 500
     raw = list(root_ids)
@@ -60,16 +74,18 @@ def map_roots_between_versions(
 
     n_total = len(roots_arr)
     n_batches = (n_total + chunk_size - 1) // chunk_size
+    ts_str = timestamp.strftime("%Y-%m-%d %H:%M UTC") if timestamp else "live"
     print(
         f"Mapping {n_total:,} roots from v{old_version} to v{new_version} "
-        "via chunkedgraph.get_latest_roots..."
+        f"via chunkedgraph.get_latest_roots (ts={ts_str})..."
     )
     t0 = time.perf_counter()
 
     for i, start in enumerate(range(0, len(roots_arr), chunk_size)):
         stop = min(start + chunk_size, len(roots_arr))
         batch = roots_arr[start:stop].tolist()
-        latest = client.chunkedgraph.get_latest_roots(batch)
+        kwargs = {"timestamp": timestamp} if timestamp is not None else {}
+        latest = client.chunkedgraph.get_latest_roots(batch, **kwargs)
         mapping.update(dict(zip(batch, latest)))
         if verbose:
             elapsed = time.perf_counter() - t0
