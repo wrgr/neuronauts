@@ -55,16 +55,8 @@ def map_roots_between_versions(
         0 is always mapped to 0 in the result when present in the input.
     """
     client = get_client(new_version, token=token)
-
-    # Anchor to the materialization timestamp so results are reproducible.
-    # Without this, get_latest_roots returns the current live graph state,
-    # which changes as proofreading continues.
-    if timestamp is None:
-        try:
-            meta = client.materialize.get_version_metadata()
-            timestamp = meta.get("time_stamp")
-        except Exception:
-            timestamp = None  # fall back to live state if metadata unavailable
+    # timestamp=None → live graph state (captures all proofread merges to date).
+    # Pass an explicit datetime to anchor to a specific materialization snapshot.
 
     # Force to numpy array of int64; drop invalid IDs (0 and negative) so the API doesn't 500
     raw = list(root_ids)
