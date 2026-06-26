@@ -94,6 +94,39 @@ def _find_soma(verts: np.ndarray, radius) -> int:
     return int(np.argmin(np.linalg.norm(verts - verts.mean(axis=0), axis=1)))
 
 
+def _label_components(adj: list, n: int) -> list[int]:
+    """Assign each vertex a component ID (0 = largest component)."""
+    comp = [-1] * n
+    cid = 0
+    comp_sizes: list[tuple[int, int]] = []
+    for start in range(n):
+        if comp[start] != -1:
+            continue
+        q = deque([start])
+        comp[start] = cid
+        size = 0
+        while q:
+            v = q.popleft()
+            size += 1
+            for u in adj[v]:
+                if comp[u] == -1:
+                    comp[u] = cid
+                    q.append(u)
+        comp_sizes.append((cid, size))
+        cid += 1
+    # Remap so that component 0 is the largest (most likely the main axon/dendrite trunk)
+    if len(comp_sizes) > 1:
+        largest = max(comp_sizes, key=lambda x: x[1])[0]
+        remap = {largest: 0}
+        next_id = 1
+        for c, _ in sorted(comp_sizes, key=lambda x: -x[1]):
+            if c not in remap:
+                remap[c] = next_id
+                next_id += 1
+        comp = [remap[c] for c in comp]
+    return comp
+
+
 # ---------------------------------------------------------------------------
 # Feature extraction: synapse paths through skeleton
 # ---------------------------------------------------------------------------
@@ -105,8 +138,15 @@ def compute_intersynapse_paths(
     radius=None,
     mode: str = "raw_delta3+skeleton",
     min_path_steps: int = 1,
-) -> tuple[np.ndarray, list[np.ndarray]]:
+) -> tuple[np.ndarray, list[np.ndarray | None]]:
     """Order synapses by skeleton path distance from soma; extract inter-synapse paths.
+
+    Noisy/disconnected skeleton fragments are handled gracefully:
+    - Synapses are grouped by connected component, ordered by (component_id, dist_within_component)
+      so synapses in the same fragment stay together in the sequence
+    - Gaps between disconnected fragments are returned as None rather than degenerate 2-step paths
+    - prepare_partition_input() marks None entries with has_path=False so PathEdgeEncoder
+      zeroes them out rather than treating garbage as real morphology
 
     Parameters
     ----------
@@ -118,10 +158,10 @@ def compute_intersynapse_paths(
 
     Returns
     -------
-    ordered_syn_pts : (N, 3) synapse positions ordered by skeleton path distance
-    path_feats      : list of N-1 arrays, each [T_i, D] float32
-                      T_i = number of skeleton steps between consecutive synapses
-                      D   = feature dim (3 for raw_delta3, 6 for raw_delta3+skeleton)
+    ordered_syn_pts : (N, 3) synapse positions ordered by (component, dist_from_soma)
+    path_feats      : list of N-1 entries; each is either:
+                        np.ndarray [T_i, D] for a valid intra-component path, or
+                        None for a cross-component gap (declined merge)
     """
     from neuronauts.grammar import featurize_path_points
     from scipy.spatial import cKDTree
@@ -129,23 +169,57 @@ def compute_intersynapse_paths(
     verts = skel_verts.astype(np.float64)
     n = len(verts)
     adj = _build_adj(skel_edges, n)
+
+    # Find connected components — component 0 = largest (main trunk)
+    comp = _label_components(adj, n)
+
     soma = _find_soma(verts, radius)
-    dist_from_soma, _ = _bfs_from_root(adj, soma)
+    # BFS per component to get intra-component path distances
+    # Start BFS from the soma vertex for the main component; for satellite fragments,
+    # start from the vertex with maximum radius (or centroid) within that component
+    n_comps = max(comp) + 1
+    comp_roots = [soma] + [-1] * (n_comps - 1)
+    if n_comps > 1:
+        comp_verts: list[list[int]] = [[] for _ in range(n_comps)]
+        for v, c in enumerate(comp):
+            comp_verts[c].append(v)
+        for c in range(1, n_comps):
+            cvs = comp_verts[c]
+            if radius is not None and len(radius) == n:
+                comp_roots[c] = max(cvs, key=lambda v: float(radius[v]))
+            else:
+                centroid = verts[cvs].mean(axis=0)
+                comp_roots[c] = min(cvs, key=lambda v: float(np.linalg.norm(verts[v] - centroid)))
+
+    # BFS distances within each component
+    dist_in_comp = [-1] * n
+    for c in range(n_comps):
+        r = comp_roots[c]
+        d, _ = _bfs_from_root(adj, r)
+        for v in range(n):
+            if comp[v] == c:
+                dist_in_comp[v] = max(0, d[v])
 
     # Map each synapse to nearest skeleton vertex
     tree = cKDTree(verts)
     _, nearest = tree.query(syn_pts, k=1)
     nearest = nearest.tolist()
 
-    # Sort synapses by path distance from soma
-    syn_dist = [max(0, dist_from_soma[v]) for v in nearest]
-    order = sorted(range(len(syn_pts)), key=lambda i: syn_dist[i])
+    # Sort synapses by (component_id, dist_within_component) — keep fragments grouped
+    syn_comp = [comp[v] for v in nearest]
+    syn_dist = [dist_in_comp[v] for v in nearest]
+    order = sorted(range(len(syn_pts)), key=lambda i: (syn_comp[i], syn_dist[i]))
     ordered_verts = [nearest[i] for i in order]
+    ordered_comps = [syn_comp[i] for i in order]
 
-    # Extract skeleton path between each consecutive synapse pair
-    path_feats: list[np.ndarray] = []
+    # Extract inter-synapse paths; return None for cross-component gaps
+    path_feats: list[np.ndarray | None] = []
     D = 6 if "skeleton" in mode else 3
     for k in range(len(order) - 1):
+        if ordered_comps[k] != ordered_comps[k + 1]:
+            # Cross-component gap: decline to merge, mark as missing
+            path_feats.append(None)
+            continue
         v1, v2 = ordered_verts[k], ordered_verts[k + 1]
         path_idx = _tree_path(adj, v1, v2)
         path_pts = verts[path_idx]
@@ -266,17 +340,19 @@ def build_model(cfg: ModelConfig | None = None):
 # Batch preparation
 # ---------------------------------------------------------------------------
 
-def prepare_partition_input(path_feats: list[np.ndarray], max_path_len: int = 64):
+def prepare_partition_input(path_feats: list, max_path_len: int = 64):
     """Convert inter-synapse path features to padded tensors for PathEdgeEncoder.
 
-    path_feats: list of [T_i, D] arrays (N_gaps items)
+    path_feats: list of N_gaps entries, each either:
+      - np.ndarray [T_i, D]  — valid intra-component skeleton path
+      - None                 — cross-component gap (declined merge); has_path=False
 
     Returns (path_seqs, path_masks, has_path, seq_mask) — all torch tensors.
+    has_path[i]=False tells PathEdgeEncoder to zero out that slot.
     """
     torch = _require_torch()
 
     if not path_feats:
-        # Degenerate: single-synapse partition — return dummy
         D = 6
         return (
             torch.zeros(1, 1, D),
@@ -286,21 +362,24 @@ def prepare_partition_input(path_feats: list[np.ndarray], max_path_len: int = 64
         )
 
     N = len(path_feats)
-    D = path_feats[0].shape[1] if path_feats[0].ndim == 2 else 6
-    T_max = min(max_path_len, max(f.shape[0] for f in path_feats))
+    valid = [f for f in path_feats if f is not None]
+    D = valid[0].shape[1] if valid and valid[0].ndim == 2 else 6
+    T_max = min(max_path_len, max((f.shape[0] for f in valid), default=1))
 
     seqs  = np.zeros((N, T_max, D), dtype=np.float32)
     masks = np.ones((N, T_max), dtype=bool)   # True = pad
     has   = np.zeros(N, dtype=bool)
 
     for i, f in enumerate(path_feats):
+        if f is None:
+            continue  # gap: has[i] stays False, zero seq
         T = min(f.shape[0], T_max)
         if T > 0:
             seqs[i, :T] = f[:T]
             masks[i, :T] = False
             has[i] = True
 
-    seq_mask = np.zeros((1, N), dtype=bool)   # no padding at level-2 for now
+    seq_mask = np.zeros((1, N), dtype=bool)
 
     return (
         torch.tensor(seqs),
