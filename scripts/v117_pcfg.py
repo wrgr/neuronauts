@@ -135,6 +135,11 @@ def parse_args() -> argparse.Namespace:
         help="Directory to cache skeleton fetches across runs",
     )
     p.add_argument(
+        "--use-learned",
+        action="store_true",
+        help="Run learned skeleton-synapse grammar (SkeletonSynapseNet; requires torch)",
+    )
+    p.add_argument(
         "--verbose",
         action="store_true",
         help="Print per-box stats",
@@ -630,6 +635,16 @@ def main() -> None:
             rng,
         )
 
+    # -- Learned skeleton-synapse grammar (optional, requires torch) ---------
+    if args.use_learned:
+        _run_learned_grammar(
+            args,
+            all_partitions,
+            all_box_ids,
+            n_boxes_used,
+            rng,
+        )
+
     # -- Cross-box analysis (only meaningful when n_boxes > 1) -------------
     if n_boxes_used > 1:
         _cross_box_analysis(
@@ -853,6 +868,72 @@ def _run_skeleton_grammar(args, all_partitions, all_box_ids, n_boxes_used, rng):
             _run_cv(X_xb[:, bg_idx_xb], y_xb, args.cv_folds, args.seed, "skeleton bigram RF",       classifier="rf")
             _run_cv(X_xb[:, be_idx_xb], y_xb, args.cv_folds, args.seed, "skeleton bigram+ent RF",   classifier="rf")
             _run_cv(X_xb,               y_xb, args.cv_folds, args.seed, "skeleton + dist RF",       classifier="rf")
+
+
+# ---------------------------------------------------------------------------
+# Learned grammar (--use-learned)
+# ---------------------------------------------------------------------------
+
+def _run_learned_grammar(args, all_partitions, all_box_ids, n_boxes_used, rng):
+    """Fetch skeletons and train SkeletonSynapseNet on inter-synapse skeleton paths."""
+    from experiments.pcfg_synapse_partitions.skeleton_tokens import SkeletonPartition
+    from experiments.pcfg_synapse_partitions.learned_grammar import train_and_eval
+    from neuronauts.fetch import fetch_root_skeletons
+
+    unique_roots = list({p.root_id for p in all_partitions})
+    log.info("Fetching skeletons for %d unique roots (v117) ...", len(unique_roots))
+    try:
+        skeletons = fetch_root_skeletons(
+            unique_roots,
+            version=117,
+            token=args.token,
+            cache_dir=args.skeleton_cache_dir,
+        )
+    except Exception as exc:
+        log.warning("Skeleton fetch failed: %s", exc)
+        return
+
+    n_ok = sum(1 for sk in skeletons.values() if len(sk.vertices) >= 3)
+    log.info("  %d / %d roots have a usable skeleton", n_ok, len(unique_roots))
+
+    sk_partitions = []
+    for p in all_partitions:
+        sk = skeletons.get(p.root_id)
+        if sk is None or len(sk.vertices) < 3:
+            continue
+        sk_partitions.append(SkeletonPartition(
+            root_id=p.root_id,
+            v18xx_root=p.v18xx_root,
+            side=p.side,
+            pts=p.pts,
+            skel_verts=sk.vertices.astype(float),
+            skel_edges=sk.edges,
+        ))
+
+    radii = {rid: sk.radius for rid, sk in skeletons.items() if sk.radius is not None}
+
+    if len(sk_partitions) < 10:
+        print()
+        print("Learned grammar: too few partitions with skeletons -- skipping.")
+        return
+
+    print()
+    print("=" * 60)
+    print("Learned skeleton-synapse grammar (SkeletonSynapseNet)")
+    print("=" * 60)
+    print(f"  Partitions with skeleton: {len(sk_partitions)}")
+
+    auc = train_and_eval(
+        sk_partitions,
+        radii=radii,
+        n_folds=args.cv_folds,
+        seed=args.seed,
+        max_neg_ratio=args.max_neg_ratio,
+        verbose=True,
+    )
+    print(f"  CV AUC = {auc:.3f}")
+    print("=" * 60)
+
 
 if __name__ == "__main__":
     main()
