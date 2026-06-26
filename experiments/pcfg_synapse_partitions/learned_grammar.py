@@ -405,6 +405,13 @@ def build_training_data(
     Returns:
         part_inputs : list of (path_seqs, path_masks, has_path, seq_mask) per partition
         pairs       : list of (i, j, log_dist, label) index tuples
+
+    When real positive pairs (GT merges with both sides having skeletons) are
+    fewer than 2, falls back to artificial positives: each skeleton partition
+    with ≥ 4 valid inter-synapse gaps is split at its midpoint and the two
+    halves become a positive pair.  This mirrors _artificial_positives() in
+    pcfg_partitions.py and gives the learned model a training signal even when
+    skeleton coverage of split neurons is low.
     """
     from collections import defaultdict
     from itertools import combinations
@@ -414,7 +421,8 @@ def build_training_data(
 
     _radii = radii or {}
 
-    # Pre-compute path features for every partition
+    # Pre-compute raw path_feats AND prepared inputs for every partition
+    all_raw_path_feats = []
     part_inputs = []
     centroids = []
     for p in sk_partitions:
@@ -423,14 +431,16 @@ def build_training_data(
             p.skel_verts, p.skel_edges, p.pts,
             radius=rad, mode=mode,
         )
+        all_raw_path_feats.append(path_feats)
         part_inputs.append(prepare_partition_input(path_feats))
         centroids.append(p.pts.mean(axis=0))
 
     centroids = np.array(centroids, dtype=np.float64)
     v18xx  = [p.v18xx_root for p in sk_partitions]
     rids   = [p.root_id   for p in sk_partitions]
+    n_real = len(sk_partitions)
 
-    # Positive pairs
+    # Real positive pairs: different v117 roots mapping to the same v18xx root
     pos_pairs = []
     by_v18 = defaultdict(list)
     for i, v in enumerate(v18xx):
@@ -444,16 +454,50 @@ def build_training_data(
             d = float(np.linalg.norm(centroids[i] - centroids[j]))
             pos_pairs.append((i, j, np.log1p(d), 1))
 
-    # Negative pairs (KD-tree nearest)
+    n_v18xx_groups_with2 = sum(1 for g in by_v18.values() if len(g) >= 2)
+    print(f"  v18xx groups >=2 members (skel subset): {n_v18xx_groups_with2}  real pos pairs: {len(pos_pairs)}")
+
+    # Fallback: artificial positives via midpoint split of path-feature sequences.
+    # When split neurons (the positive pairs we care about) are small fragments
+    # with poor skeleton coverage, real positives can be 0.  Splitting each
+    # well-skeletonized partition in half gives a valid same-neuron training signal.
+    art_used = False
+    if len(pos_pairs) < 2:
+        for src_idx, pf in enumerate(all_raw_path_feats):
+            valid = [f for f in pf if f is not None]
+            if len(valid) < 4:
+                continue
+            mid = len(valid) // 2
+            left_pf = valid[:mid]
+            right_pf = valid[mid:]
+            i_left  = len(part_inputs)
+            i_right = len(part_inputs) + 1
+            part_inputs.append(prepare_partition_input(left_pf))
+            part_inputs.append(prepare_partition_input(right_pf))
+            cent = centroids[src_idx]
+            centroids = np.vstack([centroids, cent[None], cent[None]])
+            v18xx.append(v18xx[src_idx])
+            v18xx.append(v18xx[src_idx])
+            rids.append(rids[src_idx])
+            rids.append(rids[src_idx])
+            pos_pairs.append((i_left, i_right, 0.0, 1))
+        art_used = len(pos_pairs) > 0
+
+    if art_used:
+        print(f"  [artificial positives: {len(pos_pairs)} pairs from {len(sk_partitions)} partitions]")
+
+    # Negative pairs (KD-tree nearest, prefer spatially close different-neuron pairs)
     n_neg = max(1, int(len(pos_pairs) * max_neg_ratio))
     neg_pairs = []
     try:
         from scipy.spatial import cKDTree
-        k = min(51, len(sk_partitions))
+        k = min(51, len(part_inputs))
         tree = cKDTree(centroids)
         dists_nn, idx_nn = tree.query(centroids, k=k, workers=-1)
         seen = set()
-        for i in rng.permutation(len(sk_partitions)):
+        # Only use real partitions (0..n_real-1) as anchors for negative search
+        anchor_perm = rng.permutation(n_real)
+        for i in anchor_perm:
             for slot in range(1, k):
                 j = int(idx_nn[i, slot])
                 pair = (min(i, j), max(i, j))
