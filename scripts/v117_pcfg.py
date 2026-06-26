@@ -125,6 +125,16 @@ def parse_args() -> argparse.Namespace:
         help="Also run with distance-matched negatives (honest grammar-only test)",
     )
     p.add_argument(
+        "--use-skeleton",
+        action="store_true",
+        help="Also run skeleton grammar (fetches CAVE skeletons; slow on first run, fast with cache)",
+    )
+    p.add_argument(
+        "--skeleton-cache-dir",
+        default=None,
+        help="Directory to cache skeleton fetches across runs",
+    )
+    p.add_argument(
         "--verbose",
         action="store_true",
         help="Print per-box stats",
@@ -610,6 +620,16 @@ def main() -> None:
     _run_cv(X_md[:, be_idx], y_md, args.cv_folds, args.seed, "bigram + entropy RF (17+17 feats)", classifier="rf")
     _run_cv(X_md,            y_md, args.cv_folds, args.seed, "bigram + entropy + dist RF (35 feats)", classifier="rf")
 
+    # -- Skeleton grammar (optional, requires CAVE skeleton fetch) -----------
+    if args.use_skeleton:
+        _run_skeleton_grammar(
+            args,
+            all_partitions,
+            all_box_ids,
+            n_boxes_used,
+            rng,
+        )
+
     # -- Cross-box analysis (only meaningful when n_boxes > 1) -------------
     if n_boxes_used > 1:
         _cross_box_analysis(
@@ -627,6 +647,212 @@ def main() -> None:
     print("  Berlin bigram AUC = 0.95  (n=15, LOO)")
     print("=" * 60)
 
+
+
+
+# ---------------------------------------------------------------------------
+# Skeleton grammar (--use-skeleton)
+# ---------------------------------------------------------------------------
+
+def _run_skeleton_grammar(args, all_partitions, all_box_ids, n_boxes_used, rng):
+    """Fetch skeletons for all roots in all_partitions and run the grammar CV.
+
+    Skeleton fetch is sequential (~1-3 s/root on first call, instant with cache).
+    Only roots that appear in all_partitions (those with >=min_synapses) are
+    fetched -- typically 500-2000 per 40um box, far fewer than all box roots.
+
+    Both sides (pre+post) share one skeleton per root.  The grammar is computed
+    once per root (not per side), using the full skeleton.  Two SkeletonPartitions
+    for the same root (pre side and post side) will have the SAME skeleton grammar
+    features -- the side distinction is still captured by the synapse-position
+    centroid distance used for pairing.
+    """
+    from experiments.pcfg_synapse_partitions.skeleton_tokens import (
+        extract_skeleton_partitions,
+        build_skeleton_merge_pairs,
+        skeleton_features,
+    )
+    from neuronauts.fetch import fetch_root_skeletons
+    from experiments.pcfg_synapse_partitions.pcfg_partitions import (
+        BIGRAM_DIM, FEAT_DIM,
+    )
+
+    # Collect unique root IDs across all partitions
+    unique_roots = list({p.root_id for p in all_partitions})
+    log.info("Fetching skeletons for %d unique roots (v117) ...", len(unique_roots))
+    try:
+        skeletons = fetch_root_skeletons(
+            unique_roots,
+            version=117,
+            token=args.token,
+            cache_dir=args.skeleton_cache_dir,
+        )
+    except Exception as exc:
+        log.warning("Skeleton fetch failed: %s", exc)
+        return
+
+    n_ok = sum(1 for sk in skeletons.values() if len(sk.vertices) >= 3)
+    log.info("  %d / %d roots have a usable skeleton", n_ok, len(unique_roots))
+
+    # Re-extract partitions using skeleton data
+    # We need the original synapse arrays; reconstruct them from all_partitions.
+    # Each HalfPartition already holds the synapse pts and remap info we need.
+    # Build SkeletonPartitions directly from HalfPartition + skeleton lookup.
+    from experiments.pcfg_synapse_partitions.skeleton_tokens import SkeletonPartition
+    sk_partitions = []
+    for p in all_partitions:
+        sk = skeletons.get(p.root_id)
+        if sk is None or len(sk.vertices) < 3:
+            continue
+        sk_partitions.append(SkeletonPartition(
+            root_id=p.root_id,
+            v18xx_root=p.v18xx_root,
+            side=p.side,
+            pts=p.pts,
+            skel_verts=sk.vertices.astype(float),
+            skel_edges=sk.edges,
+        ))
+
+    radii = {rid: sk.radius for rid, sk in skeletons.items()
+             if sk.radius is not None}
+
+    if len(sk_partitions) < 10:
+        print()
+        print("Skeleton grammar: too few partitions with skeletons -- skipping.")
+        return
+
+    log.info("Building skeleton merge pairs (%d partitions) ...", len(sk_partitions))
+    X_sk, y_sk = build_skeleton_merge_pairs(
+        sk_partitions, max_neg_ratio=args.max_neg_ratio,
+        rng=np.random.default_rng(args.seed), radii=radii,
+    )
+
+    if len(y_sk) == 0:
+        print()
+        print("Skeleton grammar: no merge pairs generated.")
+        return
+
+    n_pos_sk = int(y_sk.sum())
+    pct_pos_sk = 100.0 * n_pos_sk / len(y_sk)
+    bg_idx  = list(range(BIGRAM_DIM)) + list(range(FEAT_DIM, FEAT_DIM + BIGRAM_DIM))
+    be_idx  = list(range(FEAT_DIM))   + list(range(FEAT_DIM, FEAT_DIM * 2))
+    dist_idx = [X_sk.shape[1] - 1]
+    y_perm_sk = np.random.default_rng(args.seed).permutation(y_sk)
+
+    pos_dists_nm_sk = np.expm1(X_sk[y_sk == 1, -1])
+    neg_dists_nm_sk = np.expm1(X_sk[y_sk == 0, -1])
+
+    print()
+    print("=" * 60)
+    print("Skeleton grammar -- DFS-ordered skeleton vertices")
+    print("=" * 60)
+    print(f"  Partitions with skeleton: {len(sk_partitions)}")
+    print(f"  Pairs:                    {len(y_sk):,} ({pct_pos_sk:.1f}% positive)")
+    print(f"  Positive centroid dist:   ", end="")
+    if len(pos_dists_nm_sk):
+        print(f"min={pos_dists_nm_sk.min()/1e3:.1f}  "              f"med={float(np.median(pos_dists_nm_sk))/1e3:.1f}  "              f"max={pos_dists_nm_sk.max()/1e3:.1f} um")
+    else:
+        print("(none)")
+    print(f"  Negative centroid dist:   ", end="")
+    if len(neg_dists_nm_sk):
+        print(f"min={neg_dists_nm_sk.min()/1e3:.1f}  "              f"med={float(np.median(neg_dists_nm_sk))/1e3:.1f}  "              f"max={neg_dists_nm_sk.max()/1e3:.1f} um")
+    else:
+        print("(none)")
+    print()
+    print("-- Baselines --")
+    _run_cv(X_sk[:, dist_idx], y_sk,      args.cv_folds, args.seed, "distance only (1 feat)")
+    _run_cv(X_sk,              y_perm_sk, args.cv_folds, args.seed, "permuted labels (null)")
+    print("-- Skeleton grammar (LR) --")
+    _run_cv(X_sk[:, bg_idx], y_sk, args.cv_folds, args.seed, "skeleton bigram (16+16 feats)")
+    _run_cv(X_sk[:, be_idx], y_sk, args.cv_folds, args.seed, "skeleton bigram+entropy (17+17)")
+    _run_cv(X_sk,            y_sk, args.cv_folds, args.seed, "skeleton + dist (35 feats)")
+    print("-- Skeleton grammar (RF) --")
+    _run_cv(X_sk[:, bg_idx], y_sk, args.cv_folds, args.seed, "skeleton bigram RF (16+16)",    classifier="rf")
+    _run_cv(X_sk[:, be_idx], y_sk, args.cv_folds, args.seed, "skeleton bigram+entropy RF",    classifier="rf")
+    _run_cv(X_sk,            y_sk, args.cv_folds, args.seed, "skeleton + dist RF (35 feats)", classifier="rf")
+
+    # Cross-box honest test for skeleton grammar
+    if n_boxes_used > 1:
+        from collections import defaultdict as _dd
+        n = len(sk_partitions)
+        skel_feats = [skeleton_features(p, radius=radii.get(p.root_id)) for p in sk_partitions]
+        skel_cents = np.array([p.pts.mean(axis=0) for p in sk_partitions])
+        skel_v18   = np.array([p.v18xx_root for p in sk_partitions])
+        skel_rids  = np.array([p.root_id for p in sk_partitions])
+        # box_ids for sk_partitions: match by root_id to original all_partitions ordering
+        pid_to_box = {p.root_id: all_box_ids[i] for i, p in enumerate(all_partitions)}
+        skel_boxes = np.array([pid_to_box.get(p.root_id, 0) for p in sk_partitions])
+
+        by_v18 = _dd(list)
+        for idx, v in enumerate(skel_v18.tolist()):
+            by_v18[v].append(idx)
+
+        pos_i, pos_j = [], []
+        for group in by_v18.values():
+            if len(group) < 2:
+                continue
+            for ai in range(len(group)):
+                for bi in range(ai + 1, len(group)):
+                    i, j = group[ai], group[bi]
+                    if skel_boxes[i] == skel_boxes[j]:
+                        continue
+                    if skel_rids[i] == skel_rids[j]:
+                        continue
+                    pos_i.append(i)
+                    pos_j.append(j)
+
+        n_pos_xb = len(pos_i)
+        if n_pos_xb == 0:
+            print()
+            print("Skeleton cross-box: no cross-box positive pairs found.")
+        else:
+            n_neg_target = min(int(n_pos_xb * args.max_neg_ratio), 100_000)
+            neg_i, neg_j = [], []
+            batch_sz = 50_000
+            while len(neg_i) < n_neg_target:
+                ii = rng.integers(0, n, size=batch_sz)
+                jj = rng.integers(0, n, size=batch_sz)
+                mask = ((ii != jj) & (skel_boxes[ii] != skel_boxes[jj])
+                        & (skel_v18[ii] != skel_v18[jj])
+                        & (skel_rids[ii] != skel_rids[jj]))
+                valid_ii = ii[mask]; valid_jj = jj[mask]
+                remaining = n_neg_target - len(neg_i)
+                neg_i.extend(valid_ii[:remaining].tolist())
+                neg_j.extend(valid_jj[:remaining].tolist())
+
+            fa_arr = np.array(skel_feats)
+            pos_ia, pos_ja = np.array(pos_i), np.array(pos_j)
+            neg_ia, neg_ja = np.array(neg_i), np.array(neg_j)
+
+            def _pfeat(ia, ja):
+                d = np.linalg.norm(skel_cents[ia] - skel_cents[ja], axis=1)
+                return np.column_stack([fa_arr[ia], fa_arr[ja], np.log1p(d)])
+
+            X_xb = np.vstack([_pfeat(pos_ia, pos_ja), _pfeat(neg_ia, neg_ja)])
+            y_xb = np.concatenate([np.ones(n_pos_xb, dtype=np.int64),
+                                    np.zeros(len(neg_i), dtype=np.int64)])
+            shuf = rng.permutation(len(y_xb))
+            X_xb, y_xb = X_xb[shuf], y_xb[shuf]
+
+            pct_xb = 100.0 * n_pos_xb / len(y_xb)
+            pos_d = np.expm1(X_xb[y_xb == 1, -1])
+            neg_d = np.expm1(X_xb[y_xb == 0, -1])
+            print()
+            print(f"Skeleton cross-box honest test (n={len(y_xb):,}, {pct_xb:.1f}% pos):")
+            print(f"  Pos dist: med={float(np.median(pos_d))/1e3:.1f} um  "                  f"Neg dist: med={float(np.median(neg_d))/1e3:.1f} um")
+            dist_idx_xb = [X_xb.shape[1] - 1]
+            bg_idx_xb  = list(range(BIGRAM_DIM)) + list(range(FEAT_DIM, FEAT_DIM + BIGRAM_DIM))
+            be_idx_xb  = list(range(FEAT_DIM))   + list(range(FEAT_DIM, FEAT_DIM * 2))
+            print()
+            _run_cv(X_xb[:, dist_idx_xb], y_xb, args.cv_folds, args.seed, "distance only")
+            print("-- LR --")
+            _run_cv(X_xb[:, bg_idx_xb], y_xb, args.cv_folds, args.seed, "skeleton bigram (16+16)")
+            _run_cv(X_xb[:, be_idx_xb], y_xb, args.cv_folds, args.seed, "skeleton bigram+ent (17+17)")
+            _run_cv(X_xb,               y_xb, args.cv_folds, args.seed, "skeleton + dist (35 feats)")
+            print("-- RF --")
+            _run_cv(X_xb[:, bg_idx_xb], y_xb, args.cv_folds, args.seed, "skeleton bigram RF",       classifier="rf")
+            _run_cv(X_xb[:, be_idx_xb], y_xb, args.cv_folds, args.seed, "skeleton bigram+ent RF",   classifier="rf")
+            _run_cv(X_xb,               y_xb, args.cv_folds, args.seed, "skeleton + dist RF",       classifier="rf")
 
 if __name__ == "__main__":
     main()
