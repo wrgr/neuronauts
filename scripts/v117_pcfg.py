@@ -887,20 +887,31 @@ def _run_learned_grammar(args, all_partitions, all_box_ids, n_boxes_used, rng):
     from neuronauts.fetch import fetch_root_skeletons
 
     unique_roots = list({p.root_id for p in all_partitions})
-    log.info("Fetching skeletons for %d unique roots (v117) ...", len(unique_roots))
+    log.info("Fetching skeletons for %d unique roots (v117) in chunks of 500 ...", len(unique_roots))
+    skeletons: dict = {}
+    chunk_size = 500
     try:
-        skeletons = fetch_root_skeletons(
-            unique_roots,
-            version=117,
-            token=args.token,
-            cache_dir=args.skeleton_cache_dir,
-        )
+        for chunk_start in range(0, len(unique_roots), chunk_size):
+            chunk = unique_roots[chunk_start: chunk_start + chunk_size]
+            chunk_skel = fetch_root_skeletons(
+                chunk,
+                version=117,
+                token=args.token,
+                cache_dir=args.skeleton_cache_dir,
+            )
+            skeletons.update(chunk_skel)
+            n_done = min(chunk_start + chunk_size, len(unique_roots))
+            n_ok_so_far = sum(1 for sk in skeletons.values() if len(sk.vertices) >= _MIN_SKEL_VERTS)
+            log.info("  skeletons: %d / %d fetched  (%d usable so far)",
+                     n_done, len(unique_roots), n_ok_so_far)
     except Exception as exc:
-        log.warning("Skeleton fetch failed: %s", exc)
-        return
+        log.warning("Skeleton fetch failed at chunk starting %d: %s", chunk_start, exc)
+        if not skeletons:
+            return
 
-    n_ok = sum(1 for sk in skeletons.values() if len(sk.vertices) >= 3)
-    log.info("  %d / %d roots have a usable skeleton", n_ok, len(unique_roots))
+    n_ok = sum(1 for sk in skeletons.values() if len(sk.vertices) >= _MIN_SKEL_VERTS)
+    log.info("  %d / %d roots have a usable skeleton (>= %d vertices)",
+             n_ok, len(unique_roots), _MIN_SKEL_VERTS)
 
     sk_partitions = []
     for p in all_partitions:
