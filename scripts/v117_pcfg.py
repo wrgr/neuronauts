@@ -152,12 +152,14 @@ def _sample_centers(
     return centers
 
 
+_GT_VERSION = 1718  # latest materialization; use 1412 for reproducibility vs older runs
+
 def _fetch_one_box(
     center_nm: tuple[int, ...],
     side_um: float,
     token: str | None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict[int, int]] | None:
-    """Fetch synapses + v117->v1412 remap for one box.
+    """Fetch synapses + v117->v1718 remap for one box.
 
     Returns (pre_pt_nm, post_pt_nm, pre_root_id, post_root_id, remap)
     or None when the box yields no usable data.
@@ -190,19 +192,19 @@ def _fetch_one_box(
     pre_pt_nm  = syn.pre_pt.astype(np.float64)  * _MIP2_VOX + bbox_origin
     post_pt_nm = syn.post_pt.astype(np.float64) * _MIP2_VOX + bbox_origin
 
-    # Map all unique root IDs to v1412
+    # Map all unique root IDs to latest GT version (v1718)
     all_roots = list(
         set(syn.pre_root_id.tolist()) | set(syn.post_root_id.tolist())
     )
-    log.info("  Mapping %d unique root IDs v117 -> v1412 ...", len(all_roots))
+    log.info("  Mapping %d unique root IDs v117 -> v%d ...", len(all_roots), _GT_VERSION)
     try:
-        remap = map_roots_between_versions(all_roots, 117, 1412, token=token)
+        remap = map_roots_between_versions(all_roots, 117, _GT_VERSION, token=token)
     except Exception as exc:
         log.warning("Root mapping failed for center %s: %s", center_nm, exc)
         return None
 
     n_mapped = sum(1 for v in remap.values() if v > 0)
-    log.info("  %d / %d roots have a valid v1412 label", n_mapped, len(all_roots))
+    log.info("  %d / %d roots have a valid v%d label", n_mapped, len(all_roots), _GT_VERSION)
 
     return pre_pt_nm, post_pt_nm, syn.pre_root_id, syn.post_root_id, remap
 
@@ -221,7 +223,7 @@ def _cross_box_analysis(
 ) -> None:
     """Grammar evaluation on cross-box positive pairs only.
 
-    Cross-box positives: same v1412 root, partitions from *different* boxes.
+    Cross-box positives: same v1718 root, partitions from *different* boxes.
     Their centroid distances are on the order of box offsets (~30 um), which
     overlaps the negative pair range — so distance carries no free signal and
     the grammar must do the work.
@@ -253,7 +255,7 @@ def _cross_box_analysis(
     if n_pos_xb == 0:
         print()
         print("Cross-box analysis: no cross-box positive pairs found.")
-        print("  (no v1412 root appears in more than one box)")
+        print(f"  (no v{_GT_VERSION} root appears in more than one box)")
         return
 
     n_neg = min(len(neg_rows), max(1, int(n_pos_xb * max_neg_ratio)))
@@ -455,17 +457,17 @@ def main() -> None:
         log.info("  -> %d half-partitions extracted", len(parts))
         if args.verbose:
             from collections import Counter as _Counter
-            # Count unique v117 root IDs per v1412 root (true false-split pairs).
+            # Count unique v117 root IDs per GT root (true false-split pairs).
             # Note: sides='both' creates 2 partitions per v117 root (pre+post), both
             # sharing the same root_id — those are NOT positive pairs. Only partitions
-            # with *different* root_ids mapping to the same v1412 root are positives.
+            # with *different* root_ids mapping to the same GT root are positives.
             v18xx_by_root: dict = {}
             for p in parts:
                 v18xx_by_root.setdefault(p.v18xx_root, set()).add(p.root_id)
             n_multi = sum(1 for roots in v18xx_by_root.values() if len(roots) >= 2)
             log.info(
-                "    (%d v1412 roots with >=2 distinct v117 root IDs = potential positives)",
-                n_multi,
+                "    (%d v%d roots with >=2 distinct v117 root IDs = potential positives)",
+                n_multi, _GT_VERSION,
             )
 
         all_partitions.extend(parts)
