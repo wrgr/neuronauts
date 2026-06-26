@@ -886,26 +886,46 @@ def _run_learned_grammar(args, all_partitions, all_box_ids, n_boxes_used, rng):
     from experiments.pcfg_synapse_partitions.learned_grammar import train_and_eval
     from neuronauts.fetch import fetch_root_skeletons
 
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import threading
+
     unique_roots = list({p.root_id for p in all_partitions})
-    log.info("Fetching skeletons for %d unique roots (v117) in chunks of 500 ...", len(unique_roots))
+    n_workers = 16  # I/O-bound HTTP — 16 threads gives ~16x speedup over serial
+    chunk_size = max(1, len(unique_roots) // n_workers + 1)
+    chunks = [unique_roots[i: i + chunk_size] for i in range(0, len(unique_roots), chunk_size)]
+    log.info(
+        "Fetching skeletons for %d unique roots (v117) with %d threads (%d chunks) ...",
+        len(unique_roots), n_workers, len(chunks),
+    )
+
     skeletons: dict = {}
-    chunk_size = 500
+    lock = threading.Lock()
+    n_done_counter = [0]
+
+    def _fetch_chunk(chunk):
+        result = fetch_root_skeletons(
+            chunk,
+            version=117,
+            token=args.token,
+            cache_dir=args.skeleton_cache_dir,
+        )
+        with lock:
+            skeletons.update(result)
+            n_done_counter[0] += len(chunk)
+            n_done = n_done_counter[0]
+            n_usable = sum(1 for sk in skeletons.values() if len(sk.vertices) >= _MIN_SKEL_VERTS)
+            log.info("  skeletons: %d / %d fetched  (%d usable)", n_done, len(unique_roots), n_usable)
+        return len(result)
+
     try:
-        for chunk_start in range(0, len(unique_roots), chunk_size):
-            chunk = unique_roots[chunk_start: chunk_start + chunk_size]
-            chunk_skel = fetch_root_skeletons(
-                chunk,
-                version=117,
-                token=args.token,
-                cache_dir=args.skeleton_cache_dir,
-            )
-            skeletons.update(chunk_skel)
-            n_done = min(chunk_start + chunk_size, len(unique_roots))
-            n_ok_so_far = sum(1 for sk in skeletons.values() if len(sk.vertices) >= _MIN_SKEL_VERTS)
-            log.info("  skeletons: %d / %d fetched  (%d usable so far)",
-                     n_done, len(unique_roots), n_ok_so_far)
+        with ThreadPoolExecutor(max_workers=n_workers) as pool:
+            futures = [pool.submit(_fetch_chunk, ch) for ch in chunks]
+            for fut in as_completed(futures):
+                exc = fut.exception()
+                if exc:
+                    log.warning("Chunk fetch error (partial results kept): %s", exc)
     except Exception as exc:
-        log.warning("Skeleton fetch failed at chunk starting %d: %s", chunk_start, exc)
+        log.warning("Skeleton fetch failed: %s", exc)
         if not skeletons:
             return
 
