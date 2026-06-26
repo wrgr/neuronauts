@@ -399,6 +399,7 @@ def build_training_data(
     max_neg_ratio: float = 3.0,
     rng=None,
     mode: str = "raw_delta3+skeleton",
+    match_distance: bool = False,
 ):
     """Compute inter-synapse path features and labeled pairs.
 
@@ -423,15 +424,17 @@ def build_training_data(
 
     # Pre-compute raw path_feats AND prepared inputs for every partition
     all_raw_path_feats = []
+    all_ordered_syn_pts = []
     part_inputs = []
     centroids = []
     for p in sk_partitions:
         rad = _radii.get(p.root_id)
-        _, path_feats = compute_intersynapse_paths(
+        ordered_pts, path_feats = compute_intersynapse_paths(
             p.skel_verts, p.skel_edges, p.pts,
             radius=rad, mode=mode,
         )
         all_raw_path_feats.append(path_feats)
+        all_ordered_syn_pts.append(ordered_pts)
         part_inputs.append(prepare_partition_input(path_feats))
         centroids.append(p.pts.mean(axis=0))
 
@@ -463,24 +466,31 @@ def build_training_data(
     # well-skeletonized partition in half gives a valid same-neuron training signal.
     art_used = False
     if len(pos_pairs) < 2:
-        for src_idx, pf in enumerate(all_raw_path_feats):
+        for src_idx, (pf, ordered_pts) in enumerate(
+            zip(all_raw_path_feats, all_ordered_syn_pts)
+        ):
             valid = [f for f in pf if f is not None]
             if len(valid) < 4:
                 continue
             mid = len(valid) // 2
             left_pf = valid[:mid]
             right_pf = valid[mid:]
+            # Accurate per-half centroids from ordered synapse positions
+            n_syn = len(ordered_pts)
+            syn_mid = max(1, n_syn // 2)
+            left_cent  = ordered_pts[:syn_mid].mean(axis=0)
+            right_cent = ordered_pts[syn_mid:].mean(axis=0)
             i_left  = len(part_inputs)
             i_right = len(part_inputs) + 1
             part_inputs.append(prepare_partition_input(left_pf))
             part_inputs.append(prepare_partition_input(right_pf))
-            cent = centroids[src_idx]
-            centroids = np.vstack([centroids, cent[None], cent[None]])
+            centroids = np.vstack([centroids, left_cent[None], right_cent[None]])
             v18xx.append(v18xx[src_idx])
             v18xx.append(v18xx[src_idx])
             rids.append(rids[src_idx])
             rids.append(rids[src_idx])
-            pos_pairs.append((i_left, i_right, 0.0, 1))
+            d = float(np.linalg.norm(left_cent - right_cent))
+            pos_pairs.append((i_left, i_right, np.log1p(d), 1))
         art_used = len(pos_pairs) > 0
 
     if art_used:
@@ -514,7 +524,21 @@ def build_training_data(
         pass
 
     neg_pairs.sort(key=lambda r: r[2])
-    neg_pairs = neg_pairs[:n_neg]
+
+    if match_distance and pos_pairs and neg_pairs:
+        pos_log_dists = np.array([r[2] for r in pos_pairs])
+        neg_log_dists = np.array([r[2] for r in neg_pairs])
+        pos_mean = float(pos_log_dists.mean())
+        pos_std  = float(pos_log_dists.std() + 1e-6)
+        scores = -np.abs(neg_log_dists - pos_mean) / pos_std
+        probs  = np.exp(scores - scores.max())
+        probs /= probs.sum()
+        k = min(n_neg, len(neg_pairs))
+        n_support = int((probs > 1e-10).sum())
+        chosen = rng.choice(len(neg_pairs), size=k, replace=(k > n_support), p=probs)
+        neg_pairs = [neg_pairs[c] for c in chosen]
+    else:
+        neg_pairs = neg_pairs[:n_neg]
 
     all_pairs = pos_pairs + neg_pairs
     perm = rng.permutation(len(all_pairs))
@@ -602,7 +626,7 @@ def train_and_eval(
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
-                epoch_loss += float(loss)
+                epoch_loss += loss.detach().item()
                 n_batches += 1
 
         # Validation
@@ -620,7 +644,80 @@ def train_and_eval(
 
         oof_probs[va_idx] = probs
 
-    auc = float(roc_auc_score(y, oof_probs))
+    auc_std = float(roc_auc_score(y, oof_probs))
     if verbose:
-        print(f"  Learned skeleton-synapse grammar CV AUC = {auc:.3f}")
-    return auc
+        print(f"  Standard CV AUC = {auc_std:.3f}")
+
+    # -------------------------------------------------------------------
+    # Honest (distance-matched) evaluation — mirrors bigram grammar
+    # -------------------------------------------------------------------
+    if verbose:
+        print(f"\n  [Honest] Building distance-matched pairs ...")
+    rng_h = np.random.default_rng(seed + 7)
+    part_inputs_h, pairs_h = build_training_data(
+        sk_partitions, radii=radii, max_neg_ratio=max_neg_ratio,
+        rng=rng_h, match_distance=True,
+    )
+    y_h = np.array([p[3] for p in pairs_h], dtype=np.int64)
+    n_pos_h = int(y_h.sum())
+    n_neg_h = len(y_h) - n_pos_h
+    if verbose:
+        print(f"  [Honest] Pairs: {len(pairs_h):,}  ({n_pos_h} pos / {n_neg_h} neg)")
+
+    auc_h = float("nan")
+    if n_pos_h >= n_folds and n_neg_h >= n_folds:
+        pos_weight_h = torch.tensor([n_neg_h / max(1, n_pos_h)], dtype=torch.float32)
+        skf_h = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=seed + 7)
+        oof_probs_h = np.zeros(len(y_h), dtype=np.float64)
+
+        for fold, (tr_idx_h, va_idx_h) in enumerate(skf_h.split(pairs_h, y_h)):
+            if verbose:
+                print(f"  [Honest] Fold {fold + 1}/{n_folds} — training {len(tr_idx_h)} / val {len(va_idx_h)} ...")
+
+            model_h = build_model(cfg)
+            model_h.train()
+            optimizer_h = torch.optim.Adam(model_h.parameters(), lr=lr)
+            criterion_h = nn.BCEWithLogitsLoss(pos_weight=pos_weight_h)
+
+            tr_pairs_h = [pairs_h[i] for i in tr_idx_h]
+            tr_y_h     = y_h[tr_idx_h]
+
+            for epoch in range(n_epochs):
+                perm_h = rng_h.permutation(len(tr_pairs_h))
+                for b_start in range(0, len(tr_pairs_h), batch_size):
+                    b_idx_h   = perm_h[b_start: b_start + batch_size]
+                    batch_h   = [tr_pairs_h[k] for k in b_idx_h]
+                    b_y_h     = torch.tensor(tr_y_h[b_idx_h], dtype=torch.float32)
+                    batch_a_h = [part_inputs_h[p[0]] for p in batch_h]
+                    batch_b_h = [part_inputs_h[p[1]] for p in batch_h]
+                    log_d_h   = torch.tensor([p[2] for p in batch_h], dtype=torch.float32)
+                    optimizer_h.zero_grad()
+                    logits_h = model_h(batch_a_h, batch_b_h, log_d_h)
+                    loss_h   = criterion_h(logits_h, b_y_h)
+                    loss_h.backward()
+                    torch.nn.utils.clip_grad_norm_(model_h.parameters(), 1.0)
+                    optimizer_h.step()
+
+            model_h.eval()
+            va_pairs_h = [pairs_h[i] for i in va_idx_h]
+            probs_h = []
+            with torch.no_grad():
+                for b_start in range(0, len(va_pairs_h), batch_size):
+                    batch_h   = va_pairs_h[b_start: b_start + batch_size]
+                    batch_a_h = [part_inputs_h[p[0]] for p in batch_h]
+                    batch_b_h = [part_inputs_h[p[1]] for p in batch_h]
+                    log_d_h   = torch.tensor([p[2] for p in batch_h], dtype=torch.float32)
+                    logits_h  = model_h(batch_a_h, batch_b_h, log_d_h)
+                    probs_h.extend(torch.sigmoid(logits_h).tolist())
+            oof_probs_h[va_idx_h] = probs_h
+
+        auc_h = float(roc_auc_score(y_h, oof_probs_h))
+        if verbose:
+            print(f"  Learned grammar (honest) CV AUC = {auc_h:.3f}")
+    else:
+        if verbose:
+            print(f"  [Honest] Too few pairs for CV — skipping.")
+
+    if verbose:
+        print(f"  CV AUC = {auc_h:.3f}  (honest/distance-matched)  |  standard = {auc_std:.3f}")
+    return auc_h
