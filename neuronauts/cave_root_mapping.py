@@ -55,8 +55,13 @@ def map_roots_between_versions(
         0 is always mapped to 0 in the result when present in the input.
     """
     client = get_client(new_version, token=token)
-    # timestamp=None → live graph state (captures all proofread merges to date).
-    # Pass an explicit datetime to anchor to a specific materialization snapshot.
+    # Setting client.version auto-anchors client._timestamp to the materialization
+    # timestamp (e.g. 2026-03-07 for v1718).  The chunkedgraph client inherits
+    # that default and silently applies it to get_latest_roots() even when we
+    # don't pass a timestamp explicitly.  Reset the private attr to get true live
+    # state when the caller wants no anchoring.
+    if timestamp is None:
+        client._timestamp = None
 
     # Force to numpy array of int64; drop invalid IDs (0 and negative) so the API doesn't 500
     raw = list(root_ids)
