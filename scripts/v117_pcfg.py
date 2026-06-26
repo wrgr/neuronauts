@@ -228,67 +228,101 @@ def _cross_box_analysis(
     overlaps the negative pair range — so distance carries no free signal and
     the grammar must do the work.
     """
-    from itertools import combinations as _comb
+    from collections import defaultdict
     from experiments.pcfg_synapse_partitions.pcfg_partitions import (
         partition_features, BIGRAM_DIM, FEAT_DIM,
     )
 
-    feats     = [partition_features(p) for p in all_partitions]
-    centroids = [p.pts.mean(axis=0) for p in all_partitions]
-    v18xx     = [p.v18xx_root for p in all_partitions]
+    n = len(all_partitions)
+    feats_arr  = np.array([partition_features(p) for p in all_partitions])
+    centroids  = np.array([p.pts.mean(axis=0) for p in all_partitions])
+    v18xx_arr  = np.array([p.v18xx_root for p in all_partitions])
+    root_arr   = np.array([p.root_id for p in all_partitions])
+    box_arr    = np.array(box_ids)
 
-    pos_rows: list = []
-    neg_rows: list = []
+    # -- Positives: O(N) groupby by v1718 root --------------------------------
+    by_v18: dict = defaultdict(list)
+    for idx, vr in enumerate(v18xx_arr.tolist()):
+        by_v18[vr].append(idx)
 
-    for i, j in _comb(range(len(all_partitions)), 2):
-        if box_ids[i] == box_ids[j]:
-            continue  # same box — skip
-        if all_partitions[i].root_id == all_partitions[j].root_id:
-            continue  # identical root ID (shouldn't happen across boxes but guard it)
-        dist = float(np.linalg.norm(centroids[i] - centroids[j]))
-        if v18xx[i] == v18xx[j]:
-            pos_rows.append((feats[i], feats[j], dist, 1))
-        else:
-            neg_rows.append((feats[i], feats[j], dist, 0))
+    pos_i, pos_j = [], []
+    for vr, idxs in by_v18.items():
+        if len(idxs) < 2:
+            continue
+        for ai in range(len(idxs)):
+            for bi in range(ai + 1, len(idxs)):
+                i, j = idxs[ai], idxs[bi]
+                if box_arr[i] == box_arr[j]:
+                    continue  # same box — skip
+                if root_arr[i] == root_arr[j]:
+                    continue  # same v117 root (not a false split)
+                pos_i.append(i)
+                pos_j.append(j)
 
-    n_pos_xb = len(pos_rows)
+    n_pos_xb = len(pos_i)
     if n_pos_xb == 0:
         print()
         print("Cross-box analysis: no cross-box positive pairs found.")
         print(f"  (no v{_GT_VERSION} root appears in more than one box)")
         return
 
-    n_neg = min(len(neg_rows), max(1, int(n_pos_xb * max_neg_ratio)))
-    neg_rows.sort(key=lambda r: r[2])
-    neg_rows = neg_rows[:n_neg]
+    # -- Negatives: vectorized random cross-box sampling ----------------------
+    n_neg_target = min(int(n_pos_xb * max_neg_ratio), 100_000)
+    neg_i, neg_j = [], []
+    batch_sz = 50_000
+    while len(neg_i) < n_neg_target:
+        ii = rng.integers(0, n, size=batch_sz)
+        jj = rng.integers(0, n, size=batch_sz)
+        mask = (
+            (ii != jj)
+            & (box_arr[ii] != box_arr[jj])
+            & (v18xx_arr[ii] != v18xx_arr[jj])
+            & (root_arr[ii] != root_arr[jj])
+        )
+        valid_ii = ii[mask]
+        valid_jj = jj[mask]
+        remaining = n_neg_target - len(neg_i)
+        neg_i.extend(valid_ii[:remaining].tolist())
+        neg_j.extend(valid_jj[:remaining].tolist())
 
-    all_rows = pos_rows + neg_rows
-    order = rng.permutation(len(all_rows))
-    all_rows = [all_rows[k] for k in order]
+    # -- Build feature matrix -------------------------------------------------
+    pos_ia = np.array(pos_i)
+    pos_ja = np.array(pos_j)
+    neg_ia = np.array(neg_i)
+    neg_ja = np.array(neg_j)
 
-    X_xb = np.array(
-        [np.concatenate([fa, fb, [np.log1p(d)]]) for fa, fb, d, _ in all_rows],
-        dtype=np.float64,
-    )
-    y_xb = np.array([lbl for _, _, _, lbl in all_rows], dtype=np.int64)
+    def _pair_feat(ia, ja):
+        dists = np.linalg.norm(centroids[ia] - centroids[ja], axis=1)
+        return np.column_stack([feats_arr[ia], feats_arr[ja], np.log1p(dists)])
+
+    X_pos = _pair_feat(pos_ia, pos_ja)
+    X_neg = _pair_feat(neg_ia, neg_ja)
+    X_xb = np.vstack([X_pos, X_neg])
+    y_xb = np.concatenate([
+        np.ones(n_pos_xb, dtype=np.int64),
+        np.zeros(len(neg_i), dtype=np.int64),
+    ])
+    order = rng.permutation(len(y_xb))
+    X_xb = X_xb[order]
+    y_xb = y_xb[order]
 
     bg_idx   = list(range(BIGRAM_DIM)) + list(range(FEAT_DIM, FEAT_DIM + BIGRAM_DIM))
     be_idx   = list(range(FEAT_DIM))   + list(range(FEAT_DIM, FEAT_DIM * 2))
     dist_idx = [X_xb.shape[1] - 1]
 
     pct_pos = 100.0 * n_pos_xb / len(y_xb)
-    pos_dists = np.array([r[2] for r in pos_rows])
-    neg_dists = np.array([r[2] for r in neg_rows])
+    pos_dists_nm = np.expm1(X_pos[:, -1])
+    neg_dists_nm = np.expm1(X_neg[:, -1])
 
     print()
     print(f"Cross-box pairs only (n={len(y_xb):,} pairs, {pct_pos:.1f}% positive):")
-    print(f"  [honest grammar test: same-neuron fragments in spatially distinct boxes]")
-    print(f"  Positive dist: min={pos_dists.min()/1e3:.1f}  "
-          f"med={np.median(pos_dists)/1e3:.1f}  "
-          f"max={pos_dists.max()/1e3:.1f} µm")
-    print(f"  Negative dist: min={neg_dists.min()/1e3:.1f}  "
-          f"med={np.median(neg_dists)/1e3:.1f}  "
-          f"max={neg_dists.max()/1e3:.1f} µm")
+    print("  [honest grammar test: same-neuron fragments in spatially distinct boxes]")
+    print(f"  Positive dist: min={pos_dists_nm.min()/1e3:.1f}  "
+          f"med={np.median(pos_dists_nm)/1e3:.1f}  "
+          f"max={pos_dists_nm.max()/1e3:.1f} µm")
+    print(f"  Negative dist: min={neg_dists_nm.min()/1e3:.1f}  "
+          f"med={np.median(neg_dists_nm)/1e3:.1f}  "
+          f"max={neg_dists_nm.max()/1e3:.1f} µm")
     print()
     _run_cv(X_xb[:, dist_idx], y_xb, n_folds, seed, "distance only (1 feat)")
     print("-- LR --")
