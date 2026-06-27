@@ -35,6 +35,7 @@ Thumbs.db
 
 # Training and fetch logs
 *.log
+run_logs_*.txt
 
 # Model checkpoints. The curated keepers in models/README.md are tracked
 # (force-added); everything else under models/ — and all throwaway runs in
