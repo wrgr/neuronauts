@@ -136,10 +136,47 @@ print('smoke test passed -- tokens:', toks[:8])
 "
 ```
 
+## Synapse-level correction (both directions): `synapse_correction.py`
+
+`pcfg_partitions.py` models only false-splits (merges) at the *half-partition* level. The
+`synapse_correction.py` module works at the **synapse level** and learns the full
+correction operator `f(v117) -> proofread partition`, capturing **both** merges and splits
+from a single label.
+
+**Construction.** Each synapse-side is joined to itself across materializations through its
+*immutable supervoxel* (`chunkedgraph.get_roots(supervoxel, timestamp=later)` — single-valued,
+unlike `get_latest_roots` on a whole root, which forks exactly when a split happened). That
+gives `(root_v117, root_later)` per side. The pairwise label is just **"same later root?"**:
+
+| v117 relation | later relation | correction | stratum |
+|---|---|---|---|
+| different root | same root | **merge** (false-split corrected) | `merge` (cross-root) |
+| same root | different root | **split** (false-merge corrected) | `split` (within-root) |
+| same/same or diff/diff | — | none (stable) | — |
+
+So the learned affinity `P(same later root | v117 features)` *is* the correction; XOR with the
+v117 relation yields the edit. CV groups are connected components of the
+(v117-root ↔ later-root) co-occurrence graph — the physical "cells" — to avoid the
+cell-identity leakage that inflated the berlin risk AUC.
+
+```bash
+# offline sanity check (no token): injects known false-merges + false-splits
+python -m experiments.pcfg_synapse_partitions.run_synapse_correction --synthetic
+
+# real data (needs a CAVE token): v117 synapses in the proofread column -> later roots
+python -m experiments.pcfg_synapse_partitions.run_synapse_correction \
+    --token $CAVE_TOKEN --later-version 1718 --n-boxes 6 --side-um 30
+```
+
+Reports grouped-CV AUC overall and per stratum (`merge` / `split`), each vs a permutation
+null. Offline checks live in `tests/test_synapse_correction.py`.
+
 ## Files
 
 | File | Purpose |
 |------|---------|
 | `pcfg_partitions.py` | Core grammar: tokenize, bigram\_features, cond\_entropy, partition\_features, extract\_partitions, build\_merge\_pairs |
-| `run_experiment.py` | CLI: loads BoxCache + remap TSV, builds dataset, runs CV, prints results |
+| `run_experiment.py` | CLI: loads BoxCache + remap TSV, builds dataset, runs CV (merge-only, half-partition level) |
+| `synapse_correction.py` | Synapse-level cross-version join + both-direction (merge **and** split) pair dataset & features |
+| `run_synapse_correction.py` | CLI: CAVE fetch (or `--synthetic`), grouped-CV eval per stratum vs permutation null |
 | `README.md` | This file |
