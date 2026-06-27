@@ -41,6 +41,65 @@ def _install_system_trust_store() -> None:
     truststore.inject_into_ssl()
 
 
+# Substrings that mark an *intermittent*, retryable CAVE/proxy failure rather
+# than a real client error. The public endpoint occasionally rejects a valid
+# request with HTTP 400 "bad_auth_header" (the Authorization header we send IS a
+# correct "Bearer <token>" — retrying the identical request succeeds), or drops
+# the connection / returns a 5xx during datastack resolution.
+_TRANSIENT_CAVE_MARKERS = (
+    "bad_auth_header",
+    "must begin with 'Bearer'",
+    "Read timed out",
+    "Connection aborted",
+    "Connection reset",
+    "Remote end closed",
+    "Max retries",
+    "Temporary failure",
+    " 500 ", " 502 ", " 503 ", " 504 ",
+)
+
+
+def _is_transient_cave_error(exc: Exception) -> bool:
+    s = str(exc)
+    return any(m in s for m in _TRANSIENT_CAVE_MARKERS)
+
+
+def _build_caveclient(
+    datastack: str,
+    cave_server: str,
+    token: Optional[str],
+    *,
+    max_retries: int = 4,
+    initial_backoff_s: float = 2.0,
+):
+    """Construct a CAVEclient and pre-resolve its datastack info, retrying
+    *intermittent* setup failures.
+
+    The public CAVE endpoint sometimes returns HTTP 400 ``bad_auth_header`` (or
+    drops the connection) on the very first datastack-info request even though
+    the ``Authorization: Bearer <token>`` header is correct — the identical
+    request succeeds on retry. To stop that from killing a whole run, we force
+    the datastack resolution here, inside a backoff retry, and return a warmed
+    client. Warming is best-effort: if it can't succeed after retries it still
+    returns a client so the real operation surfaces any genuine error.
+    """
+    from caveclient import CAVEclient
+
+    client = None
+    for attempt in range(max(1, int(max_retries))):
+        client = CAVEclient(datastack, server_address=cave_server, auth_token=token)
+        try:
+            client.info.get_datastack_info()  # forces the flaky datastack/full call
+            return client
+        except Exception as exc:  # noqa: BLE001 - classified below
+            if not _is_transient_cave_error(exc):
+                return client  # genuine error: let the real call raise it
+            if attempt + 1 >= max(1, int(max_retries)):
+                return client  # exhausted: proceed, real call will retry/raise
+            time.sleep(float(initial_backoff_s) * (2 ** attempt))
+    return client
+
+
 @dataclass
 class VolumeChunk:
     data: np.ndarray
@@ -245,7 +304,7 @@ def fetch_synapses(
     except ImportError as exc:
         raise ImportError("pip install caveclient") from exc
 
-    client = CAVEclient(datastack, server_address=cave_server, auth_token=token)
+    client = _build_caveclient(datastack, cave_server, token)
     if version is not None:
         client.version = version
     (x0, y0, z0), (x1, y1, z1) = bbox_nm
@@ -399,7 +458,7 @@ def root_ids_in_bbox(
     _install_system_trust_store()
     from caveclient import CAVEclient
 
-    client = CAVEclient(datastack, server_address=cave_server, auth_token=token)
+    client = _build_caveclient(datastack, cave_server, token)
     if version is not None:
         client.version = version
 
@@ -451,7 +510,7 @@ def seg_root_ids_in_bbox(
         raise ImportError("pip install cloud-volume") from exc
     from caveclient import CAVEclient
 
-    client = CAVEclient(datastack, server_address=cave_server, auth_token=token)
+    client = _build_caveclient(datastack, cave_server, token)
     if version is not None:
         client.version = version
     seg_src = client.info.segmentation_source()
@@ -523,7 +582,7 @@ def fetch_synapses_for_roots(
     if not roots:
         return _synapse_df_to_table(_EMPTY_DF(), bbox_nm, mip)
 
-    client = CAVEclient(datastack, server_address=cave_server, auth_token=token)
+    client = _build_caveclient(datastack, cave_server, token)
     if version is not None:
         client.version = version
 
@@ -597,7 +656,7 @@ def fetch_root_skeleton(
             from caveclient import CAVEclient
         except ImportError as exc:
             raise ImportError("pip install caveclient") from exc
-        client = CAVEclient(datastack, server_address=cave_server, auth_token=token)
+        client = _build_caveclient(datastack, cave_server, token)
         client.version = int(version)
 
     last_exc: Exception | None = None
@@ -659,7 +718,7 @@ def fetch_root_skeletons(
     except ImportError as exc:
         raise ImportError("pip install caveclient") from exc
 
-    client = CAVEclient(datastack, server_address=cave_server, auth_token=token)
+    client = _build_caveclient(datastack, cave_server, token)
     client.version = int(version)
     # segmentation_cloudvolume() is used only for root-id validation inside get_skeleton;
     # cloudvolume may be absent or broken in this environment — skip the check safely.
