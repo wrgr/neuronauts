@@ -493,7 +493,7 @@ def fetch_synapses_for_roots(
     datastack: str = MICRONS_DATASTACK,
     cave_server: str = CAVE_SERVER,
     token: Optional[str] = None,
-    chunk_size: int = 200,
+    chunk_size: int = 2000,
     max_retries: int = 4,
     initial_backoff_s: float = 2.0,
 ) -> SynapseTable:
