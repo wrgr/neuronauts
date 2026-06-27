@@ -241,9 +241,16 @@ def fetch_side_table(
     pre_sv, post_sv = [], []
     pre_rv, post_rv = [], []
     syn_ids = []
-    centers = [np.array(center_nm, float)]
-    for _ in range(n_boxes - 1):
-        centers.append(np.array(center_nm, float) + rng.uniform(-half * 4, half * 4, size=3))
+    # Tile boxes on a compact 3-D grid around the proofread-column center so every box
+    # stays inside proofread tissue (random jitter risks wandering into volume with no
+    # v117->later divergence, which dilutes the edit signal).
+    step = side_um * 1000.0
+    offsets = sorted(
+        ((dx, dy, dz) for dx in (-1, 0, 1) for dy in (-1, 0, 1) for dz in (-1, 0, 1)),
+        key=lambda o: abs(o[0]) + abs(o[1]) + abs(o[2]),
+    )
+    centers = [np.array(center_nm, float) + np.array(o, float) * step
+               for o in offsets[:n_boxes]]
 
     for ci, c in enumerate(centers):
         lo = ((c - half) / syn_vox).astype(np.int64)
@@ -252,7 +259,7 @@ def fetch_side_table(
         df = client.materialize.query_table(
             "synapses_pni_2",
             filter_spatial_dict={"ctr_pt_position": [lo.tolist(), hi.tolist()]},
-            return_pyarrow=False,
+            split_positions=False,
         )
         if len(df) == 0:
             continue
