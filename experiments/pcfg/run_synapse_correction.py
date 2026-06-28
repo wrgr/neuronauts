@@ -317,9 +317,16 @@ def main() -> None:
     ap.add_argument("--cv-folds", type=int, default=5)
     ap.add_argument("--n-perm", type=int, default=50)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--save-sidetable", default=None,
+                    help="dump the fetched cross-version SideTable to an .npz for reuse")
+    ap.add_argument("--load-sidetable", default=None,
+                    help="load a SideTable .npz and skip the CAVE fetch entirely")
     args = ap.parse_args()
 
-    if args.synthetic:
+    if args.load_sidetable:
+        d = np.load(args.load_sidetable)
+        tab = SideTable(d["syn_id"], d["side"], d["pt"], d["root_v117"], d["root_later"])
+    elif args.synthetic:
         tab = make_synthetic(seed=args.seed)
     else:
         import os
@@ -331,6 +338,11 @@ def main() -> None:
             token, later_version=args.later_version, n_boxes=args.n_boxes,
             side_um=args.side_um, sides=args.sides, seed=args.seed,
         )
+
+    if args.save_sidetable:
+        np.savez(args.save_sidetable, syn_id=tab.syn_id, side=tab.side, pt=tab.pt,
+                 root_v117=tab.root_v117, root_later=tab.root_later)
+        print(f"saved SideTable -> {args.save_sidetable} ({len(tab)} sides)")
 
     print("\nedit summary:", summarize_edits(tab))
     X, y, groups, strata = build_correction_pairs(tab, rng=np.random.default_rng(args.seed))
