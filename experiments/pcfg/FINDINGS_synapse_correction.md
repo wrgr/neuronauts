@@ -60,9 +60,40 @@ Also: the **split** stratum is 98.8% "keep" — AUC is encouraging but the corre
 interest are the rare ~1%; report precision/recall@k (catch-vs-flag) before calling it
 deployable.
 
+## Regime check for the self-supervised grammar (`grammar_regime.py`, cached, label-free)
+
+Can we learn the grammar from raw segmentation and skip the edit labels? Only if the
+presegmentation is "good but imperfect" — correct structure must dominate the local
+statistics. Measured on the cached 7-box SideTable (v117 = contaminated input,
+v1718 = clean reference, same synapses; labels mark seams only, never train):
+
+| measurement | value | reading |
+|---|---|---|
+| transition-level pollution | **1.2%** of within-arbor steps cross a seam | regime holds — correct structure dominates |
+| arbors with ≥1 seam | 1.4% | errors are sparse and local |
+| grammar drift KL(clean‖contam) | **0.0002 bits** | contamination is **free** — no labels needed to learn the grammar |
+| anchor gate, **bigram-token** surprise | AUC **0.539** (null 0.50, p<0.001) | the F/B/L/R grammar is nearly **blind** to seams |
+| anchor gate, **geometry** surprise (2-D Gaussian on log-len + turn-angle) | AUC **0.658** (null 0.50, p<0.001) | keeping continuous geometry recovers signal |
+| seam-transition stereotypy | entropy 2.64/4.0; L↔R reversals ~1.8× lift | partly systematic, but tokens overlap clean arbors |
+
+**Conclusion: the bottleneck is the representation, not contamination.** The raw data is
+clean enough to self-supervise on (KL≈0), and you do *not* need edit labels to train the
+grammar. But the lossy 4-token alphabet discards the geometry where the error signal lives:
+a trivial geometry-preserving density already beats it (0.66 vs 0.54), against a supervised
+ceiling of 0.85 on the same seams. So the path is a **richer self-supervised geometric
+grammar** trained on raw arbors, scored by surprise — label-free, deployable beyond the
+proofread column.
+
+Caveat unchanged: seams are partly systematic (stereotyped as lateral reversals), so an
+anomaly model will still miss the most systematic presegmentation biases — that residual is
+what the scarce edit labels are for.
+
 ## Next
 
-1. Hard-negative mining for the merge stratum (collinear different-cell pairs) → honest AUC.
-2. PR@k / catch-vs-flag curves per stratum (berlin `prospective_flagging` style).
-3. Turn the affinity into a repartition (threshold → connected components) and score it
-   against v1718 by edge-F1 — the end-to-end correction, not just pairwise ranking.
+1. **Richer self-supervised geometric grammar** (more step features; kNN / flow density or
+   the transformer path encoder) on raw arbors → push the label-free anchor gate from 0.66
+   toward the 0.85 supervised ceiling. Iterate on the cached seams.
+2. Clean-column vs un-proofread-**bulk** drift (needs a bulk fetch) → confirm the 1.2%
+   regime holds outside the column, where the corrector must actually run.
+3. PR@k / catch-vs-flag curves per stratum; then repartition (affinity → components) scored
+   against v1718 by edge-F1 — the end-to-end correction.
