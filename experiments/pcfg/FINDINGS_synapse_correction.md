@@ -194,3 +194,28 @@ objects=9,377  false merges=354 (3.78% base rate); grouped-by-cell CV, null 0.50
 - This is the FLOOR: synapse clouds see only spatially-separated merges; intertwined merges
   (two somas/two trunks, spatially overlapping) need skeleton topology. That residual is the
   case for the skeleton-topology model once the MICrONS skeleton service is back up.
+
+## Self-supervised generative grammar (the agreed model) — scale test
+
+After several reframes (learn don't build; generative not discriminative; skeleton+synapse;
+self-supervised on noisy data), the model: a denoising PointNet autoencoder over each
+object's raw points (skeleton vertices + its synapses, xyz only), Chamfer reconstruction,
+trained on real (noisy) neurons. No labels, no hand features, no synthesized merges. Errors =
+low grammaticality (high reconstruction error); the reconstruction = the proposed correction.
+`skel_ssl_grammar.py`.
+
+| corpus (clean cells) | AUC(merge\|recon err) | base | prec@10% / recall |
+|---|---|---|---|
+| 176 (40 ep) | 0.738 | 26% | 0.54 / 0.21 |
+| **674 (45 ep, ~4×)** | **0.774** | 8.8% | 0.27 / 0.31 (~3× base) |
+
+- **Premise confirmed directionally**: scaling the noisy corpus lifts the grammar
+  (0.74 → 0.77; fold-1 0.86) — "noisy data buys scale" holds (clean-vs-noisy KL was ~0).
+- **But diminishing returns**: 4× data → +0.036 AUC; scale alone won't reach the hand
+  baselines (synapse-cloud 0.88). The limiter is now **model capacity**, not data: a single
+  128-d global latent decoding 256 points is too coarse to express the multi-scale structure
+  that makes a merge improbable.
+- Honest standing: a pure unsupervised generative grammar (zero labels/features/negatives)
+  flags real merges at 0.77 / ~3× enrichment, with the reconstruction as the fix. The next
+  lever is a richer generative model (multi-scale latent, include radius + synapse type),
+  not more data.
