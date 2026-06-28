@@ -298,3 +298,32 @@ grammar, both error types), but it has NOT beaten the simpler global whole-objec
 (synapse-cloud 0.88 / 41% precision is still the strongest, and the group-level do-nothing
 guardrail remains the unbeaten bar). The strongest signal is GLOBAL + RELATIONAL, not a
 per-object autoregressive grammar.
+
+## Closing the loop: detection is NOT the bottleneck -- the CUT OPERATOR is
+
+`close_loop_merge.py`: global detector (RF on whole-object shape, grouped-CV OOF) -> flag ->
+CUT flagged object via 2-means on its synapses -> score corrected partition vs v1718 by
+Rand-disagreement pair counting (fixing AND breaking both count) vs the do-nothing baseline.
+
+do-nothing within-object pair errors (merges to cut) = 796,390. Net fixed:
+
+| flag thr | flagged | true+ | false+ | net_fixed | % of base |
+|---|---|---|---|---|---|
+| 0.70 | 85 | 39 | 46 | −1,360,568 | −171% |
+| 0.80 | 21 | 11 | 10 | −514,351 | −65% |
+| **oracle: cut every TRUE merge** | | 354 | 0 | **−1,875,596** | **−236%** |
+
+**net_fixed is negative at every threshold AND at the oracle.** So detection (~0.88) is fine;
+the 2-means CUT makes the partition far worse even applied to perfectly-detected real merges.
+
+**Why — merges are imbalanced.** The 2nd v1718 component is a median **11% of the object**;
+**47% of merges have it under 10%** (a big cell + a small embedded fragment), only 18% are
+balanced (>30%). A balanced spatial 2-means shreds the big cell instead of peeling the small
+fragment, so it introduces ~3× more pair errors than it fixes.
+
+**Verdict (assessment).** The open problem is the **correction operator**, not detection. A
+deployable corrector needs a **surgical, connectivity-aware, imbalance-aware cut** — peel the
+small fragment along the skeleton at the seam — not a spatial clustering. This is the first
+result that clears the do-nothing guardrail's logic: it tells us exactly what must be built
+(the cut), and that naive cutting is actively harmful. Detection-first framings (incl. the
+whole generative-grammar program) were optimizing the wrong half.
