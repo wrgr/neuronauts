@@ -88,11 +88,39 @@ Caveat unchanged: seams are partly systematic (stereotyped as lateral reversals)
 anomaly model will still miss the most systematic presegmentation biases — that residual is
 what the scarce edit labels are for.
 
+## Course-correction: anomaly is the wrong framing; gap is trivial; continuation is the prize
+
+Pushing the self-supervised grammar with more features + a kNN density (`selfsup_grammar.py`)
+went the *wrong* way — and that is the useful finding:
+
+| scorer (de-merge seams, label-free) | AUC |
+|---|---|
+| bigram-token surprise | 0.539 |
+| 2-D Gaussian (log-len, turn-angle) | 0.658 |
+| kNN density, 5 features | **0.587** (worse — more features hurt) |
+| **gap-after alone (1 raw feature, no learning)** | **0.813** |
+| supervised pairwise (geometry) ceiling | 0.85 |
+
+**A de-merge seam is not a generic anomaly — it is a specific directional event (a spatial
+gap between two lobes).** An undirected density/anomaly score dilutes that gap among
+irrelevant features and flags the wrong junctions; one directed feature (the gap) gets 0.81
+with no labels and no grammar. So:
+
+1. **De-merge (split) is geometrically near-trivial** — gap alone ≈ supervised. An expressive
+   grammar earns almost nothing here.
+2. **The grammar's real value is de-split (merge)** — there a gap exists in *both* the
+   should-join and should-leave cases, so gap cannot discriminate; you need a *directional
+   continuation* model (do these fragments continue each other: collinearity, caliber match).
+3. **The right self-supervised objective is PREDICTIVE, not density** — next-synapse /
+   coherent-vs-spliced continuation (the existing path-encoder Stage-2 objective), which is
+   directional, rather than anomaly/density which is omnidirectional.
+
 ## Next
 
-1. **Richer self-supervised geometric grammar** (more step features; kNN / flow density or
-   the transformer path encoder) on raw arbors → push the label-free anchor gate from 0.66
-   toward the 0.85 supervised ceiling. Iterate on the cached seams.
+1. **Self-supervised continuation model on the merge problem.** Train coherent-vs-spliced
+   (path-encoder objective) on raw arbors; evaluate on the de-split (merge) stratum where the
+   gap heuristic is useless. This is where learning should pay — point the expressive model
+   here, not at de-merge.
 2. Clean-column vs un-proofread-**bulk** drift (needs a bulk fetch) → confirm the 1.2%
    regime holds outside the column, where the corrector must actually run.
 3. PR@k / catch-vs-flag curves per stratum; then repartition (affinity → components) scored
