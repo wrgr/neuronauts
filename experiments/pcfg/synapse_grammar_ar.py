@@ -119,12 +119,22 @@ def connected_synapse_tree(V, E, syn_pts):
     if len(pos) < 6:
         return None
     pos = np.asarray(pos, np.float64); par = np.asarray(par)
-    disp = np.zeros_like(pos)
-    hp = par >= 0
+    k = len(pos)
+    disp = np.zeros_like(pos); hp = par >= 0
     disp[hp] = pos[hp] - pos[par[hp]]              # tree-edge (parent-relative) displacement
-    if len(disp) > MAXSYN:
-        disp = disp[:MAXSYN]                        # contiguous subtree from the root
-    return (disp / SCALE).astype(np.float32)
+    deg = np.zeros(k, np.int64)                    # number of children = BRANCH DEGREE
+    for p in par[hp].tolist():
+        deg[p] += 1
+    depth = np.zeros(k, np.float64)                # tree depth (parents emitted before children)
+    for i in range(k):
+        if par[i] >= 0:
+            depth[i] = depth[par[i]] + 1
+    if k > MAXSYN:
+        disp, deg, depth = disp[:MAXSYN], deg[:MAXSYN], depth[:MAXSYN]
+    return (disp / SCALE).astype(np.float32), deg.astype(np.int64), depth.astype(np.float32)
+
+
+DEG_CLASSES = 4   # degree 0 (tip/terminate), 1 (continue), 2, 3+ (branch)
 
 
 def build_model(d=128, layers=4, heads=4):
@@ -134,18 +144,19 @@ def build_model(d=128, layers=4, heads=4):
     class AR(nn.Module):
         def __init__(self):
             super().__init__()
-            self.embed = nn.Linear(3, d)
+            self.embed = nn.Linear(4, d)            # [parent-edge xyz, depth]
             self.pos = nn.Parameter(torch.zeros(1, MAXSYN, d))
             enc = nn.TransformerEncoderLayer(d, heads, 4 * d, batch_first=True, dropout=0.1)
             self.tr = nn.TransformerEncoder(enc, layers)
-            self.mu = nn.Linear(d, 3); self.logv = nn.Linear(d, 3)
+            self.mu = nn.Linear(d, 3); self.logv = nn.Linear(d, 3)   # next-edge geometry
+            self.deg = nn.Linear(d, DEG_CLASSES)                      # this node's branch degree
 
-        def forward(self, x):                       # x:[B,T,3] = displacement steps
+        def forward(self, x):                       # x:[B,T,4]
             T = x.size(1)
             h = self.embed(x) + self.pos[:, :T]
             mask = torch.triu(torch.ones(T, T, device=x.device), 1).bool()
             h = self.tr(h, mask=mask)
-            return self.mu(h), self.logv(h).clamp(-6, 6)
+            return self.mu(h), self.logv(h).clamp(-6, 6), self.deg(h)
 
     return AR()
 
@@ -155,13 +166,6 @@ def nll_steps(mu, logv, target):
     import torch
     var = torch.exp(logv)
     return 0.5 * (((target - mu) ** 2 / var) + logv + math.log(2 * math.pi)).sum(-1)
-
-
-def seq_to_xy(disp):
-    """Teacher forcing over tree-edge displacements: predict edge i from edges <i."""
-    if disp is None or len(disp) < 4:
-        return None
-    return disp[:-1].astype(np.float32), disp[1:].astype(np.float32)
 
 
 def main() -> None:
@@ -206,9 +210,9 @@ def main() -> None:
     objs = []                                       # (kind, seq, group)
 
     def add(kind, V, E, syn, grp):
-        disp = connected_synapse_tree(V, E, syn)
-        if disp is not None and len(disp) >= 6:
-            objs.append((kind, disp, grp))
+        t = connected_synapse_tree(V, E, syn)
+        if t is not None and len(t[0]) >= 6:
+            objs.append((kind, t[0], t[1], t[2], grp))    # kind, disp, degree, depth, group
 
     for b in clean:
         V, E, R = skels[b]; add(0, V, E, syn_by_later[b], G(b))
@@ -230,29 +234,43 @@ def main() -> None:
                 if len(Ef) >= 4:
                     add(2, V[vm], Ef, cs[sm], G(b))
 
-    kind = np.array([o[0] for o in objs]); groups = np.array([o[2] for o in objs])
+    kind = np.array([o[0] for o in objs]); groups = np.array([o[4] for o in objs])
     print(f"skeletons={len(skels)}  objects: clean={int((kind==0).sum())} "
           f"merge={int((kind==1).sum())} split={int((kind==2).sum())}", flush=True)
     if (kind == 0).sum() < 30 or (kind == 1).sum() < 8:
         print("not enough objects."); return
 
+    import torch.nn.functional as F
     from sklearn.metrics import roc_auc_score
     from sklearn.model_selection import GroupKFold
     gkf = GroupKFold(n_splits=max(2, min(args.folds, len(np.unique(groups)))))
-    score = np.full(len(objs), np.nan)
+    score = np.full(len(objs), np.nan)        # mean per-node NLL
+    score_peak = np.full(len(objs), np.nan)   # 90th-pct per-node NLL (un-dilutes a local seam)
 
     def batch_tensors(idxs):
-        xs = [seq_to_xy(objs[i][1]) for i in idxs]
-        xs = [(i, xy) for i, xy in zip(idxs, xs) if xy is not None]
-        if not xs:
+        items = [(i, objs[i][1], objs[i][2], objs[i][3]) for i in idxs if len(objs[i][1]) >= 4]
+        if not items:
             return None
-        T = max(xy[0].shape[0] for _, xy in xs)
-        B = len(xs)
-        X = np.zeros((B, T, 3), np.float32); Y = np.zeros((B, T, 3), np.float32)
-        M = np.zeros((B, T), np.float32); ids = []
-        for r, (i, (xi, yi)) in enumerate(xs):
-            L = xi.shape[0]; X[r, :L] = xi; Y[r, :L] = yi; M[r, :L] = 1; ids.append(i)
-        return torch.tensor(X), torch.tensor(Y), torch.tensor(M), ids
+        T = max(len(d) for _, d, _, _ in items); B = len(items)
+        Fin = np.zeros((B, T, 4), np.float32)        # [parent-edge xyz, depth]
+        Yd = np.zeros((B, T, 3), np.float32); Md = np.zeros((B, T), np.float32)
+        Yg = np.zeros((B, T), np.int64); Mg = np.zeros((B, T), np.float32); ids = []
+        for r, (i, disp, deg, depth) in enumerate(items):
+            L = len(disp)
+            Fin[r, :L, :3] = disp; Fin[r, :L, 3] = np.clip(depth, 0, 60) / 60.0
+            Yg[r, :L] = np.clip(deg, 0, DEG_CLASSES - 1); Mg[r, :L] = 1.0
+            if L >= 2:
+                Yd[r, :L - 1] = disp[1:]; Md[r, :L - 1] = 1.0   # predict next edge
+            ids.append(i)
+        return (torch.tensor(Fin), torch.tensor(Yd), torch.tensor(Md),
+                torch.tensor(Yg), torch.tensor(Mg), ids)
+
+    def per_obj_nll(mu, logv, deglog, Yd, Md, Yg, Mg):
+        dnll = nll_steps(mu, logv, Yd)                                   # [B,T]
+        gce = F.cross_entropy(deglog.reshape(-1, DEG_CLASSES), Yg.reshape(-1),
+                              reduction="none").reshape(Yg.shape)         # [B,T]
+        num = (dnll * Md).sum(1) + (gce * Mg).sum(1)
+        return num / (Md.sum(1) + Mg.sum(1)).clamp(min=1), dnll, gce
 
     for fold, (tr, te) in enumerate(gkf.split(objs, kind, groups)):
         train_clean = [i for i in tr if objs[i][0] == 0]
@@ -265,9 +283,12 @@ def main() -> None:
                 bt = batch_tensors(order[s:s + args.batch])
                 if bt is None:
                     continue
-                X, Y, M, _ = bt
-                mu, logv = net(X)
-                loss = (nll_steps(mu, logv, Y) * M).sum() / M.sum().clamp(min=1)
+                Fin, Yd, Md, Yg, Mg, _ = bt
+                mu, logv, deglog = net(Fin)
+                dnll = nll_steps(mu, logv, Yd); gce = F.cross_entropy(
+                    deglog.reshape(-1, DEG_CLASSES), Yg.reshape(-1), reduction="none").reshape(Yg.shape)
+                loss = (dnll * Md).sum() / Md.sum().clamp(min=1) + \
+                       (gce * Mg).sum() / Mg.sum().clamp(min=1)
                 opt.zero_grad(); loss.backward(); opt.step()
         net.eval()
         with torch.no_grad():
@@ -275,38 +296,47 @@ def main() -> None:
                 bt = batch_tensors(te[s:s + args.batch])
                 if bt is None:
                     continue
-                X, Y, M, ids = bt
-                mu, logv = net(X)
-                per = (nll_steps(mu, logv, Y) * M).sum(1) / M.sum(1).clamp(min=1)
-                for i, v in zip(ids, per.tolist()):
-                    score[i] = v
+                Fin, Yd, Md, Yg, Mg, ids = bt
+                mu, logv, deglog = net(Fin)
+                dnll = nll_steps(mu, logv, Yd)
+                gce = F.cross_entropy(deglog.reshape(-1, DEG_CLASSES), Yg.reshape(-1),
+                                      reduction="none").reshape(Yg.shape)
+                tot = dnll * Md + gce * Mg                      # per-node surprise
+                for r, i in enumerate(ids):
+                    vmask = Mg[r] > 0
+                    nv = tot[r][vmask]
+                    if nv.numel() == 0:
+                        continue
+                    score[i] = float(nv.mean())
+                    score_peak[i] = float(torch.quantile(nv, 0.9))
         ok = ~np.isnan(score)
         if ok.sum() > 5 and len(np.unique((kind[ok] > 0))) == 2:
-            print(f"  fold {fold+1}: AUC={roc_auc_score((kind[ok]>0).astype(int), score[ok]):.3f} "
-                  f"({int(ok.sum())} scored)", flush=True)
+            print(f"  fold {fold+1}: mean-AUC={roc_auc_score((kind[ok]>0).astype(int), score[ok]):.3f} "
+                  f"peak-AUC={roc_auc_score((kind[ok]>0).astype(int), score_peak[ok]):.3f} "
+                  f"({int(ok.sum())})", flush=True)
 
     ok = ~np.isnan(score)
     print("\n====================================================================")
     print("AUTOREGRESSIVE connected-synapse grammar (causal transformer, NLL)")
     print("  ONE grammar; score = mean per-step NLL of the connected-synapse trajectory")
 
-    def report(name, mask):
+    def report(name, mask, sc):
         m = ok & mask
         if (m & (kind == 0)).sum() < 5 or (m & (kind > 0)).sum() < 5:
-            print(f"  {name:18s} (too few)"); return
-        yy, ss = (kind[m] > 0).astype(int), score[m]
+            print(f"  {name:22s} (too few)"); return
+        yy, ss = (kind[m] > 0).astype(int), sc[m]
         auc = roc_auc_score(yy, ss)
-        r2 = np.random.default_rng(1)
-        null = [roc_auc_score(r2.permutation(yy), ss) for _ in range(200)]
         thr = np.quantile(ss, 0.90); fl = ss >= thr
         prec = (yy[fl] == 1).mean() if fl.sum() else float("nan")
         rec = (fl & (yy == 1)).sum() / max(1, (yy == 1).sum())
-        print(f"  {name:18s} AUC={auc:.3f} null={np.mean(null):.2f}±{np.std(null):.2f} "
-              f"prec@10%={prec:.2f} rec={rec:.2f}  (n={int(m.sum())}, err={int(yy.sum())})")
+        print(f"  {name:22s} AUC={auc:.3f} prec@10%={prec:.2f} rec={rec:.2f}  "
+              f"(n={int(m.sum())}, err={int(yy.sum())})")
 
-    report("merge vs clean", (kind == 0) | (kind == 1))
-    report("split vs clean", (kind == 0) | (kind == 2))
-    report("any error vs clean", np.ones(len(objs), bool))
+    for label, sc in (("[mean NLL]", score), ("[peak NLL]", score_peak)):
+        print(f"  {label}")
+        report("  merge vs clean", (kind == 0) | (kind == 1), sc)
+        report("  split vs clean", (kind == 0) | (kind == 2), sc)
+        report("  any error vs clean", np.ones(len(objs), bool), sc)
     print("  ref: reconstruction-AE grammar merge=0.776 (the objective we're replacing)")
     print("====================================================================")
 
