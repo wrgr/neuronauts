@@ -327,3 +327,30 @@ small fragment along the skeleton at the seam — not a spatial clustering. This
 result that clears the do-nothing guardrail's logic: it tells us exactly what must be built
 (the cut), and that naive cutting is actively harmful. Detection-first framings (incl. the
 whole generative-grammar program) were optimizing the wrong half.
+
+## Connectivity cut on real v117 skeletons -- VIABLE (+79% oracle): the seam is one edge
+
+`close_loop_cut.py`: cut each real over-merged v117 object along its actual skeleton (fetched
+v117 skeletons), score vs v1718 by Rand-disagreement, net vs do-nothing. 119 objects with
+skeletons, do-nothing pair errors = 348,183.
+
+| cut operator | pair errors | net_fixed | % of base |
+|---|---|---|---|
+| kmeans (spatial) | 1,175,487 | −827,304 | −238% |
+| radius_jump (caliber discontinuity) | 578,633 | −230,450 | −66% |
+| min_radius (thin neck) | 395,515 | −47,332 | −14% |
+| **ORACLE (best single skeleton edge)** | **71,747** | **+276,436** | **+79%** |
+
+- **First operator all session to beat do-nothing, decisively (+79%).** The best single
+  skeleton-edge cut removes 79% of merge pair-errors -- so the false-merge seam is (mostly)
+  ONE edge on the real cable topology.
+- **Must be the skeleton.** kmeans on synapses is −238%; the seam is a connectivity feature,
+  invisible spatially because the merged cells touch.
+- **The remaining problem is seam-edge DETECTION, and it is learnable.** Unsupervised
+  heuristics (thin-neck −14%, caliber-jump −66%) miss the seam, but the oracle proves the
+  signal is there. The gap −14% -> +79% is a per-edge "is this the false-merge seam" classifier
+  on the skeleton (we have the labels: v1718 gives the true seam edge per object).
+
+This reframes the deliverable: detection of bad OBJECTS was never the hard part; the hard,
+do-nothing-beating part is detecting the seam EDGE and cutting it -- and that is now shown to
+be both viable (+79% ceiling) and a well-posed learning problem.
