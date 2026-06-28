@@ -32,9 +32,27 @@ from experiments.pcfg_synapse_partitions.synapse_correction import (  # noqa: E4
     build_correction_pairs,
     summarize_edits,
 )
-from experiments.pcfg_synapse_partitions.run_synapse_correction import (  # noqa: E402
-    _oof_predictions,
-)
+def _oof_single(X, y, groups, model, n_splits, seed):
+    """Out-of-fold P(same) for ONE model (avoids training the unused one)."""
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.model_selection import GroupKFold
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    ng = len(np.unique(groups))
+    gkf = GroupKFold(n_splits=max(2, min(n_splits, ng)))
+    mk = (lambda: make_pipeline(StandardScaler(),
+                                LogisticRegression(max_iter=2000, class_weight="balanced"))) \
+        if model == "logreg" else \
+        (lambda: RandomForestClassifier(n_estimators=300, min_samples_leaf=2,
+                                        class_weight="balanced", random_state=seed, n_jobs=-1))
+    oof = np.full(len(y), np.nan)
+    for tr, te in gkf.split(X, y, groups):
+        if len(np.unique(y[tr])) < 2:
+            continue
+        m = mk(); m.fit(X[tr], y[tr]); oof[te] = m.predict_proba(X[te])[:, 1]
+    return oof
 
 
 def main() -> None:
@@ -62,7 +80,7 @@ def main() -> None:
     print(f"  do-nothing baseline: fixes 0/{int(is_edit.sum()):,} edits, "
           f"makes {int(is_edit.sum()):,} partition errors (recall 0.0 by construction)")
 
-    oof = _oof_predictions(X, y, groups, args.cv_folds, args.seed)[args.model]
+    oof = _oof_single(X, y, groups, args.model, args.cv_folds, args.seed)
     ok = ~np.isnan(oof)
 
     print(f"\nmodel={args.model}, grouped-CV out-of-fold, vs do-nothing:")

@@ -122,7 +122,20 @@ class CoherenceNet(nn.Module):
         return self.head(pooled).squeeze(-1)  # logit P(coherent)
 
 
+MAXLEN = 64  # cap sequence length: continuation is local, and splices sit mid-sequence,
+             # so a centered window keeps the junction while keeping the BiGRU CPU-fast.
+
+
+def _center_crop(s: np.ndarray) -> np.ndarray:
+    if len(s) <= MAXLEN:
+        return s
+    mid = len(s) // 2
+    lo = max(0, mid - MAXLEN // 2)
+    return s[lo:lo + MAXLEN]
+
+
 def collate(seqs: list[np.ndarray]):
+    seqs = [_center_crop(s) for s in seqs]
     lengths = torch.tensor([len(s) for s in seqs], dtype=torch.long)
     L = int(lengths.max())
     x = torch.zeros(len(seqs), L, seqs[0].shape[1], dtype=torch.float32)
