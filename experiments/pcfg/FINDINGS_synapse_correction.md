@@ -244,3 +244,26 @@ And the eval now scores BOTH error types with the one grammar (per the merge+spl
 - Next lever is a generative objective where errors are explicitly low-LIKELIHOOD, not just
   slightly-higher-recon-error: a density/likelihood model (flow/autoregressive grammar) or a
   predictive/contrastive objective — not a bigger autoencoder.
+
+## Autoregressive connected-synapse grammar — scored the wrong production (edge geom, not branching)
+
+`synapse_grammar_ar.py`: a literal grammar P(next connected synapse | trajectory), over a
+branching synapse tree (parent-relative tree-edge displacements; spanning-tree construction
+-> no self-loops; branching preserved). Causal transformer, per-step Gaussian NLL.
+
+| | merge | split | any |
+|---|---|---|---|
+| AR edge-geometry (30 ep) | 0.627 | 0.518 | 0.611 |
+| reconstruction AE (ref) | 0.776 | — | — |
+
+- **Underperforms the AE and full training didn't help** (flat from 3-ep). Splits at chance.
+- **Diagnosis: the likelihood scores edge GEOMETRY, not branching TOPOLOGY.** A merge's
+  anomaly is an extra subtree / improbable node degree / two roots (and the artificial
+  nearest-point bridge makes the seam edge *short* -> looks normal); a split's anomaly is
+  premature TERMINATION (a cut where the cable should continue). The tree was built as a
+  representation but the grammar never scores the branching decisions -- so "allow branching"
+  is exactly what the NLL ignores.
+- **Fix (the real branching grammar):** per node predict branch DEGREE (0=tip/stop, 1=continue,
+  >=2 branch) and termination, not just edge displacement. Then a merge node (improbable degree
+  / extra subtree) and a split tip (stop where continuation expected) both become low-probability.
+  That makes the grammar score topology, which is where both errors live.
