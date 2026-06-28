@@ -219,3 +219,28 @@ low grammaticality (high reconstruction error); the reconstruction = the propose
   flags real merges at 0.77 / ~3× enrichment, with the reconstruction as the fix. The next
   lever is a richer generative model (multi-scale latent, include radius + synapse type),
   not more data.
+
+## Richer model (v2) + both error types — capacity is NOT the lever; the objective is
+
+v2 (`skel_ssl_grammar_v2.py`): same framing, richer model — multi-scale DGCNN encoder, raw
+radius + skeleton-vs-synapse channels (fed in and reconstructed), bigger latent/more points.
+And the eval now scores BOTH error types with the one grammar (per the merge+split reminder).
+
+| | v1 PointNet-AE | v2 DGCNN (richer) |
+|---|---|---|
+| merge vs clean | 0.774 | **0.776** |
+| split vs clean | — | 0.727 (rec 0.44@10%) |
+| any error vs clean | — | 0.762 (prec@10% 0.36, ~3× base) |
+
+- **One unsupervised grammar catches BOTH merges (too much structure) and splits (too little)**
+  — no labels, no split supervision, reconstruction corrects in opposite directions. The
+  framing is validated.
+- **But the richer model gave ~nothing on merges (0.776 vs 0.774).** Neither scale (0.74→0.77)
+  nor capacity (≈0) closes the gap to the supervised hand baseline (0.88).
+- **Diagnosis — the ceiling is the OBJECTIVE, not the model.** A reconstruction AE minimizes
+  average reconstruction, so a merged object reconstructs only slightly worse than a clean one;
+  a bigger encoder reconstructs everything better without *widening the clean-vs-error gap*.
+  Reconstruction error is a weak proxy for grammaticality (classic AE-anomaly failure).
+- Next lever is a generative objective where errors are explicitly low-LIKELIHOOD, not just
+  slightly-higher-recon-error: a density/likelihood model (flow/autoregressive grammar) or a
+  predictive/contrastive objective — not a bigger autoencoder.
