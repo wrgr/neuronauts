@@ -115,6 +115,52 @@ with no labels and no grammar. So:
    coherent-vs-spliced continuation (the existing path-encoder Stage-2 objective), which is
    directional, rather than anomaly/density which is omnidirectional.
 
+## Reality check 1 — group-level, do-nothing-protected eval (the headline)
+
+Pairwise AUC was a mirage. Evaluating the supervised pairwise model at the synapse-group
+level against the do-nothing baseline (`group_eval.py`, grouped CV):
+
+- splits needed = **11,363 pairs**, merges needed = **321 pairs** (do-nothing recall 0).
+- The logreg corrector (the one with split AUC 0.85 / merge AUC 0.98) is **net-NEGATIVE at
+  every threshold** — it makes the partition *worse* than doing nothing:
+
+| thr | edits proposed | edit prec | edit recall | split_rec | merge_rec | net_fixed |
+|---|---|---|---|---|---|---|
+| 0.50 | 210,675 | 0.04 | 0.75 | 0.77 | 0.02 | **−193,169** |
+| 0.70 | 365,690 | 0.03 | 0.88 | 0.91 | 0.02 | **−345,014** |
+
+At 1.2% base rate, even a 0.85-AUC ranker floods the partition with false edits
+(precision 2–6%); to catch half the real splits it proposes ~100k edits, ~94% wrong.
+**Merge recall is ~0.02 — it catches essentially no merges.** This is exactly the
+do-nothing trap: AUC looked great, deployment is catastrophic. The real bar is
+**precision at useful recall**, and we are nowhere near the break-even (~0.5).
+
+## Reality check 2 — learned end-to-end grammar (raw coords only)
+
+A tiny BiGRU coherence encoder on raw coordinates + displacements (no hand features),
+self-supervised coherent-vs-spliced, cells held apart (`learned_grammar_neural.py`):
+
+- **Mastered the proxy task**: val AUC 0.820 (coherent vs spliced), 175 s training.
+- **But transfers to real errors at chance**: seam anchor-gate AUC **0.479** (null 0.474),
+  de-split/merge AUC **0.456** (null 0.479) — worse than gap (0.81) and even the bigram (0.54).
+
+Why: a synthetic splice introduces an abrupt coordinate jump, so the encoder learned
+"discontinuity = incoherent" — the trivial gap signal again. But real false-merges are
+*gap-free* (CV wrongly fused two touching processes with no jump), so the learned cue is
+the wrong one. **The self-supervised proxy ≠ the real error distribution.** End-to-end
+learning did not beat hand features here — not because representation learning is wrong,
+but because the *training signal* (synthetic splices) doesn't match real CV mistakes.
+
+## Where this leaves us
+
+The bottleneck moved from representation to **training signal + eval realism**:
+
+1. Stop trusting pairwise AUC; the group-level do-nothing guardrail (precision at recall,
+   net_fixed) is the only honest score, and nothing clears it yet.
+2. The learned model needs **real-error-shaped negatives** (gap-free adjacency merges that
+   mimic CV statistics) or **real edit labels**, not synthetic splices.
+3. The merge direction remains the prize and the hardest: ~0.02 recall today.
+
 ## Next
 
 1. **Self-supervised continuation model on the merge problem.** Train coherent-vs-spliced
