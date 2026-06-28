@@ -267,3 +267,34 @@ branching synapse tree (parent-relative tree-edge displacements; spanning-tree c
   >=2 branch) and termination, not just edge displacement. Then a merge node (improbable degree
   / extra subtree) and a split tip (stop where continuation expected) both become low-probability.
   That makes the grammar score topology, which is where both errors live.
+
+## Branching-degree grammar + peak scoring — autoregressive direction underperforms (conclusion)
+
+Added the diagnosed fix: per-node branch-DEGREE prediction (0=tip,1=continue,2/3+=branch) so
+the likelihood scores branching topology, plus peak (90th-pct) per-node NLL scoring to
+un-dilute a local seam.
+
+| variant | merge | split | any |
+|---|---|---|---|
+| edge-only | 0.63 | chance | 0.61 |
+| + degree (mean NLL) | 0.64 | 0.52 | 0.62 |
+| + degree (peak NLL) | 0.63 | 0.57 | 0.62 |
+| reconstruction AE (ref) | **0.78** | — | — |
+
+Neither degree nor peak rescued it; ~0.63 merge / chance split across all variants, well below
+the AE. **Conclusion: the autoregressive single-object synapse grammar underperforms**, for
+structural reasons, not tuning:
+
+- **Splits are out of scope for a per-object grammar.** A severed fragment is a valid *small*
+  neuron in isolation; its wrongness is RELATIONAL (relative to the cell it was cut from). With
+  synapses only (no soma/caliber), nothing local flags the cut. Catching splits needs a
+  relational model (does this tip want to continue into a neighboring fragment), not a grammar.
+- **Merge anomaly is GLOBAL, not sequential.** "Two arbors" is a whole-shape fact the AE reads
+  directly (two blobs); the local trajectory grammar can't surface it, and peak-of-sequence
+  didn't help.
+
+Standing of the whole generative program: elegant and label-free, validated in concept (one
+grammar, both error types), but it has NOT beaten the simpler global whole-object detector
+(synapse-cloud 0.88 / 41% precision is still the strongest, and the group-level do-nothing
+guardrail remains the unbeaten bar). The strongest signal is GLOBAL + RELATIONAL, not a
+per-object autoregressive grammar.
