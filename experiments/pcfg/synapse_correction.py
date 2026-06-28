@@ -362,47 +362,88 @@ def build_correction_pairs(
                 strata.append(0)
                 groups.append(comp.get(rv, -1))
 
-        # ---- MERGE stratum: spatially near cross-root pairs ----
-        rootids = list(ctx.keys())
-        if len(rootids) >= 2 and have_kdtree:
-            all_idx = np.concatenate([by_root[rv] for rv in rootids])
-            pts_all = sub.pt[all_idx]
-            tree = cKDTree(pts_all)
-            kq = min(cross_k_neighbors + 1, len(all_idx))
-            dnn, inn = tree.query(pts_all, k=kq, workers=-1)
-            seen: set[tuple[int, int]] = set()
-            cross_rows: list[tuple] = []
-            for i in range(len(all_idx)):
-                ri = int(all_idx[i])
-                rvi = int(sub.root_v117[ri])
+        # ---- MERGE stratum: cross-v117-root pairs (small fragments INCLUDED) ----
+        # False-splits are usually a big root + a small orphaned fragment, so the
+        # min_synapses floor used for the split stratum would discard exactly the
+        # merge positives.  Here we build a context for ANY involved root on demand
+        # (grammar features degrade to zeros for tiny fragments; geometry still
+        # carries signal) and target the de-split events directly by later root.
+        ctx_all = dict(ctx)
+
+        def get_ctx(rv: int) -> _RootCtx:
+            c = ctx_all.get(rv)
+            if c is None:
+                c = _build_root_ctx(sub, by_root[rv])
+                ctx_all[rv] = c
+            return c
+
+        by_later: dict[int, list[int]] = {}
+        for li in local_rows.tolist():
+            by_later.setdefault(int(sub.root_later[li]), []).append(li)
+
+        pos_pairs: list[tuple[int, int]] = []
+        if have_kdtree:
+            for members in by_later.values():
+                if len(members) < 2:
+                    continue
+                if len({int(sub.root_v117[m]) for m in members}) < 2:
+                    continue  # single v117 root -> not a de-split
+                mpts = sub.pt[members]
+                tree = cKDTree(mpts)
+                kq = min(cross_k_neighbors + 1, len(members))
+                dnn, inn = tree.query(mpts, k=kq, workers=-1)
+                seen_p: set[tuple[int, int]] = set()
+                for a in range(len(members)):
+                    ra = members[a]
+                    rva = int(sub.root_v117[ra])
+                    for slot in range(1, kq):
+                        if dnn[a, slot] > cross_radius_nm:
+                            break
+                        rb = members[int(inn[a, slot])]
+                        if int(sub.root_v117[rb]) == rva:
+                            continue
+                        key = (min(ra, rb), max(ra, rb))
+                        if key in seen_p:
+                            continue
+                        seen_p.add(key)
+                        pos_pairs.append((ra, rb))
+
+        # spatially-matched hard negatives: cross-root neighbours of the positive
+        # anchors whose later root DIFFERS (adjacent-but-distinct cells)
+        neg_pairs: list[tuple[int, int]] = []
+        if pos_pairs and have_kdtree:
+            gtree = cKDTree(sub.pt)
+            anchors = list({p[0] for p in pos_pairs} | {p[1] for p in pos_pairs})
+            kq = min(cross_k_neighbors + 1, len(sub))
+            seen_n: set[tuple[int, int]] = set()
+            for ra in anchors:
+                rva = int(sub.root_v117[ra])
+                la = int(sub.root_later[ra])
+                dnn, inn = gtree.query(sub.pt[ra], k=kq, workers=-1)
                 for slot in range(1, kq):
-                    if dnn[i, slot] > cross_radius_nm:
+                    if dnn[slot] > cross_radius_nm:
                         break
-                    j = int(inn[i, slot])
-                    rj = int(all_idx[j])
-                    rvj = int(sub.root_v117[rj])
-                    if rvi == rvj:
-                        continue  # within-root handled above
-                    key = (min(ri, rj), max(ri, rj))
-                    if key in seen:
+                    rb = int(inn[slot])
+                    if int(sub.root_v117[rb]) == rva or int(sub.root_later[rb]) == la:
+                        continue  # same root, or a positive (same later root)
+                    key = (min(ra, rb), max(ra, rb))
+                    if key in seen_n:
                         continue
-                    seen.add(key)
-                    lbl = int(sub.root_later[ri] == sub.root_later[rj])
-                    cross_rows.append((ri, rj, rvi, rvj, lbl))
-            # balance: keep all positives, subsample negatives
-            pos = [r for r in cross_rows if r[4] == 1]
-            neg = [r for r in cross_rows if r[4] == 0]
-            n_neg = min(len(neg), max(1, int(max(1, len(pos)) * max_neg_ratio)))
-            if len(neg) > n_neg:
-                neg = [neg[p] for p in rng.choice(len(neg), n_neg, replace=False)]
-            for ri, rj, rvi, rvj, lbl in pos + neg:
-                ca, cb = ctx[rvi], ctx[rvj]
-                X.append(_pair_features(ca, ca.index_of[ri], cb, cb.index_of[rj],
-                                        same_root=False,
-                                        na=len(by_root[rvi]), nb=len(by_root[rvj])))
-                y.append(lbl)
-                strata.append(1)
-                groups.append(comp.get(rvi, -1))
+                    seen_n.add(key)
+                    neg_pairs.append((ra, rb))
+
+        n_neg = min(len(neg_pairs), max(1, int(max(1, len(pos_pairs)) * max_neg_ratio)))
+        if len(neg_pairs) > n_neg:
+            neg_pairs = [neg_pairs[p] for p in rng.choice(len(neg_pairs), n_neg, replace=False)]
+        for (ra, rb), lbl in ([(p, 1) for p in pos_pairs] + [(p, 0) for p in neg_pairs]):
+            rva, rvb = int(sub.root_v117[ra]), int(sub.root_v117[rb])
+            ca, cb = get_ctx(rva), get_ctx(rvb)
+            X.append(_pair_features(ca, ca.index_of[ra], cb, cb.index_of[rb],
+                                    same_root=False,
+                                    na=len(by_root[rva]), nb=len(by_root[rvb])))
+            y.append(lbl)
+            strata.append(1)
+            groups.append(comp.get(rva, -1))
 
     if not X:
         return (np.zeros((0, PAIR_DIM)), np.zeros(0, np.int64),
