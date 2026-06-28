@@ -171,3 +171,26 @@ The bottleneck moved from representation to **training signal + eval realism**:
    regime holds outside the column, where the corrector must actually run.
 3. PR@k / catch-vs-flag curves per stratum; then repartition (affinity → components) scored
    against v1718 by edge-F1 — the end-to-end correction.
+
+## Reframe pays off: global whole-object beats local (synapse-cloud proof; skeletons next)
+
+Local methods plateaued and failed the do-nothing guardrail. Reframing to whole-object
+global shape (`global_shape_merge.py`, cached synapse clouds, no skeletons -- MICrONS
+skeleton service was down 503): classify each v117 root as false-merge (spans >=2 v1718
+roots) from GLOBAL shape only (bimodality, 2-means gap, DBSCAN blob count, PCA shape).
+
+objects=9,377  false merges=354 (3.78% base rate); grouped-by-cell CV, null 0.50:
+
+| features | model | AUC | prec@top-2% | recall |
+|---|---|---|---|---|
+| size-only | logreg | 0.844 | 0.30 | 0.16 |
+| shape-only | logreg | 0.860 | 0.35 | 0.18 |
+| full | rf | 0.875 | **0.41** | 0.22 |
+
+- **Precision 41% at the object level vs 2-6% for local pairwise** (~11x over base rate) --
+  the first operating point that could beat do-nothing.
+- **Shape adds beyond size** (0.844 -> 0.878; shape-only 0.86) -- global structure, not just
+  "merges are big", carries signal. The global reframe is validated.
+- This is the FLOOR: synapse clouds see only spatially-separated merges; intertwined merges
+  (two somas/two trunks, spatially overlapping) need skeleton topology. That residual is the
+  case for the skeleton-topology model once the MICrONS skeleton service is back up.
