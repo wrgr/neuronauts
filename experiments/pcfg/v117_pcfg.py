@@ -8,16 +8,16 @@ Designed for a direct apples-to-apples comparison with v117_coassign.py.
 Usage
 -----
     # Single 20 um box (same defaults as v117_coassign.py):
-    python scripts/v117_pcfg.py --token $CAVE_TOKEN
+    python experiments/pcfg/v117_pcfg.py --token $CAVE_TOKEN
 
     # Larger box for more data:
-    python scripts/v117_pcfg.py --token $CAVE_TOKEN --side-um 40
+    python experiments/pcfg/v117_pcfg.py --token $CAVE_TOKEN --side-um 40
 
     # Pool multiple boxes:
-    python scripts/v117_pcfg.py --token $CAVE_TOKEN --n-boxes 5
+    python experiments/pcfg/v117_pcfg.py --token $CAVE_TOKEN --n-boxes 5
 
     # Custom center:
-    python scripts/v117_pcfg.py --token $CAVE_TOKEN \\
+    python experiments/pcfg/v117_pcfg.py --token $CAVE_TOKEN \\
         --center-nm 733592 513592 595640 --side-um 30
 
 CAVE token
@@ -38,7 +38,7 @@ from pathlib import Path
 import numpy as np
 
 # Allow running as a script directly from the repo root.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 # ---------------------------------------------------------------------------
 # Logging -- mirrors v117_coassign.py setup
