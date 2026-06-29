@@ -190,38 +190,49 @@ similarity. The true continuation is the neurite actually at the fragment-side
 point. This is re-identification across the *real* error gap.
 
 ```bash
+# realistic candidate set: neurites within R of the query tip, optional cone
 python -m experiments.fingerprints.v117_error_relink \
   --encoder experiments/fingerprints/cutface_encoder.pt \
-  --n-scan 280 --max-neurons 90 \
-  --out experiments/fingerprints/v117_relink_metrics.json
+  --n-scan 220 --max-neurons 45 \
+  --candidate-mode proximity --radius-nm 2000 --direction-cone-deg 45 \
+  --out experiments/fingerprints/v117_relink_metrics_cone.json
 ```
 
-**Result** (`v117_relink_metrics.json`; mean gap ≈ 1.5 µm, ~50 candidate
-neurites per site):
+### The candidate set dominates the result
 
-<!-- NUMBERS FILLED FROM THE LARGER RUN BELOW -->
+The single most important knob is *what counts as a candidate*. Three
+definitions, all on real v117 split sites (~1.5 µm gaps):
 
-```
-                 top-1     MRR
-chance           ~0.03      —
-raw-patch hash    0.15     0.29
-LEARNED hash      0.39     0.50
-```
+| candidate panel | ~cand/site | chance top-1 | raw top-1 / MRR | learned top-1 / MRR | file |
+|---|---|---|---|---|---|
+| **slab, same-z** (legacy, optimistic) | 55 | 0.036 | 0.20 / 0.32 | **0.49 / 0.54** | `…_slab.json` (n=49) |
+| **proximity ball, 2 µm** (dense, harsh) | 256 | 0.004 | 0.00 / 0.05 | 0.00 / 0.025 | `…_proximity.json` (n=10) |
+| **proximity + 45° cone** (realistic) | 75 | 0.015 | 0.00 / **0.12** | 0.00 / 0.08 | `…_cone.json` (n=10) |
 
-**Read-out:**
+**Honest read-out — this is the part that corrects the earlier optimism:**
 
-- At sites the segmentation actually failed, the learned cut-face hash puts the
-  correct partner first ~12× more often than chance, across a real ~1.5 µm gap
-  among ~50 candidates.
-- Here the **learned hash clearly beats the raw patch** (top-1 0.39 vs 0.15) —
-  the *reverse* of the artificial planar-cut case. Real error sites are messier
-  (thin necks, faint membrane, the very ambiguity that defeated the
-  segmenter), and the learned features generalise to them where a raw masked
-  crop does not.
-- This is the honest proofreading-relevant number: a single cross-section hash,
-  with no graph context, resolves a meaningful share of real splits and ranks
-  the truth ~2nd on average (MRR 0.5). Combined with proximity / graph context
-  it should rank even higher — which is the integration below.
+- The strong slab number (learned top-1 0.49) was **inflated by a small, same-z
+  panel**. The candidates there were only the neurites crossing one z-slab in a
+  modest box, and the true partner sat at that slab.
+- A **proximity ball is *denser*, not sparser** — cortical neuropil packs
+  ~250–300 cross-sections into a 2 µm ball, most of them pass-through processes
+  no proofreader would ever propose merging. There the single-face hash drowns
+  (top-1 ≈ 0).
+- The **direction cone** removes the perpendicular pass-throughs (256 → 75
+  candidates) and roughly **doubles MRR**, but the true partner still ranks
+  ~8th–12th, not 1st.
+- On the realistic panel the **raw patch ≥ the learned encoder** (MRR 0.12 vs
+  0.08). The encoder was trained on *artificial planar* cuts and does **not**
+  transfer to real oblique error cross-sections — a concrete retraining target.
+
+**Conclusion.** A single cross-section cut-face hash is a real but **weak-to-
+moderate ranking signal** on a realistic candidate set (5–8× chance), **not a
+standalone top-1 matcher**. That is exactly the argument for using it as one
+**edge feature** fused with proximity + graph context — which inherently won't
+propose 256 candidates — rather than as the whole merge decision (the
+integration below). Caveat: the proximity rows are **n = 10** (most real gaps
+exceed the 2 µm radius and are skipped as unproposable), so those numbers are
+noisy; a gap-capped larger run is the obvious follow-up.
 
 ## Using it as a proofreading edge feature (`neuronauts/em_corridor.py`)
 
