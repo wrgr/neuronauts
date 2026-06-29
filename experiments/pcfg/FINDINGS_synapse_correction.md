@@ -354,3 +354,35 @@ skeletons, do-nothing pair errors = 348,183.
 This reframes the deliverable: detection of bad OBJECTS was never the hard part; the hard,
 do-nothing-beating part is detecting the seam EDGE and cutting it -- and that is now shown to
 be both viable (+79% ceiling) and a well-posed learning problem.
+
+## Learned seam detector -- viable operator, but autonomous detection is data-starved
+
+`seam_detector.py`: GraphSAGE GNN over each v117 over-merged skeleton (raw inputs: vertex
+xyz + log radius + local synapse count), trained to regress per-edge CUT BENEFIT, with
+abstention (cut only if predicted benefit > tau). Grouped-by-cell CV, 140 merge objects.
+
+| operator | net_fixed | % base |
+|---|---|---|
+| oracle (best single edge) | +300,677 | +77.9% |
+| min_radius heuristic | −61,879 | −16% |
+| **learned GNN, cut-always** | **−140,182** | **−36%** |
+| learned GNN, abstain (tau=0.5, 41 cuts) | −715 | −0.2% |
+
+- GNN top-1 seam accuracy 25% (>> random; up from 13% undertrained) -- it learns signal, but
+  not enough: a near-miss edge shreds the big cell, so wrong picks are catastrophic.
+- Abstention works as designed (bounds downside at do-nothing) but never reaches net-positive --
+  predicted confidence doesn't track cut quality tightly enough.
+- **Binding constraint = autonomous seam-edge detection: hard + data-starved.** 140 merge
+  objects (column ceiling ~354) is far too few to learn to pick one correct edge among
+  hundreds under a brutal cost asymmetry. Same wall as every learned model this session: high
+  oracle, unreachable on column-scale data.
+
+## State of the merge-correction problem (mapped end to end)
+
+- detect bad OBJECT: easy (whole-object shape, ~0.88 / 41% precision).
+- CUT operator: viable -- best single skeleton edge is +79% over do-nothing (the seam is one
+  edge on the real cable; spatial cuts are −238%).
+- find the seam EDGE: the binding constraint -- oracle +79%, learned 25% top-1 / net ~0.
+Realistic near-term value is human-assisted (model proposes top-k candidate cut edges; a
+proofreader selects) or a much larger training corpus (more proofread boxes), not autonomous
+cutting at column scale.
