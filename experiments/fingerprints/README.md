@@ -254,13 +254,53 @@ low-pass **bio** band and a high-pass **art** band and train an encoder on each.
   learned encoder turned it into the stronger band. Most matchable identity
   lived in the high-frequency band the mean-projection threw away.
 
-**Still honest:** geometry (0.645) is not beaten by any fusion (best geom+art =
-0.581). The hash is complementary, not a replacement — turning its ~32%
-geom-miss recovery into a top-1 win needs a learned confidence combiner, not
-equal-weight/shortlist gating. And these are a *lower bound*: trained at a fixed
-30 epochs with the loss still falling (the val-based early-stopping in
-`finetune` should lift `art` further), at 16 nm (8 nm likely helps the texture
-band more).
+**Still honest (synthetic-only encoders):** geometry (0.645) is not beaten by any
+equal-weight fusion (best geom+art = 0.581). The hash is complementary, not a
+replacement — turning its ~32% geom-miss recovery into a top-1 win needs a
+learned confidence combiner, not equal-weight/shortlist gating.
+
+### Fine-tuning on real breaks reverses the bands (`--finetune-real`)
+
+The synthetic pairs are two z-sections of one *intact* fragment, so their
+texture is continuous across the synthetic gap — the high-pass **art** band
+wins because it is literally matching the same imaging texture on both sides.
+At a *real* break that continuity is destroyed (different sections, staining,
+knife marks), so the synthetic art advantage should not transfer. Fine-tuning
+the synthetic-pretrained encoders on the scarce real v117→v14XX merge pairs
+(`collect_real_band_pairs`, 13 pairs from 3 neurons) confirms it:
+
+| band | synthetic-only | after real fine-tune |
+|---|---|---|
+| bio (low-pass shape) | 0.226 | **0.516** |
+| art (high-pass texture) | 0.435 | 0.177 |
+| geom+bio | — | **0.677** (> geom 0.645) |
+
+The bands **swap**: low-pass biological *shape* is what survives a real cut,
+while the high-pass texture that dominated on intact synthetic pairs collapses.
+Scale builds a good texture encoder; real breaks reveal that *shape*, not
+texture, is the transferable identity signal.
+
+### Learned confidence combiner closes it (`train_combiner.py`)
+
+Feeding a small per-candidate MLP the geometry z-score, both band similarities,
+and which candidate is the geom/art favourite — trained on 137 train sites,
+evaluated on the same 62 disjoint real sites — finally turns the complementary
+signal into a top-1 win:
+
+| ranker | top-1 |
+|---|---|
+| art-band alone | 0.435 |
+| geometry alone | 0.645 |
+| combiner (synthetic bio + synthetic art) | 0.661 |
+| **combiner (fine-tuned bio + synthetic art)** | **0.758** |
+
+**This is the payoff.** Geometry alone is 0.645; the learned combiner reaches
+**0.758** (+11 pts, recovering ~32% of geometry's misses) once given the
+fine-tuned biological band. The FISSEQ-style premise holds in the achievable
+direction: the cut-face does carry re-identification signal beyond proximity,
+but only a *learned* combiner that knows when to trust shape over distance can
+spend it — blunt fusion and gating cannot. These remain a lower bound (16 nm;
+8 nm likely helps the texture band; more real pairs would help the fine-tune).
 
 **Location vs correction (two different models).** This experiment measures
 *correction*: given a real interface and a candidate panel, pick the partner.
