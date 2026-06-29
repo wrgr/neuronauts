@@ -105,6 +105,7 @@ class BoxRecord:
     n_positive_pairs: int = 0
     has_volume: bool = True
     root_id_version: int | None = None
+    min_root_synapses: int = 0
 
     def to_spec(self) -> RealBoxSpec:
         return RealBoxSpec(
@@ -174,6 +175,7 @@ class BoxCache:
             "n_positive_pairs": 0,
             "has_volume": True,
             "root_id_version": None,
+            "min_root_synapses": 0,
         }
         return [BoxRecord(**{**_defaults, **entry}) for entry in self._index]
 
@@ -187,6 +189,7 @@ class BoxCache:
         synapses: SynapseTable,
         n_positive_pairs: int = 0,
         root_id_version: int | None = None,
+        min_root_synapses: int = 0,
     ) -> BoxRecord:
         """Persist a (volume, synapses) pair.  Returns the new record.
 
@@ -195,7 +198,7 @@ class BoxCache:
         """
         box_hash = spec.cache_key
         if self.contains(spec):
-            _defaults = {"n_positive_pairs": 0, "has_volume": True}
+            _defaults = {"n_positive_pairs": 0, "has_volume": True, "min_root_synapses": 0}
             existing = next(
                 BoxRecord(**{**_defaults, **e})
                 for e in self._index if e["box_hash"] == box_hash
@@ -227,6 +230,7 @@ class BoxCache:
             "n_positive_pairs": n_positive_pairs,
             "has_volume": True,
             "root_id_version": root_id_version,
+            "min_root_synapses": min_root_synapses,
         }
         self._meta_path(box_hash).write_text(
             json.dumps(meta, indent=2), encoding="utf-8"
@@ -241,6 +245,7 @@ class BoxCache:
             n_positive_pairs=n_positive_pairs,
             has_volume=True,
             root_id_version=root_id_version,
+            min_root_synapses=min_root_synapses,
         )
         self._index.append(asdict(record))
         self._save_index()
@@ -252,6 +257,7 @@ class BoxCache:
         synapses: SynapseTable,
         n_positive_pairs: int = 0,
         root_id_version: int | None = None,
+        min_root_synapses: int = 0,
     ) -> BoxRecord:
         """Persist synapse table only — no EM volume (CAVE-only mode).
 
@@ -262,7 +268,7 @@ class BoxCache:
         """
         box_hash = spec.cache_key
         if self.contains(spec):
-            _defaults = {"n_positive_pairs": 0, "has_volume": False}
+            _defaults = {"n_positive_pairs": 0, "has_volume": False, "min_root_synapses": 0}
             existing = next(
                 BoxRecord(**{**_defaults, **e})
                 for e in self._index if e["box_hash"] == box_hash
@@ -291,6 +297,7 @@ class BoxCache:
             "n_positive_pairs": n_positive_pairs,
             "has_volume": False,
             "root_id_version": root_id_version,
+            "min_root_synapses": min_root_synapses,
         }
         self._meta_path(box_hash).write_text(
             json.dumps(meta, indent=2), encoding="utf-8"
@@ -305,6 +312,7 @@ class BoxCache:
             n_positive_pairs=n_positive_pairs,
             has_volume=False,
             root_id_version=root_id_version,
+            min_root_synapses=min_root_synapses,
         )
         self._index.append(asdict(record))
         self._save_index()
@@ -718,6 +726,18 @@ def build_dataset(
     for i, spec in enumerate(specs):
         if cache.contains(spec):
             existing = next(r for r in cache.all_records() if r.box_hash == spec.cache_key)
+            # Skip cached boxes that were saved without the required clutter threshold —
+            # their on-disk synapse data is unfiltered and their n_synapses count is stale.
+            if min_root_synapses > 1 and existing.min_root_synapses < min_root_synapses:
+                logger.warning(
+                    "Cached box %s was built with min_root_synapses=%d; "
+                    "skipping (need %d). Re-run build_dataset to refresh the cache.",
+                    spec.cache_key,
+                    existing.min_root_synapses,
+                    min_root_synapses,
+                )
+                n_skip_cached += 1
+                continue
             passes = (
                 min_synapses <= existing.n_synapses <= max_synapses
                 and existing.n_positive_pairs >= min_positive_pairs
@@ -774,6 +794,7 @@ def build_dataset(
                     synapses,
                     n_positive_pairs=n_pos,
                     root_id_version=cave_version,
+                    min_root_synapses=min_root_synapses,
                 )
                 if verbose:
                     print(f"ok (n_synapses={n_syn}, positive_pairs={n_pos})")
@@ -785,6 +806,7 @@ def build_dataset(
                     synapses,
                     n_positive_pairs=n_pos,
                     root_id_version=cave_version,
+                    min_root_synapses=min_root_synapses,
                 )
                 if verbose:
                     print(f"ok (n_synapses={n_syn}, positive_pairs={n_pos}, shape={volume.data.shape})")

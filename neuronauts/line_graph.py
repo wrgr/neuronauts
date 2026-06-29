@@ -210,12 +210,12 @@ def evaluate_sampled(
     true_edges = build_true_line_graph(pre_root_ids, post_root_ids)
     est_edges = build_estimated_line_graph(graph, n)
     if min_root_synapses > 1:
-        keep = set(
-            _clutter_keep_indices(pre_root_ids, post_root_ids, min_root_synapses).tolist()
-        )
-        true_edges = {(i, j) for (i, j) in true_edges if i in keep and j in keep}
-        est_edges = {(i, j) for (i, j) in est_edges if i in keep and j in keep}
-        n = len(keep)
+        keep_arr = np.sort(_clutter_keep_indices(pre_root_ids, post_root_ids, min_root_synapses))
+        keep_set = set(keep_arr.tolist())
+        remap = {old: new for new, old in enumerate(keep_arr.tolist())}
+        true_edges = {(remap[i], remap[j]) for (i, j) in true_edges if i in keep_set and j in keep_set}
+        est_edges = {(remap[i], remap[j]) for (i, j) in est_edges if i in keep_set and j in keep_set}
+        n = len(keep_arr)
     return compute_sampled_line_graph_f1(
         true_edges,
         est_edges,
