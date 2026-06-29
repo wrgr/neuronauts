@@ -39,16 +39,17 @@ def build_objects(sidetable, skel_dir, min_syn, min_side):
     tab = SideTable(d["syn_id"], d["side"], d["pt"], d["root_v117"], d["root_later"])
     comp = cell_components(tab)
     valid = tab.root_later > 0
-    pts_by, lat_by = defaultdict(list), defaultdict(list)
+    pts_by, lat_by, side_by = defaultdict(list), defaultdict(list), defaultdict(list)
     for i in np.nonzero(valid)[0]:
         rv = int(tab.root_v117[i])
         pts_by[rv].append(tab.pt[i]); lat_by[rv].append(int(tab.root_later[i]))
+        side_by[rv].append(int(tab.side[i]))
     skels = load_skels(skel_dir, 117)
     objs = []
     for rv, (V, E, R) in skels.items():
         if rv not in pts_by:
             continue
-        P = np.asarray(pts_by[rv]); lat = np.asarray(lat_by[rv])
+        P = np.asarray(pts_by[rv]); lat = np.asarray(lat_by[rv]); sd = np.asarray(side_by[rv])
         if len(P) < min_syn or len(set(lat.tolist())) < 2:
             continue
         labs, lab_index = np.unique(lat, return_inverse=True)
@@ -64,13 +65,17 @@ def build_objects(sidetable, skel_dir, min_syn, min_side):
         idx = {v: i for i, v in enumerate(order)}
         n = len(order)
         xyz = V[order]; rr = R[order]
-        sc = np.zeros(n)
-        for vtx in syn_vert.tolist():
+        # RAW per-vertex node attributes only -- the GNN learns gradients/angles/polarity-flips by
+        # message passing (see CLAUDE.md: learn features, don't hand-build them). The only change
+        # from a single total-count is splitting the synapse channel by its RAW pre/post side.
+        pre_sc = np.zeros(n); post_sc = np.zeros(n)
+        for vtx, s in zip(syn_vert.tolist(), sd.tolist()):
             if vtx in idx:
-                sc[idx[vtx]] += 1
+                (pre_sc if s == 0 else post_sc)[idx[vtx]] += 1
         feat = np.concatenate([(xyz - xyz.mean(0)) / SCALE,
                                (np.log1p(rr) / 5.0)[:, None],
-                               np.log1p(sc)[:, None]], axis=1).astype(np.float32)
+                               np.log1p(pre_sc)[:, None],
+                               np.log1p(post_sc)[:, None]], axis=1).astype(np.float32)
         edges, edis, rad = [], [], []
         for v in order:
             p = parent[v]
@@ -92,7 +97,7 @@ def build_objects(sidetable, skel_dir, min_syn, min_side):
     return objs
 
 
-def build_model(cin=5, d=96):
+def build_model(cin=6, d=96):
     import torch
     import torch.nn as nn
 
@@ -155,8 +160,9 @@ def main() -> None:
     def edges_t(o):
         return torch.tensor(o["edges"], dtype=torch.long)
 
+    cin = int(objs[0]["feat"].shape[1])
     for fold, (tr, te) in enumerate(gkf.split(objs, np.zeros(len(objs)), groups)):
-        net = build_model(); opt = torch.optim.Adam(net.parameters(), lr=2e-3, weight_decay=1e-5)
+        net = build_model(cin=cin); opt = torch.optim.Adam(net.parameters(), lr=2e-3, weight_decay=1e-5)
         for ep in range(args.epochs):
             net.train(); order = rng.permutation(tr); opt.zero_grad(); acc = 0
             for k, i in enumerate(order):

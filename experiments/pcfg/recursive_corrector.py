@@ -144,7 +144,8 @@ def _train_seam(train_objs, epochs, seed):
     import torch.nn.functional as F
     from experiments.pcfg_synapse_partitions.seam_detector import build_model
     torch.manual_seed(seed); rng = np.random.default_rng(seed)
-    net = build_model(); opt = torch.optim.Adam(net.parameters(), lr=2e-3, weight_decay=1e-5)
+    net = build_model(cin=int(train_objs[0]["feat"].shape[1]))
+    opt = torch.optim.Adam(net.parameters(), lr=2e-3, weight_decay=1e-5)
     for ep in range(epochs):
         net.train(); order = rng.permutation(len(train_objs)); opt.zero_grad(); acc = 0
         for k, i in enumerate(order.tolist()):
