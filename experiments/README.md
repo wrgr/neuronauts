@@ -17,7 +17,8 @@ Two kinds of threads:
 
 | Thread | Status | Kind | Code | Entry point | Checkpoints |
 |--------|--------|------|------|-------------|-------------|
-| [fingerprints](fingerprints/README.md) (tree-DNA) | incubating | core | `neuronauts/path_edge_encoder.py`, `path_dataset.py` | `train.py train-path-encoder` | `path_encoder_v3*` (local) |
+| [fingerprints](fingerprints/README.md) | external | branch | `claude/neuron-fingerprints-connectivity-jg95xp` (unmerged) | see thread README | — |
+| [tree_dna](tree_dna/README.md) | incubating | core seed + branch | `neuronauts/path_edge_encoder.py` + `claude/tree-dna-phase-1-G1DNn` | `train.py train-path-encoder` | `path_encoder_v3*` (local) |
 | [error_correction](error_correction/README.md) | active | core | `neuronauts/edit_history.py`, `cave_root_mapping.py`, `path_dataset.py` | `train.py fetch-cave-edits-from-cache` | — (training signal) |
 | [pcfg](pcfg/README.md) | active | experiment | `experiments/pcfg/` | `run_experiment.py` | — (non-neural) |
 | [grammar](grammar/README.md) | active | core | `neuronauts/grammar.py`, `shared_grammar_model.py` | `train.py train` | `grammar_cave_real_50`, `shared_grammar_*`, `gat_skeleton_50e` |
@@ -30,8 +31,49 @@ Two kinds of threads:
 
 **Status legend:** *active* = part of the current workflow · *active (default)*
 = the pipeline that runs by default · *incubating* = promising, not yet a
-baseline · *optional* = wired but off the default path · *quarantined* = kept for
+baseline · *optional* = wired but off the default path · *external* = code lives
+on an unmerged feature branch, not in this tree · *quarantined* = kept for
 history, excluded from the default import surface and CI (`pytest -m 'not legacy'`).
+
+## Research threads ↔ branches
+
+Much of the active work lives on feature branches that aren't merged here yet.
+This is the map (status as of 2026-06-29, `main` @ `3784cff`). Ahead/behind are
+relative to `main`.
+
+### Threads with live work on a branch
+
+| Thread | Branch | Ahead/behind | Last commit | State |
+|--------|--------|--------------|-------------|-------|
+| fingerprints | `claude/neuron-fingerprints-connectivity-jg95xp` | 44 / 0 | 2026-06-29 | **active**, strictly ahead — PR-ready |
+| error_correction | `claude/error-correction-model-jb0x1i` | 46 / 0 | 2026-06-29 | **active**, strictly ahead — PR-ready (SSL splice pretrain) |
+| grammar (cross-region eval) | `claude/vibrant-wozniak-we54pv` | 30 / 0 | 2026-06-28 | **active**, strictly ahead — PR-ready (`HOLDOUT_RESULTS.md`) |
+| pcfg (fetch follow-on) | `claude/pcfg-synapse-partitions-lo5nlu` | 4 / 0 | 2026-06-27 | **active**, strictly ahead — lightweight fetch + retry |
+| cell_assignment / co-assignment | `claude/synapse-coassign` | 16 / 24 | 2026-06-10 | **active**, diverged — needs rebase (correlation-clustering frontier) |
+| global stitch / lineage | `claude/abstract-tree-stitch` | 31 / 24 | 2026-06-12 | **active**, diverged — needs rebase (`treestitch/`, real v117→v1718) |
+| tree_dna | `claude/tree-dna-phase-1-G1DNn` | 211 / 24 | 2026-06-25 | **PR #17 open** — author notes it's superseded by `synapse-coassign` → likely close/extract |
+| low_res_segmentation | `claude/low-res-segmentation-pipeline-fwIHN` | 6 / 95 | 2026-04-07 | **PR #9 open**, stale → review or close |
+
+### Needs a decision (unmerged, no current PR)
+
+| Branch | Ahead/behind | What it is | Suggested |
+|--------|--------------|------------|-----------|
+| `claude/remove-connectome-clutter-CkKag` | 1 / 31 | `SynapseTable.filter_clutter` + `--min-root-synapses` (real feature, **not** in main) | rebase + PR, or discard |
+| `claude/small-e2e-test-B9k2g` | 11 / 31 | v117-atom sibling retrieval (fingerprint-adjacent) | fold insight into fingerprints, then close |
+
+### Safe to delete — fully merged into `main` (0 commits ahead)
+
+| Branch | PR |
+|--------|----|
+| `claude/pcfg-synapse-partitions-hcd4c8` | #18 (merged) |
+| `claude/todo-cave-coverage-E89bU` | #5 (merged) |
+| `codex/scrub-package-to-deprecate-and-organize` | #15 (merged) |
+| `claude/intelligent-planck-oCPwt` | #16 (merged); only extra commit is a stale `STATUS.md` |
+| `claude/resume-pipeline-6g6wm` | #11 (merged); only extra commit is a doc tweak superseded by the reconciled README |
+
+> Deletion is a manual step (not done automatically). Once a branch's work is
+> merged or abandoned, delete it with `git push origin --delete <branch>` to keep
+> this list short.
 
 ## How threads graduate
 

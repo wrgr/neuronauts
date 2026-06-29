@@ -219,7 +219,8 @@ Legacy experimental modules are still available via direct module imports
 
 The work is organized as a series of experiments (research threads) feeding this
 core pipeline. See [`experiments/README.md`](experiments/README.md) for the index
-— fingerprints (tree-DNA), error-correction (proofreading supervision), PCFG,
+— fingerprints (connectivity signatures), tree-DNA (morphology),
+error-correction (proofreading supervision), PCFG,
 grammar variants, cell-assignment, root-neighborhood, soma-graph, minnie-column,
 and topology — each with its status, entry point, and checkpoints. The
 longer-range direction is [`docs/roadmap_global_assembly.md`](docs/roadmap_global_assembly.md).

@@ -1,47 +1,42 @@
-# Thread: fingerprints (tree-DNA)
+# Thread: fingerprints
 
-**Goal.** Learn a per-fragment **morphological fingerprint** — a coordinate-free
-embedding of local arbor structure (step deltas, skeleton features, tangent
-flow) that says whether two pieces of neurite belong to the same cell. This is
-the "tree-DNA" of [`docs/roadmap_global_assembly.md`](../../docs/roadmap_global_assembly.md):
-the representation meant to replace the collapsed scalar edge features and,
-eventually, to stitch neurons across box seams.
+**Goal.** Give each segmentation fragment (a v117 "atom") a **connectivity
+fingerprint** — an identity signature derived from *who it synapses with* (and
+where) — so that fragments of the same neuron can be retrieved as siblings.
+Where [tree_dna](../tree_dna/README.md) encodes a fragment's own *morphology*,
+fingerprints encode its *connectivity context*: synaptic partners, partner
+co-occurrence (TF-IDF over partner roots), and spatial proximity.
 
-**Status:** incubating (core thread). The encoder and its training signal exist
-and are tested; promoting it to the primary node representation (and the
-cross-region stitch) is the open roadmap work.
+> **fingerprints ≠ tree-DNA.** They are two different identity cues for the same
+> stitching problem and live on different branches. Earlier docs conflated them;
+> this thread is the connectivity one.
 
-## Code (lives in core)
+**Status:** external — the work lives on an unmerged branch, not in this tree.
 
-| Module | Role |
-|--------|------|
-| [`neuronauts/path_edge_encoder.py`](../../neuronauts/path_edge_encoder.py) | `PathEdgeEncoder` — Transformer over per-step path features → fixed-size embedding |
-| [`neuronauts/path_dataset.py`](../../neuronauts/path_dataset.py) | path-discrimination dataset + `train_path_encoder` |
-| skeleton featurization in [`neuronauts/cell_graph.py`](../../neuronauts/cell_graph.py) | `precompute_self_skeletons_for_cache`, `precompute_skeleton_paths_for_cache` |
+## Where the code is
 
-## Run
+- **`claude/neuron-fingerprints-connectivity-jg95xp`** — the primary branch
+  (44 commits ahead of `main`, 0 behind as of 2026-06-29: strictly ahead and
+  PR-ready). Not merged here yet.
+- **`claude/small-e2e-test-B9k2g`** — related earlier probe: v117-atom
+  split-recovery via sibling retrieval (TF-IDF / cosine / proximity AUROC on real
+  v117 atoms). Its finding — real v117 atoms have too few synapses (median ~10)
+  to carry strong fingerprint content at the atomic scale — is the constraint
+  this thread is up against.
 
-```bash
-python scripts/train.py train-path-encoder \
-  --cache-dir data/boxes_30um \
-  --edit-pairs-tsv data/cave_edit_pairs_v3.tsv \
-  --edit-chains-npz data/cave_edit_chains_v3.npz \
-  --output models/scratch/path_encoder.pt --epochs 10 --seed 42
-```
+To read the branch: `git fetch origin claude/neuron-fingerprints-connectivity-jg95xp`
+then `git show FETCH_HEAD:<path>`.
 
-The fingerprint feeds the [grammar](../grammar/README.md) and
-[cell_assignment](../cell_assignment/README.md) threads via
-`--path-encoder-checkpoint`.
+## Relationship to other threads
 
-## Checkpoints
-
-`path_encoder_v3*.pt` (best ~0.899 path-discrimination acc) are produced locally
-and not tracked — write new runs under `models/scratch/`. See
-[`models/README.md`](../../models/README.md).
+- Complements [tree_dna](../tree_dna/README.md): morphology (shape) + connectivity
+  (partners) are independent evidence for "same neuron".
+- Feeds the same global-assembly goal as
+  [cell_assignment](../cell_assignment/README.md) and the co-assignment /
+  stitch branches (`synapse-coassign`, `abstract-tree-stitch`).
 
 ## Graduation
 
-Promote when a fingerprint-only same-neuron predictor beats the 6-scalar-feature
-CellGNN baseline on the spatial val/test split (the "leaving signal on the table"
-gap in [`docs/TODO.md`](../../docs/TODO.md)). That makes tree-DNA the primary node
-feature for [cell_assignment](../cell_assignment/README.md).
+When it lands: open a PR from the branch, and if the fingerprint retrieval beats
+proximity/connectivity baselines on real v117 atoms, fold the encoder into the
+`represent/` stage alongside tree-DNA. Until then it stays external.

@@ -54,5 +54,5 @@ the sweep checkpoints themselves were curated out.
 
 Already core and default. Its successor is **global** assembly: replace the
 box-local synapse graph with a fragment graph carrying
-[fingerprints](../fingerprints/README.md) that stitches across box seams (roadmap
+[tree-DNA](../tree_dna/README.md) that stitches across box seams (roadmap
 Phase 2).
