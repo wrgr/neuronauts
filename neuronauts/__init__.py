@@ -42,6 +42,42 @@ from .path_dataset import (
     train_path_encoder,
 )
 from .path_edge_encoder import PathEdgeEncoder, pad_path_sequences
+from .data.fragments import extract_fragments_for_region, skeleton_to_fragment
+from .represent.dna import (
+    TreeDNAEncoder,
+    encode_fragments,
+    featurize_fragment,
+    sample_tree_paths,
+    train_dna_encoder,
+)
+from .represent.enrich import (
+    build_synapse_dna_matrix,
+    evaluate_dna_auc,
+    spatial_proximity_scores,
+    synapse_pair_dna_scores,
+)
+from .represent.skeleton_gnn import (
+    SkeletonGNN,
+    encode_fragments_gnn,
+    fragment_to_tensors,
+    train_skeleton_gnn,
+)
+from .assemble import (
+    GlobalSynapseGraph,
+    assemble_neurons,
+    build_global_synapse_graph,
+    run_global_gnn,
+    train_global_gnn,
+    HalfSynapseGraph,
+    build_half_synapse_graph,
+    HalfSynapseGNN,
+    evaluate_partition_ari,
+    partition_half_synapses,
+    train_partition_gnn,
+    assemble_fragments,
+    build_fragment_graph,
+    score_edge,
+)
 
 __all__ = [
     # CellGNN architecture & training
@@ -88,4 +124,40 @@ __all__ = [
     "CandidateMerge",
     "logit_to_probability",
     "probability_to_log_odds",
+    # Data stage: skeleton → Fragment
+    "extract_fragments_for_region",
+    "skeleton_to_fragment",
+    # Represent stage: Fragment → tree-DNA embedding (path-sampling)
+    "TreeDNAEncoder",
+    "encode_fragments",
+    "featurize_fragment",
+    "sample_tree_paths",
+    "train_dna_encoder",
+    # Represent stage: DNA enrichment + ablation evaluation
+    "build_synapse_dna_matrix",
+    "evaluate_dna_auc",
+    "spatial_proximity_scores",
+    "synapse_pair_dna_scores",
+    # Represent stage: GNN encoder (data-driven, no hand-crafted features)
+    "SkeletonGNN",
+    "encode_fragments_gnn",
+    "fragment_to_tensors",
+    "train_skeleton_gnn",
+    # Assemble stage: global synapse graph + GNN
+    "GlobalSynapseGraph",
+    "assemble_neurons",
+    "build_global_synapse_graph",
+    "run_global_gnn",
+    "train_global_gnn",
+    # Assemble stage: half-synapse graph + partition GNN (Phase 2.1)
+    "HalfSynapseGraph",
+    "build_half_synapse_graph",
+    "HalfSynapseGNN",
+    "evaluate_partition_ari",
+    "partition_half_synapses",
+    "train_partition_gnn",
+    # Assemble stage: fragment-proximity graph (endpoint-based stitching)
+    "assemble_fragments",
+    "build_fragment_graph",
+    "score_edge",
 ]

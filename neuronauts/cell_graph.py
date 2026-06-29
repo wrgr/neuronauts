@@ -3004,6 +3004,7 @@ def precompute_self_skeletons_for_cache(
         kept_n_edges: list[int] = []
         all_verts: list[np.ndarray] = []
         all_edges: list[np.ndarray] = []
+        all_radii: list[np.ndarray] = []
 
         v_offset = 0
         for label, sk in skels.items():
@@ -3023,6 +3024,7 @@ def precompute_self_skeletons_for_cache(
             all_verts.append(verts_abs)
             # Edges are local to this skeleton; re-index globally
             all_edges.append(edges + v_offset)
+            all_radii.append(np.asarray(sk.radii, dtype=np.float32))
             v_offset += len(verts_abs)
 
         if not kept_root_ids:
@@ -3032,6 +3034,7 @@ def precompute_self_skeletons_for_cache(
 
         merged_verts = np.concatenate(all_verts, axis=0).astype(np.float32)
         merged_edges = np.concatenate(all_edges, axis=0).astype(np.int64)
+        merged_radii = np.concatenate(all_radii, axis=0).astype(np.float32)
 
         np.savez_compressed(
             out_path,
@@ -3041,6 +3044,7 @@ def precompute_self_skeletons_for_cache(
             n_edges=np.asarray(kept_n_edges, dtype=np.int64),
             vertices=merged_verts,
             edges=merged_edges,
+            radii=merged_radii,
             voxel_size_nm=np.asarray(vol.voxel_size_nm, dtype=np.float32),
         )
         manifest[box_hash] = str(out_path)
@@ -3059,8 +3063,10 @@ def load_self_skeleton_archive(path: str) -> dict[int, "tuple"]:
 
     Returns
     -------
-    dict[int, (vertices_nm, edges)]
-        Mapping root_id -> (float32 [V, 3], int64 [E, 2])
+    dict[int, (vertices_nm, edges, radii_nm)]
+        Mapping root_id -> (float32 [V, 3], int64 [E, 2], float32 [V]).
+        radii_nm is the kimimaro inscribed-sphere radius at each vertex;
+        falls back to zeros for archives written before this field was added.
     """
     d = np.load(path, allow_pickle=False)
     root_ids = d["root_ids"].astype(np.int64)
@@ -3068,6 +3074,7 @@ def load_self_skeleton_archive(path: str) -> dict[int, "tuple"]:
     n_edges = d["n_edges"].astype(np.int64)
     vertices = d["vertices"].astype(np.float32)
     edges = d["edges"].astype(np.int64)
+    radii_all = d["radii"].astype(np.float32) if "radii" in d else None
 
     out: dict[int, tuple] = {}
     e_offset = 0
@@ -3077,7 +3084,8 @@ def load_self_skeleton_archive(path: str) -> dict[int, "tuple"]:
         ne = int(n_edges[i])
         sub_v = vertices[v_lo:v_hi]
         sub_e = edges[e_offset:e_offset + ne] - v_lo  # rebase to local indices
-        out[int(rid)] = (sub_v, sub_e)
+        sub_r = radii_all[v_lo:v_hi] if radii_all is not None else np.zeros(len(sub_v), np.float32)
+        out[int(rid)] = (sub_v, sub_e, sub_r)
         e_offset += ne
     return out
 
@@ -3259,7 +3267,7 @@ def precompute_skeleton_paths_for_cache(
                 box_skels = load_self_skeleton_archive(str(self_archive))
             except Exception:
                 box_skels = {}
-            for root_id, (verts, edges) in box_skels.items():
+            for root_id, (verts, edges, _radii) in box_skels.items():
                 if root_id not in unique_roots:
                     continue
                 sk = SkeletonData(

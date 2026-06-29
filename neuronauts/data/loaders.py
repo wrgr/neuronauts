@@ -40,8 +40,7 @@ import numpy as np
 import pandas as pd
 import requests
 
-import os as _os
-DEFAULT_TOKEN: str | None = _os.environ.get("CAVE_TOKEN")
+DEFAULT_TOKEN = "a08cdcba8581846f48d5742a75c53311"
 
 _NUCLEUS_URL = (
     "https://storage.googleapis.com/mat_dbs/public/minnie65_phase3_v1/"
@@ -160,7 +159,7 @@ def load_cell_types(cache_path: Optional[str] = None) -> Optional[pd.DataFrame]:
 
 def load_skeleton(
     root_id: int,
-    token: str | None = DEFAULT_TOKEN,
+    token: str = DEFAULT_TOKEN,
 ) -> Optional[dict]:
     """Fetch one skeleton from the CAVE skeleton cache.
 
@@ -231,7 +230,7 @@ def load_skeleton(
 
 def load_skeletons(
     root_ids: list[int],
-    token: str | None = DEFAULT_TOKEN,
+    token: str = DEFAULT_TOKEN,
     *,
     max_workers: int = 4,
     progress: bool = True,

@@ -11,12 +11,31 @@ Fill the **Owner** column with real names as the team forms.
 
 | Stage | Artifact (`schemas.py`) | Current modules | Owner |
 |-------|-------------------------|-----------------|-------|
-| `data/` | `Region` | `fetch.py`, `dataset_builder.py`, `fetch_skeletons.py`, `cave_root_mapping.py`, `cave_synapse_*` | _TBD_ |
-| `represent/` | `Fragment` (tree-DNA) | `path_edge_encoder.py`, `grammar.py` (encoder), skeleton featurization in `cell_graph.py` | _TBD_ |
-| `assemble/` | `NeuronHypothesis` | `cell_graph.py` (CellGNN + partition), `assembly.py`, `merge.py` (graph types), `em_corridor.py` | _TBD_ |
+| `data/` | `Region` | `fetch.py`, `dataset_builder.py`, `fetch_skeletons.py`, `cave_root_mapping.py`, `cave_synapse_*`, **`data/fragments.py`** | _TBD_ |
+| `represent/` | `Fragment` (tree-DNA) | `path_edge_encoder.py`, `grammar.py` (encoder), **`represent/dna.py`**, **`represent/enrich.py`** | _TBD_ |
+| `assemble/` | `NeuronHypothesis` | **`assemble/fragment_graph.py`** (`build_fragment_graph`, `assemble_neurons`, `score_edge`; Phase 2), `cell_graph.py` (CellGNN, legacy within-region assembler), `assembly.py`, `merge.py`, `em_corridor.py` | _TBD_ |
 | `connectome/` | `ConnectomeGraph` | `experiments/soma_graph/`, `shared_grammar_model.py` (GAT) | _TBD_ |
 | `evaluate/` | metrics | `line_graph.py` | _TBD_ |
-| `legacy/` (v1) | — | `legacy/run.py` (moved; `neuronauts/run.py` is a shim), `vectorized.py`, `fields.py`, `agent.py`, `agent_merge.py`, `topology_*` | _maintainer only_ |
+| `legacy/` (v1) | — | `legacy/run.py`, `vectorized.py`, `fields.py`, `agent.py`, `agent_merge.py`, `topology_*` | _maintainer only_ |
+
+### Phase 2 assemble/ API (as of 2026-06-10)
+
+```python
+from neuronauts.assemble import build_fragment_graph, assemble_neurons
+
+# Input: list[Fragment] with .dna filled; no box boundary required
+edge_src, edge_dst, edge_score = build_fragment_graph(
+    fragments, endpoint_radius_nm=5_000.0, max_edges_per_fragment=8
+)
+hypotheses = assemble_neurons(
+    fragments, edge_src, edge_dst, edge_score, score_threshold=0.3
+)
+# Returns list[NeuronHypothesis] sorted by fragment count (largest first)
+```
+
+Edge score = endpoint_proximity × dna_cosine_compat (both ∈ [0,1]).
+Union-find merges all pairs above score_threshold → `NeuronHypothesis`
+with `spans_regions` tracking cross-tile assembly.
 
 ## Contracts
 
