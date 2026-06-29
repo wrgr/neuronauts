@@ -226,6 +226,42 @@ path that got here (including two wrong turns worth remembering).
   numbers on the reconstructed v117 seg. (At a smaller N=78 the real-trained
   encoder edged out planar; at N=156 they tie — that gap was small-N noise.)
 
+### Texture/artifact band at scale (`train_synthetic_skeleton.py`)
+
+Real error sites are scarce, so the hash was undertrained. But same-object
+cross-section pairs are unlimited: within any box a fragment spans several
+z-sections, so two z-separated faces of it = a synthetic positive (with a
+synthetic gap), other fragments = hard negatives. Mining the ~500 cached boxes
+gives thousands of pairs with no extra fetches. We split each face into a
+low-pass **bio** band and a high-pass **art** band and train an encoder on each.
+
+**N=62 held-out real sites, 2,503 synthetic training pairs, chance top-1 0.052:**
+
+| method | top-1 | recovers geom-miss |
+|---|---|---|
+| geom | 0.645 | — |
+| bio (low-pass) | 0.242 | 0.227 |
+| **art (high-pass)** | **0.435** | **0.318** |
+| geom+art | 0.581 | — |
+| geom+bio+art | 0.500 | — |
+
+**Two hypotheses confirmed together:**
+- **Scale works** — thousands of synthetic pairs lift the texture hash well past
+  the tens-of-pairs encoders.
+- **The artifact band is the signal** — the high-pass band (0.435) beats the
+  biological low-pass band (0.242) and recovers more of geometry's misses
+  (0.318 vs 0.227). The raw-cosine artifact band was at *chance*; scale + a
+  learned encoder turned it into the stronger band. Most matchable identity
+  lived in the high-frequency band the mean-projection threw away.
+
+**Still honest:** geometry (0.645) is not beaten by any fusion (best geom+art =
+0.581). The hash is complementary, not a replacement — turning its ~32%
+geom-miss recovery into a top-1 win needs a learned confidence combiner, not
+equal-weight/shortlist gating. And these are a *lower bound*: trained at a fixed
+30 epochs with the loss still falling (the val-based early-stopping in
+`finetune` should lift `art` further), at 16 nm (8 nm likely helps the texture
+band more).
+
 **Location vs correction (two different models).** This experiment measures
 *correction*: given a real interface and a candidate panel, pick the partner.
 The other half — *location* (which edges are errors / candidates at all) — is a
