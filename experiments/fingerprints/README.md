@@ -119,18 +119,88 @@ gap_nm norm Ncand chance | top1: spatial  scalar  PATCH  FUSED | hard(N) patch_o
 are visibly brighter (a per-section staining offset) yet still match — the hash
 keys on shape/texture pattern, which it survives.*
 
+## The learned version (`learned_cutface_encoder.py`)
+
+A small CNN trained with a contrastive (NT-Xent) objective to pull the two
+faces of the *same* neurite (sampled at different z) together and push different
+neurites apart. The embedding is then used exactly like the raw-patch hash.
+Train and test boxes are spatially disjoint, so the encoder is scored on
+neurites it never saw.
+
+```bash
+pip install torch        # CPU is fine
+python -m experiments.fingerprints.learned_cutface_encoder \
+  --mip 1 --size 320 320 80 --epochs 45 --steps-per-epoch 50 \
+  --out experiments/fingerprints/cutface_encoder.pt \
+  --metrics experiments/fingerprints/learned_metrics.json
+```
+
+Held-out test box (`learned_metrics.json`, 165 candidate neurites):
+
+```
+gap_nm norm Ncand chance | top1: spatial   raw   LEARNED | hard(N) learned_on_hard
+    40   F   165  0.006 |       0.599  0.212   0.190 |   55   0.182
+   160   F   158  0.006 |       0.361  0.084   0.101 |   76   0.066
+   320   F   162  0.006 |       0.254  0.035   0.044 |   85   0.047
+   640   F   159  0.006 |       0.093  0.010   0.041 |   88   0.034
+```
+
+**What the learned hash buys:**
+
+- At the trivial short gap it roughly **matches** the raw patch (0.190 vs
+  0.212) but degrades **more gracefully** at longer gaps where the raw patch
+  collapses (160 nm: 0.101 vs 0.084; 640 nm: 0.041 vs 0.010). The harder,
+  longer-range regime is the one that matters for real proofreading.
+- It is a compact 32-d embedding — deployable as an edge feature — that
+  generalises to an unseen box.
+
+**Two honest findings:**
+
+1. **It leans partly on the staining "trick".** Under per-section
+   normalisation (`norm=T`, staining batch effect removed) the learned hash
+   drops more than the raw patch at short gaps. So some of its short-range power
+   *is* the per-section contrast cue, not biology. That is an allowed trick —
+   it still re-links faces — but it is a trick, and flagged as one.
+2. **Rotation/scale augmentation HURTS here.** Training with random rotation
+   stalls the loss (~4.3 vs 2.97 without) and lowers accuracy. Because the cut
+   faces are *local*, they are barely rotated relative to each other, and the
+   footprint orientation is itself discriminative — forcing invariance throws
+   that away. Locality removes the need for the invariance; per-patch contrast
+   normalisation is the normalisation that actually matters. (`--augment`
+   enables it for the ablation.)
+
+## Using it as a proofreading edge feature (`neuronauts/em_corridor.py`)
+
+The encoder is wired into the boundary-edge resolver as a drop-in edge feature.
+`em_corridor` stays torch-free by taking the encoder as an injected `embed_fn`:
+
+```python
+from experiments.fingerprints.learned_cutface_encoder import load_encoder, make_embed_fn
+from neuronauts.em_corridor import batch_cutface_similarity
+
+enc = load_encoder("experiments/fingerprints/cutface_encoder.pt")
+embed_fn = make_embed_fn(enc)
+
+# syn_positions_nm: [N,3]; boundary_edges: ambiguous (i,j) pairs from CellGNN
+scores = batch_cutface_similarity(syn_positions_nm, boundary_edges, embed_fn)
+# {(i,j): cosine_similarity}  -- higher = faces look like one continuous process
+```
+
+One bulk EM+seg fetch covers all referenced points; `cross_section_patch`
+extracts each translation-normalised face; a single `embed_fn` call embeds them.
+
 ## Honest limitations & obvious next steps
 
-- One box, one cut plane, hand-crafted patch hash. The patch is a raw masked
-  mean-intensity crop with **no rotation normalisation** and no learning — it
-  almost certainly *under*-reads the available signal. A learned embedding
-  (small CNN / contrastive head trained to pull true partners together) is the
-  natural next step and is exactly what would exploit ER / microtubule
-  arrangement that a raw 8 nm crop is too noisy to expose cleanly.
+- The learned encoder (above) only *matches* the raw patch at short range
+  rather than dominating it. It is trained on a single box for ~100 s on CPU;
+  more training data (many boxes), a deeper net, and hard-negative mining are
+  the obvious levers. The biggest expected win is restricting to small processes
+  (thin axons) where real splits actually occur — large dendrite cross-sections
+  are mostly uniform interior and dilute the metric.
 - "Break" here is a clean planar z-cut. Real splits are at membrane-ambiguous
   3D surfaces; the partner panel and face extraction would change.
-- The right place to deploy this in the existing pipeline is the boundary-edge
-  resolver in `neuronauts/em_corridor.py`: replace / augment the intensity
-  heuristic with a cut-face hash similarity as an edge feature.
+- Deployment hook is in place (`batch_cutface_similarity` in
+  `neuronauts/em_corridor.py`); the remaining work is to feed its scores into
+  `cell_graph.build_synapse_graph` as an edge feature and measure line-graph F1.
 - Bigger evaluation: many boxes, report rank distributions, and restrict to the
   hard subset where it actually pays.
