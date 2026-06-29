@@ -158,12 +158,12 @@ def site_faces_v117(cl, ts, site, *, mip=1, slab=3, radius_nm=2000.0,
     tn = np.linalg.norm(tangent)
     cone_cos = np.cos(np.deg2rad(direction_cone_deg)) if direction_cone_deg else None
 
-    cand_ids, patches, is_true = [], [], []
+    cand_ids, patches, is_true, geom_dist = [], [], [], []
     for sid, (nv, _) in prox.items():
         same_neuron = frag2cur.get(sid) == q_cur
+        d = (origin + nv + 0.5) * vox - pmain
+        dn = float(np.linalg.norm(d))
         if cone_cos is not None and tn > 1e-6 and not same_neuron:
-            d = (origin + nv + 0.5) * vox - pmain
-            dn = np.linalg.norm(d)
             if dn > 1e-6 and abs(float(d @ tangent) / (dn * tn)) < cone_cos:
                 continue
         zc = max(min(int(nv[2]) - slab // 2, nz - slab), 0)
@@ -173,9 +173,11 @@ def site_faces_v117(cl, ts, site, *, mip=1, slab=3, radius_nm=2000.0,
         cand_ids.append(sid)
         patches.append(p)
         is_true.append(same_neuron)
+        geom_dist.append(dn)   # nm distance from query endpoint -> geometry baseline
     if not any(is_true) or len(cand_ids) < 3:
         return None
-    return {"query": q, "patches": np.stack(patches), "is_true": np.array(is_true)}
+    return {"query": q, "patches": np.stack(patches), "is_true": np.array(is_true),
+            "geom_dist": np.array(geom_dist)}
 
 
 def _best_rank(d, is_true):
@@ -185,10 +187,22 @@ def _best_rank(d, is_true):
     return int(ranks[is_true].min())   # best (smallest) rank among true partners
 
 
+def _z(x):
+    x = np.asarray(x, float)
+    return (x - x.mean()) / (x.std() + 1e-9)
+
+
 def evaluate(cl, ts, roots, embedders, *, mip=1, radius_nm=2000.0,
-             direction_cone_deg=45.0, max_sites=6, verbose=True):
-    ranks = {name: [] for name in embedders}
-    ranks["raw"] = []
+             direction_cone_deg=45.0, max_sites=6, fuse_with="real", verbose=True):
+    """Rank true partner by: geometry (distance), raw/learned hash, and a fusion.
+
+    ``fuse_with`` names the embedder whose hash distance is combined (equal
+    weight, within-panel z-scored) with the geometric distance for the fused
+    ranker -- the deployment-relevant "geometry + hash" question.
+    """
+    methods = ["geom", "raw", *embedders, "fused"]
+    ranks = {m: [] for m in methods}
+    geom_hit, fused_hit = [], []   # paired on the geom-fails (hard) subset
     ncand, ntrue = [], []
     for n, rt in enumerate(roots):
         try:
@@ -203,21 +217,37 @@ def evaluate(cl, ts, roots, embedders, *, mip=1, radius_nm=2000.0,
                 f = None
             if f is None:
                 continue
-            P, it = f["patches"], f["is_true"]
+            P, it, gd = f["patches"], f["is_true"], f["geom_dist"]
             ncand.append(len(it))
             ntrue.append(int(it.sum()))
-            qf = v._flatnorm(f["query"])
-            cf = np.stack([v._flatnorm(P[i]) for i in range(len(P))])
-            ranks["raw"].append(_best_rank(1.0 - cf @ qf, it))
+
+            d_geom = gd.astype(float)
+            ranks["geom"].append(_best_rank(d_geom, it))
+
+            d_raw = 1.0 - np.stack([v._flatnorm(P[i]) for i in range(len(P))]) @ v._flatnorm(f["query"])
+            ranks["raw"].append(_best_rank(d_raw, it))
+
+            d_emb = {}
             for name, emb in embedders.items():
                 qe = np.asarray(emb(f["query"][None]))[0]
                 ce = np.asarray(emb(P))
                 qe = qe / (np.linalg.norm(qe) + 1e-9)
                 ce = ce / (np.linalg.norm(ce, axis=1, keepdims=True) + 1e-9)
-                ranks[name].append(_best_rank(1.0 - ce @ qe, it))
-        if verbose and ranks["raw"]:
-            print(f"  eval: {n + 1}/{len(roots)} neurons, {len(ranks['raw'])} sites")
-    return ranks, ncand, ntrue
+                d = 1.0 - ce @ qe
+                d_emb[name] = d
+                ranks[name].append(_best_rank(d, it))
+
+            d_hash = d_emb.get(fuse_with, d_raw)
+            d_fused = _z(d_geom) + _z(d_hash)        # equal-weight geometry + hash
+            ranks["fused"].append(_best_rank(d_fused, it))
+
+            # paired hard subset: sites where geometry alone misses top-1
+            if _best_rank(d_geom, it) != 0:
+                geom_hit.append(0)
+                fused_hit.append(int(_best_rank(d_fused, it) == 0))
+        if verbose and ranks["geom"]:
+            print(f"  eval: {n + 1}/{len(roots)} neurons, {len(ranks['geom'])} sites")
+    return ranks, ncand, ntrue, (geom_hit, fused_hit)
 
 
 def main():
@@ -248,25 +278,36 @@ def main():
     if os.path.exists(args.real):
         embedders["real"] = make_embed_fn(load_encoder(args.real))
 
-    ranks, ncand, ntrue = evaluate(cl, ts, roots, embedders, mip=args.mip,
-                                   radius_nm=args.radius_nm,
-                                   direction_cone_deg=args.direction_cone_deg,
-                                   max_sites=args.max_sites)
-    n = len(ranks["raw"])
+    fuse_with = "real" if "real" in embedders else ("planar" if "planar" in embedders else "raw")
+    ranks, ncand, ntrue, (geom_hit, fused_hit) = evaluate(
+        cl, ts, roots, embedders, mip=args.mip, radius_nm=args.radius_nm,
+        direction_cone_deg=args.direction_cone_deg, max_sites=args.max_sites,
+        fuse_with=fuse_with)
+    n = len(ranks["geom"])
     if n == 0:
         print("no scorable sites"); return
     summ = {"n_sites": n,
             "mean_candidates": float(np.mean(ncand)),
             "mean_true_partners": float(np.mean(ntrue)),
-            "chance_top1": float(np.mean(1.0 / np.asarray(ncand)))}
+            "chance_top1": float(np.mean(1.0 / np.asarray(ncand))),
+            "fused_uses": fuse_with}
     for name, rs in ranks.items():
         rs = np.asarray(rs)
         summ[name] = {"top1": float((rs == 0).mean()), "mrr": float(np.mean(1.0 / (rs + 1.0)))}
+    if geom_hit:
+        summ["geom_miss_recovered_by_fusion"] = {
+            "n_geom_misses": len(geom_hit),
+            "fused_top1_on_those": float(np.mean(fused_hit))}
     print(f"\nReconstructed-v117 re-linking: {n} sites, mean {summ['mean_candidates']:.1f} "
           f"candidates ({summ['mean_true_partners']:.1f} true), chance top-1 {summ['chance_top1']:.3f}")
-    for name in ("raw", "planar", "real"):
-        if name in summ:
-            print(f"  {name:7s} top-1 / MRR: {summ[name]['top1']:.3f} / {summ[name]['mrr']:.3f}")
+    for name in ("geom", "raw", "planar", "real", "fused"):
+        if name in summ and isinstance(summ[name], dict) and "top1" in summ[name]:
+            tag = f" (=geom+{fuse_with})" if name == "fused" else ""
+            print(f"  {name:7s} top-1 / MRR: {summ[name]['top1']:.3f} / {summ[name]['mrr']:.3f}{tag}")
+    if "geom_miss_recovered_by_fusion" in summ:
+        g = summ["geom_miss_recovered_by_fusion"]
+        print(f"  fusion recovers {g['fused_top1_on_those']:.3f} of the {g['n_geom_misses']} "
+              f"sites geometry-alone gets wrong")
 
     with open(args.out, "w") as f:
         json.dump({"radius_nm": args.radius_nm, "direction_cone_deg": args.direction_cone_deg,
