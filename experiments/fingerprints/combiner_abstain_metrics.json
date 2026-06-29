@@ -1,0 +1,47 @@
+{
+  "mip": 1,
+  "radius_nm": 2000.0,
+  "n_train_sites": 280,
+  "n_sites": 125,
+  "n_partner_present": 62,
+  "panel_recall_ceiling": 0.496,
+  "combiner_alwaysact_top1": 0.36,
+  "geom_alwaysact_top1": 0.32,
+  "curve": [
+    {
+      "thr": 0.975286066532135,
+      "coverage": 1.0,
+      "precision": 0.36,
+      "recall": 0.36,
+      "n_acted": 125
+    },
+    {
+      "thr": 2.297795057296753,
+      "coverage": 0.752,
+      "precision": 0.43617021276595747,
+      "recall": 0.328,
+      "n_acted": 94
+    },
+    {
+      "thr": 3.709341526031494,
+      "coverage": 0.504,
+      "precision": 0.6190476190476191,
+      "recall": 0.312,
+      "n_acted": 63
+    },
+    {
+      "thr": 4.998572826385498,
+      "coverage": 0.256,
+      "precision": 0.90625,
+      "recall": 0.232,
+      "n_acted": 32
+    },
+    {
+      "thr": 6.309076881408692,
+      "coverage": 0.104,
+      "precision": 1.0,
+      "recall": 0.104,
+      "n_acted": 13
+    }
+  ]
+}

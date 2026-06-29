@@ -58,8 +58,15 @@ def _band_face(em, seg, z_lo, z_hi, seg_id, sigma=2.0):
 
 
 def site_faces_bands(cl, ts, site, *, mip=1, slab=2, radius_nm=2000.0,
-                     direction_cone_deg=45.0, min_vox=40, sigma=2.0):
-    """Query + candidate band faces on the v117-painted box; true = shared current root."""
+                     direction_cone_deg=45.0, min_vox=40, sigma=2.0,
+                     require_true=True):
+    """Query + candidate band faces on the v117-painted box; true = shared current root.
+
+    ``require_true=True`` (default) drops sites where the true partner is absent
+    from the panel -- correct for the correction-given-candidates eval, but it
+    conditions on the candidate generator succeeding.  Pass ``require_true=False``
+    to KEEP partner-absent sites (all-false labels) for an honest abstention eval
+    over the full population."""
     vol, frag2cur = r.fetch_v117_box(cl, ts, site.pos_main_nm, site.pos_frag_nm, radius_nm, mip)
     nz = vol.em.shape[2]
     qa_id, idx_main = v._seg_id_at(vol, site.pos_main_nm)
@@ -95,7 +102,7 @@ def site_faces_bands(cl, ts, site, *, mip=1, slab=2, radius_nm=2000.0,
         if bf is None:
             continue
         lows.append(bf[0]); highs.append(bf[1]); is_true.append(same); gdist.append(dn)
-    if not any(is_true) or len(lows) < 3:
+    if len(lows) < 3 or (require_true and not any(is_true)):
         return None
     return {"q_low": q[0], "q_high": q[1],
             "low": np.stack(lows), "high": np.stack(highs),
