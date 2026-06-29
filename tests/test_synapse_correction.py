@@ -7,12 +7,12 @@ beats its permutation null in both strata.
 import numpy as np
 import pytest
 
-from experiments.pcfg_synapse_partitions.synapse_correction import (
+from experiments.pcfg.synapse_correction import (
     build_correction_pairs,
     cell_components,
     summarize_edits,
 )
-from experiments.pcfg_synapse_partitions.run_synapse_correction import (
+from experiments.pcfg.run_synapse_correction import (
     evaluate,
     make_synthetic,
 )

@@ -23,6 +23,7 @@ dev = [
     "matplotlib",
     "pytest",
     "pandas",
+    "scikit-learn",
 ]
 cave = [
     "caveclient",

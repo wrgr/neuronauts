@@ -14,10 +14,10 @@ corrected, SPLIT = false-merge corrected), each against a permutation null.
 Examples
 --------
     # offline sanity check
-    python -m experiments.pcfg_synapse_partitions.run_synapse_correction --synthetic
+    python -m experiments.pcfg.run_synapse_correction --synthetic
 
     # real data (needs a CAVE token)
-    python -m experiments.pcfg_synapse_partitions.run_synapse_correction \\
+    python -m experiments.pcfg.run_synapse_correction \\
         --token $CAVE_TOKEN --later-version 1718 --n-boxes 6 --side-um 30
 """
 from __future__ import annotations
@@ -30,7 +30,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from experiments.pcfg_synapse_partitions.synapse_correction import (  # noqa: E402
+from experiments.pcfg.synapse_correction import (  # noqa: E402
     SideTable,
     build_correction_pairs,
     build_side_table,
