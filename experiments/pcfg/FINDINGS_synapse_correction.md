@@ -475,3 +475,31 @@ data-starvation thesis made concrete -- the seam GNN can't yet pick the right ed
 cuts (3.7x fewer), 0.898 connectivity** -- a proofreader picking from the model's top-5 is the
 deployable mode today. Closing the autonomous gap is exactly what Track B (bigger data) tests;
 the fetch is now checkpointed per-box so it survives proxy/CAVE outages and resumes.
+
+## Track B payoff: data scaling moves the autonomous learned cut across zero
+
+Track B grew the sample from the 7-box column to a 27-box block: **sidetable_big** = 1,808,250
+synapse-sides, **915 false-merge roots** (vs 354), 15,107 cells; **513 v117 merge-object skeletons**
+cached (vs 150; ~46% of merge roots have no skeleton, so the rest are un-skeletonizable).
+
+Re-running (a) the learned seam-cut recursion on the bigger sample (lighter train: 3 folds, 12
+epochs -- a lower bound vs the 4x35 column run), grouped-by-cell CV, connectivity metric:
+
+| pooled pair-error vs do-nothing | 7-box (150 obj) | Big (513 obj) |
+|---|---|---|
+| **autonomous (abstain)** | **-73.4%** | **+4.6%** |
+| human-assist (top-5)         | +52.1% | +42.0% |
+| connectivity autonomous      | 0.894 | 0.892 |
+| connectivity assist          | 0.898 | 0.914 |
+
+**The autonomous learned cut crossed from net-negative to net-positive** (-73% -> +4.6%): the seam
+GNN was harmful purely for lack of training objects; 3.4x the merges makes it deployable-autonomous
+in aggregate -- the data-starvation thesis confirmed. The pre/post split shows where:
+- **post-side (dendrite): -197% -> +5.6%** autonomous -- flips hard positive, cut cleanly unaided.
+- **pre-side (axon): still -60.4%** autonomous -- axons remain over-cut; this is the residual gap
+  (why connectivity is 0.892 autonomous vs 0.914 assisted). Axons need assist or yet more data.
+
+**Seam-hash (error-site index) also sharpens with scale.** Same bigger sample (513 objects, 83,518
+vertices, 3.9% seam): SimHash cosine-LSH retrieves seams from a seam query at **5.21x base rate /
+6.05x over a non-seam location** (was 2.98x / 4.12x on the column). More data -> more separable
+merge-seam signature -> a stronger content-addressable error prior.
