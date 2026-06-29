@@ -151,9 +151,9 @@ def _infonce_batch(enc, A, P, D, bi, temperature, torch):
     return loss, float(top1)
 
 
-def finetune(anchors, positives, distractors, *, init_ckpt=None, embed_dim=32,
-             epochs=40, batch=32, lr=5e-4, temperature=0.2, seed=0, verbose=True,
-             val_frac=0.15, eval_every=2, patience=8, ckpt_path=None):
+def finetune(anchors, positives, distractors, *, init_ckpt=None, warm_only=False,
+             embed_dim=32, epochs=40, batch=32, lr=5e-4, temperature=0.2, seed=0,
+             verbose=True, val_frac=0.15, eval_every=2, patience=8, ckpt_path=None):
     """Contrastive fine-tune with validation-based early stopping + best checkpoint.
 
     Holds out ``val_frac`` of the pairs; every ``eval_every`` epochs evaluates
@@ -173,11 +173,15 @@ def finetune(anchors, positives, distractors, *, init_ckpt=None, embed_dim=32,
     if init_ckpt and os.path.exists(init_ckpt):
         ck = torch.load(init_ckpt, map_location="cpu", weights_only=False)
         enc.load_state_dict(ck["state_dict"])
-        if "opt_state" in ck:                       # true resume (optimizer + epoch)
+        # warm_only = transfer the WEIGHTS but start a fresh optimizer at epoch 0
+        # (for fine-tuning on a *different* dataset, e.g. synthetic -> real). The
+        # opt_state/epoch resume is only for continuing the SAME training.
+        if "opt_state" in ck and not warm_only:
             opt.load_state_dict(ck["opt_state"])
             start_ep = int(ck.get("epoch", 0))
         if verbose:
-            print(f"  init from {init_ckpt} (start epoch {start_ep})")
+            mode = "warm-init (weights only)" if warm_only else f"resume @ep{start_ep}"
+            print(f"  init from {init_ckpt} ({mode})")
 
     A = _normalize_patches(anchors)
     P = _normalize_patches(positives)

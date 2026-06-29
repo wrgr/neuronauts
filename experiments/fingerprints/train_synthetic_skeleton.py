@@ -171,13 +171,53 @@ def mine_from_cache(cache_dir, exclude_keys, *, mip=1, target_pairs=3000, slab=2
             "hi_a": st(hi_a), "hi_p": st(hi_p), "hi_d": st(hi_d)}
 
 
+def collect_real_band_pairs(cl, ts, roots, *, mip=1, radius_nm=2000.0,
+                            direction_cone_deg=45.0, n_distractors=8, max_sites=10,
+                            sigma=2.0, seed=0, verbose=True):
+    """Real v117->v1412 merge band-pairs: anchor=query face, positive=the true
+    partner (shares current root), distractors=the false candidates."""
+    rng = np.random.default_rng(seed)
+    lo_a, lo_p, lo_d, hi_a, hi_p, hi_d = [], [], [], [], [], []
+    for n, rt in enumerate(roots):
+        try:
+            ss = v.sites_from_l2_graph(cl, rt, ts, max_gap_nm=radius_nm, max_sites=max_sites)
+        except Exception:
+            continue
+        for s in ss:
+            try:
+                f = site_faces_bands(cl, ts, s, mip=mip, radius_nm=radius_nm,
+                                     direction_cone_deg=direction_cone_deg, sigma=sigma)
+            except Exception:
+                f = None
+            if f is None:
+                continue
+            it = f["is_true"]
+            tr = np.where(it)[0]
+            fa = np.where(~it)[0]
+            if len(tr) < 1 or len(fa) < 2:
+                continue
+            t = int(tr[0])
+            pick = rng.choice(fa, size=n_distractors, replace=len(fa) < n_distractors)
+            lo_a.append(f["q_low"]); lo_p.append(f["low"][t]); lo_d.append(f["low"][pick])
+            hi_a.append(f["q_high"]); hi_p.append(f["high"][t]); hi_d.append(f["high"][pick])
+        if verbose and (lo_a):
+            print(f"  real-pairs: {n + 1}/{len(roots)} neurons, {len(lo_a)} pairs", flush=True)
+    if not lo_a:
+        return None
+    st = lambda L: np.stack(L).astype(np.float32)
+    return {"lo_a": st(lo_a), "lo_p": st(lo_p), "lo_d": st(lo_d),
+            "hi_a": st(hi_a), "hi_p": st(hi_p), "hi_d": st(hi_d)}
+
+
 def main():
     import argparse
     import torch
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--n-scan", type=int, default=350)
-    ap.add_argument("--train-neurons", type=int, default=50)
+    ap.add_argument("--train-neurons", type=int, default=40,
+                    help="neurons for real fine-tuning (disjoint from test)")
     ap.add_argument("--test-neurons", type=int, default=30)
+    ap.add_argument("--ft-epochs", type=int, default=40, help="real fine-tune epoch cap")
     ap.add_argument("--mip", type=int, default=0)
     ap.add_argument("--radius-nm", type=float, default=1500.0)
     ap.add_argument("--max-sites", type=int, default=6)
@@ -234,7 +274,28 @@ def main():
                        init_ckpt=(args.out_art if args.resume else None),
                        epochs=args.epochs, ckpt_path=args.out_art)
 
-    print("[eval] held-out real v117 sites (synthetic-pretrained encoders) ...")
+    if args.finetune_real:
+        # adapt the synthetic-pretrained encoders to the real cut/break
+        # distribution using actual v117->v1412 merge faces (train neurons,
+        # disjoint from the test set). Warm-init from the synthetic weights.
+        train_roots = roots[args.test_neurons:args.test_neurons + args.train_neurons]
+        print(f"[finetune-real] collecting real v117->v1412 pairs from "
+              f"{len(train_roots)} train neurons ...", flush=True)
+        rd = collect_real_band_pairs(cl, ts, train_roots, mip=args.mip,
+                                     radius_nm=args.radius_nm, max_sites=args.max_sites,
+                                     sigma=args.sigma)
+        if rd is not None and len(rd["lo_a"]) >= 8:
+            print(f"[finetune-real] {len(rd['lo_a'])} real pairs; adapting bio & art ...", flush=True)
+            bio, _ = finetune(rd["lo_a"], rd["lo_p"], rd["lo_d"], init_ckpt=args.out_bio,
+                              warm_only=True, epochs=args.ft_epochs, lr=2e-4, ckpt_path=args.out_bio)
+            art, _ = finetune(rd["hi_a"], rd["hi_p"], rd["hi_d"], init_ckpt=args.out_art,
+                              warm_only=True, epochs=args.ft_epochs, lr=2e-4, ckpt_path=args.out_art)
+        else:
+            print(f"[finetune-real] too few real pairs ({0 if rd is None else len(rd['lo_a'])}) "
+                  "-- skipping", flush=True)
+
+    tag = "synthetic+real-finetune" if args.finetune_real else "synthetic-only"
+    print(f"[eval] held-out real v117 sites ({tag} encoders) ...")
     ranks, ncand, recov = evaluate_bands_learned(
         cl, ts, test_roots, make_embed_fn(bio), make_embed_fn(art),
         mip=args.mip, radius_nm=args.radius_nm, max_sites=args.max_sites, sigma=args.sigma)
