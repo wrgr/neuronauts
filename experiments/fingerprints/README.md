@@ -492,3 +492,59 @@ extracts each translation-normalised face; a single `embed_fn` call embeds them.
   `cell_graph.build_synapse_graph` as an edge feature and measure line-graph F1.
 - Bigger evaluation: many boxes, report rank distributions, and restrict to the
   hard subset where it actually pays.
+
+---
+
+## Experiment B — Connectivity fingerprints (TF-IDF over partner roots)
+
+Source: `FRAGMENT_ASSEMBLY_RESULTS.md` on branch `claude/small-e2e-test-B9k2g`
+(250 v1412 cells, 927k synapses; branch closed after findings folded here).
+
+### Findings from `small-e2e-test-B9k2g`
+
+#### Synthetic fragment assembly (balanced PCA bisection)
+
+| K | conn-tfidf top-1 | top-10 | AUROC | proximity AUROC |
+|--:|--:|--:|--:|--:|
+| 2 (500 fragments) | **23.0%** | 65.6% | **0.952** | 0.789 |
+| 4 (1000)          | **30.0%** | 75.4% | **0.912** | 0.819 |
+| 8 (2000)          | **33.8%** | 72.4% | **0.851** | 0.825 |
+
+Key: **the fingerprint is a near-perfect narrower** — top-50 hits 92% at K=2.
+
+#### Real v117 atoms (the actual working scale)
+
+| min-syn | atoms | cells | conn-tfidf AUROC | proximity AUROC |
+|--:|--:|--:|--:|--:|
+| 5   | 6944 | 237 | 0.517 | **0.680** |
+| 20  | 1729 | 213 | 0.577 | **0.737** |
+| 50  |  770 | 159 | 0.679 | **0.800** |
+| 100 |  343 | 105 | 0.763 | **0.844** |
+| 200 |  142 |  56 | 0.871 | 0.885 |
+
+**The synthetic experiment over-promised.** At realistic atomic scale (min-syn 5),
+TF-IDF AUROC is 0.52 vs 0.68 for proximity. Filtering to min-syn ≥ 100 recovers
+AUROC to 0.76 at the cost of 95% of atoms.
+
+#### Design implications
+
+1. **Need ≥ ~100 synapses per atom** for the fingerprint to carry signal.
+2. **TF-IDF as a candidate filter, not a ranker** — narrowing factor 0.985+ even at AUROC 0.52.
+3. **Path encoder's 30 µm scale is the bottleneck** (AUROC 0.43).
+4. **Combine proximity + connectivity** at the atomic scale.
+
+---
+
+## Relationship to other threads
+
+- Complements [tree_dna](../tree_dna/README.md): morphology (shape) + connectivity
+  (partners) are independent evidence for "same neuron".
+- Feeds the same global-assembly goal as
+  [cell_assignment](../cell_assignment/README.md) and the co-assignment /
+  stitch branches (`synapse-coassign`, `abstract-tree-stitch`).
+
+## Graduation
+
+When cut-face hash beats proximity AUROC 0.68 at min-syn 5 (all atoms) or 0.84
+at min-syn 100 (large atoms), fold the encoder into the `represent/` stage
+alongside tree-DNA.
