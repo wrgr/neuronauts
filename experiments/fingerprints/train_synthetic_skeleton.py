@@ -30,7 +30,7 @@ import numpy as np
 from .fingerprint_break_resolution import PATCH
 from . import v117_error_relink as v
 from . import v117_reconstructed as r
-from .v117_artifact_bands import _band_face
+from .v117_artifact_bands import _band_face, site_faces_bands
 from .train_real_cutface import finetune
 from .train_band_encoders import evaluate_bands_learned
 from .learned_cutface_encoder import make_embed_fn
