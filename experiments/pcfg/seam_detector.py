@@ -147,6 +147,8 @@ def main() -> None:
     gkf = GroupKFold(n_splits=max(2, min(args.folds, len(np.unique(groups)))))
     err_cut = np.full(len(objs), np.nan)     # actual error if we cut the GNN's top edge
     pred_ben = np.full(len(objs), np.nan)    # predicted benefit of that top edge (for abstention)
+    topk_dis = [None] * len(objs)            # disagreements of the top-10 predicted edges
+    oracle_rank = np.full(len(objs), 9999)   # rank of the oracle-best edge in the prediction
     rng = np.random.default_rng(args.seed)
 
     def edges_t(o):
@@ -168,8 +170,12 @@ def main() -> None:
             for i in te:
                 o = objs[i]
                 pred = net(torch.tensor(o["feat"]), edges_t(o)).numpy()
-                b = int(pred.argmax())
+                order = np.argsort(-pred)
+                b = int(order[0])
                 pred_ben[i] = float(pred[b]); err_cut[i] = int(o["edis"][b])
+                kk = min(10, len(order))
+                topk_dis[i] = o["edis"][order[:kk]].tolist()
+                oracle_rank[i] = int(np.where(order == int(o["edis"].argmin()))[0][0])
 
     dn = np.array([o["dn"] for o in objs]); base = int(dn.sum())
     oracle = np.array([int(o["edis"].min()) for o in objs])
@@ -187,6 +193,18 @@ def main() -> None:
         print(f"  {tau:>6.1f}{int(do_cut.sum()):>7d}{int(err.sum()):>13,d}{netf:>+12,d}"
               f"{100*netf/max(1,base):>8.1f}%")
     print("\n  abstention bounds downside at do-nothing (net>=0); net>0 == deployable corrector.")
+
+    print("\n  HUMAN-ASSIST: model proposes top-k candidate cut edges, a proofreader picks the best:")
+    print(f"  {'k':>4s}{'oracle-in-topk':>16s}{'best-of-k net':>15s}{'%base':>8s}"
+          f"{'+abstain net':>14s}{'%base':>8s}")
+    for k in (1, 3, 5, 10):
+        bok = np.array([min(td[:k]) for td in topk_dis])      # best candidate among top-k
+        recall = float(np.mean(oracle_rank < k))
+        net_raw = base - int(bok.sum())
+        net_ab = base - int(np.minimum(bok, dn).sum())        # human won't apply a harmful cut
+        print(f"  {k:>4d}{recall:>15.0%}{net_raw:>+15,d}{100*net_raw/max(1,base):>7.1f}%"
+              f"{net_ab:>+14,d}{100*net_ab/max(1,base):>7.1f}%")
+    print("  splits proposed = one per merge object; merges (joins) proposed = 0 (cut-only loop)")
 
 
 if __name__ == "__main__":

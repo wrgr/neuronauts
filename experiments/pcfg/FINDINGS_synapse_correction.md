@@ -386,3 +386,38 @@ abstention (cut only if predicted benefit > tau). Grouped-by-cell CV, 140 merge 
 Realistic near-term value is human-assisted (model proposes top-k candidate cut edges; a
 proofreader selects) or a much larger training corpus (more proofread boxes), not autonomous
 cutting at column scale.
+
+## Clear metrics + counts, and the top-k human-assist measurement
+
+Intuitive re-report of the oracle single-edge cut (`cut_report.py`, 150 real false-merge
+objects, 21,119 synapses, median 2 cells each):
+- **splits applied = 134, merges (joins) applied = 0** (one cut per object; >2-cell objects
+  need >1 cut, not done).
+- **86% of synapses placed in the correct cell** after the cut; per-object separation
+  accuracy median 0.98 / mean 0.85; **75% of merges cleanly separated by one cut** (>=90%).
+- The "+79%" headline is a within-object synapse-PAIR (Rand-disagreement) reduction
+  (401,642 -> 87,385 = 78%); quadratic, so big cells dominate -- that's why it differs from
+  the plainer 86% / 75%.
+
+**Which detector is in the loop:** none -- the cut experiments (`close_loop_cut`,
+`seam_detector`, `cut_report`) run on the KNOWN false-merge objects to isolate the cut/seam
+problem (perfect detection assumed). The error DETECTOR is a separate stage: the global
+whole-object shape RF (~0.88 AUC / 41% precision, `global_shape_merge.py`). A deployed
+pipeline chains detector -> seam-cut, so end-to-end is below these "given-known-merge" numbers.
+
+**Top-k human-assist** (`seam_detector.py`): model proposes top-k candidate cut edges, a
+proofreader applies the good ones (skips harmful). 150 objects, oracle ceiling +77%.
+
+| k | best-of-k net (apply all) | + human verify (apply only helpful) |
+|---|---|---|
+| 1 | −33% | **+14%** |
+| 3 | −25% | **+18%** |
+| 5 | −21% | **+21%** |
+| 10 | −2% | **+26%** |
+
+- **As a human-assist tool it works**: propose cuts, human verifies -> +14% (k=1) to +26%
+  (k=10) of merge pair-errors fixed (~1/3 of the +77% ceiling at k=10).
+- **Autonomous it does not**: apply-all is net-negative (the model can't self-tell good cuts
+  from bad; predicted-benefit abstention tops out at ~0). The lift requires human verification.
+- (oracle-edge-in-top-k looks low at 3-14% because many near-seam edges tie on cut quality;
+  the meaningful number is the verified best-of-k net.)
