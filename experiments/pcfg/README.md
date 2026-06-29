@@ -83,7 +83,7 @@ python scripts/train.py remap-roots \
 ### Run
 
 ```bash
-python experiments/pcfg_synapse_partitions/run_experiment.py \
+python experiments/pcfg/run_experiment.py \
   --cache-dir data/boxes_v117 \
   --root-remap-tsv data/boxes_v117/root_remap_v117_to_v1412.tsv \
   --side both \
@@ -116,7 +116,7 @@ reference: Berlin proofreader bigram AUC = 0.95  (n=15, LOO)
 
 ```bash
 python -c "
-from experiments.pcfg_synapse_partitions.pcfg_partitions import (
+from experiments.pcfg.pcfg_partitions import (
     tokenize, bigram_features, cond_entropy, BIGRAM_DIM
 )
 import numpy as np

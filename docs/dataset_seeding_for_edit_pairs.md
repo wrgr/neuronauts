@@ -38,7 +38,7 @@ After `build-dataset --strategy synapse-seeded --n-boxes 300 --box-side-um 30 --
 | `boxes_v117_spatial40_large_20260407`|  200 | **0%**  |
 | `root_neighborhoods_v1718_run001`    |  200 | **28%** |
 
-`fetch-cave-edits-from-cache` on `boxes_30um` reported `26,455 chains, 0 merge pairs, 0 split pairs`. The `root_neighborhoods_*` caches were built by `experiments/root_neighborhood_dataset.py` from a proofread-anchor list, which is why they show edit signal.
+`fetch-cave-edits-from-cache` on `boxes_30um` reported `26,455 chains, 0 merge pairs, 0 split pairs`. The `root_neighborhoods_*` caches were built by `experiments/root_neighborhood/dataset.py` from a proofread-anchor list, which is why they show edit signal.
 
 Probe to reproduce:
 

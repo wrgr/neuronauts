@@ -24,7 +24,7 @@ from itertools import combinations
 
 import numpy as np
 
-from experiments.pcfg_synapse_partitions.pcfg_partitions import (
+from experiments.pcfg.pcfg_partitions import (
     FEAT_DIM,
     PAIR_DIM,
     bigram_features,

@@ -250,7 +250,7 @@ def _cross_box_analysis(
     the grammar must do the work.
     """
     from collections import defaultdict
-    from experiments.pcfg_synapse_partitions.pcfg_partitions import (
+    from experiments.pcfg.pcfg_partitions import (
         partition_features, BIGRAM_DIM, FEAT_DIM,
     )
 
@@ -481,7 +481,7 @@ def main() -> None:
     rng = np.random.default_rng(args.seed)
     t0 = time.time()
 
-    from experiments.pcfg_synapse_partitions.pcfg_partitions import (
+    from experiments.pcfg.pcfg_partitions import (
         BIGRAM_DIM,
         FEAT_DIM,
         build_merge_pairs,
@@ -688,13 +688,13 @@ def _run_skeleton_grammar(args, all_partitions, all_box_ids, n_boxes_used, rng):
     features -- the side distinction is still captured by the synapse-position
     centroid distance used for pairing.
     """
-    from experiments.pcfg_synapse_partitions.skeleton_tokens import (
+    from experiments.pcfg.skeleton_tokens import (
         extract_skeleton_partitions,
         build_skeleton_merge_pairs,
         skeleton_features,
     )
     from neuronauts.fetch import fetch_root_skeletons
-    from experiments.pcfg_synapse_partitions.pcfg_partitions import (
+    from experiments.pcfg.pcfg_partitions import (
         BIGRAM_DIM, FEAT_DIM,
     )
 
@@ -719,7 +719,7 @@ def _run_skeleton_grammar(args, all_partitions, all_box_ids, n_boxes_used, rng):
     # We need the original synapse arrays; reconstruct them from all_partitions.
     # Each HalfPartition already holds the synapse pts and remap info we need.
     # Build SkeletonPartitions directly from HalfPartition + skeleton lookup.
-    from experiments.pcfg_synapse_partitions.skeleton_tokens import SkeletonPartition
+    from experiments.pcfg.skeleton_tokens import SkeletonPartition
     sk_partitions = []
     for p in all_partitions:
         sk = skeletons.get(p.root_id)
@@ -882,8 +882,8 @@ def _run_skeleton_grammar(args, all_partitions, all_box_ids, n_boxes_used, rng):
 
 def _run_learned_grammar(args, all_partitions, all_box_ids, n_boxes_used, rng):
     """Fetch skeletons and train SkeletonSynapseNet on inter-synapse skeleton paths."""
-    from experiments.pcfg_synapse_partitions.skeleton_tokens import SkeletonPartition
-    from experiments.pcfg_synapse_partitions.learned_grammar import train_and_eval
+    from experiments.pcfg.skeleton_tokens import SkeletonPartition
+    from experiments.pcfg.learned_grammar import train_and_eval
     from neuronauts.fetch import fetch_root_skeletons
 
     from concurrent.futures import ThreadPoolExecutor, as_completed

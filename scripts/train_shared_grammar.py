@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Train one shared grammar on local merge and global atomicity supervision."""
+"""Train one shared grammar on local merge and global atomicity supervision.
+
+Thread-specific helper for the **grammar** experiment (see
+``experiments/README.md``). The primary CLI is ``scripts/train.py``; this script
+is kept for the standalone shared-grammar training flow it implements.
+"""
 
 from __future__ import annotations
 

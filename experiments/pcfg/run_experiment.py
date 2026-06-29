@@ -6,7 +6,7 @@ no agent simulation required.
 
 Usage
 -----
-    python experiments/pcfg_synapse_partitions/run_experiment.py \\
+    python experiments/pcfg/run_experiment.py \\
       --cache-dir data/boxes_v117 \\
       --root-remap-tsv data/boxes_v117/root_remap_v117_to_v1412.tsv \\
       [--side both] [--min-synapses 4] [--cv-folds 5] [--seed 42] [--verbose]
@@ -25,7 +25,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from neuronauts.dataset_builder import BoxCache
-from experiments.pcfg_synapse_partitions.pcfg_partitions import (
+from experiments.pcfg.pcfg_partitions import (
     BIGRAM_DIM,
     FEAT_DIM,
     build_merge_pairs,
