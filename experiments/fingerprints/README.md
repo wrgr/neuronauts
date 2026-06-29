@@ -187,34 +187,46 @@ path that got here (including two wrong turns worth remembering).
   v117 fragments (proximity + direction cone); true partner = the one sharing
   the query's current root. Rank it by cut-face hash similarity.
 
-**Result** (`v117_reconstructed_metrics.json`, N = 78 real error sites, mean 38
-candidates/site, **chance top-1 = 0.085**):
+**Result** (`v117_reconstructed_metrics.json`, **N = 156** real error sites, mean
+45 candidates/site, **chance top-1 = 0.072**):
 
 | method | top-1 | MRR |
 |---|---|---|
-| raw patch | 0.205 | 0.333 |
-| planar-trained encoder | 0.423 | 0.544 |
-| **real-trained encoder** | **0.474** | **0.572** |
+| **geometry alone** (distance to query endpoint) | **0.673** | **0.723** |
+| raw patch | 0.186 | 0.290 |
+| planar-trained hash | 0.436 | 0.543 |
+| real-trained hash | 0.436 | 0.547 |
+| fused (geom + real, equal weight) | 0.583 | 0.679 |
 
-**Read-out:**
+**Read-out (this is the honest, important version):**
 
-- At genuine v117 errors the learned cut-face hash picks the correct merge
-  partner **top-1 ~47%** of the time vs **8.5% chance** (~5.6×), ranking the
-  truth ~2nd on average (MRR 0.57). The fingerprint does real work.
-- **Learned ≫ raw** (top-1 0.47 vs 0.21): the cross-section *pattern* matters,
-  and it must be *learned*, not hand-summarised.
-- **Computing the hash on the right data is the biggest lever — proven twice.**
-  The identical method scored ~0 on the intermediate flat seg (which had already
-  merged most sites) and **0.47 on the reconstructed v117 seg**. And training the
-  encoder on *real* error cross-sections edges out the planar-cut encoder
-  (0.474 vs 0.423) — reversing the transfer failure seen on artificial cuts.
+- **Geometry is the strong baseline.** The true partner is usually the *nearest*
+  fragment to the dangling endpoint, so distance alone gets it **67% top-1**.
+  Any claim for the hash has to be measured *against this*, not against chance.
+- **The hash alone is moderate** (0.44 top-1, ~6× chance) and **learned ≫ raw**
+  (0.44 vs 0.19) — the cross-section *pattern* carries identity and must be
+  learned, not hand-summarised.
+- **Naive equal-weight fusion HURTS** (0.58 < 0.67): adding the noisier hash
+  drags down the many cases geometry already nails. Blunt fusion is the wrong
+  way to combine them.
+- **But the hash is genuinely complementary on the hard subset:** of the 51
+  sites where **geometry alone is wrong**, the hash **recovers 25.5% top-1**.
+  That is the real value — a second opinion on the ~1/3 of merges geometry gets
+  wrong (overlapping / parallel processes where proximity is ambiguous), which
+  is exactly the FISSEQ-style case. Realising it needs a *gated/learned* fusion
+  (trust geometry when confident; consult the hash when geometry is ambiguous),
+  not an equal-weight sum.
+- **Right data is still the biggest lever** (proven twice): the identical method
+  scored ~0 on the intermediate flat seg (most sites already merged) vs these
+  numbers on the reconstructed v117 seg. (At a smaller N=78 the real-trained
+  encoder edged out planar; at N=156 they tie — that gap was small-N noise.)
 
 **Location vs correction (two different models).** This experiment measures
 *correction*: given a real interface and a candidate panel, pick the partner.
 The other half — *location* (which edges are errors / candidates at all) — is a
 separate model. In deployment the location model is the candidate generator:
 flood it (a 2 µm proximity ball ≈ 256 distractors) and correction drowns; feed
-it a clean panel (proximity + cone ≈ 38) and correction works. Evaluate the two
+it a clean panel (proximity + cone ≈ 45) and correction works. Evaluate the two
 separately — location by recall, correction by top-1 given good candidates —
 rather than conflating them.
 
