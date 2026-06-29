@@ -1,5 +1,9 @@
 # Soma Graph Experiment
 
+> Experiment thread — see the index in [`../README.md`](../README.md). This is
+> the connectome (neuron × neuron) stage; its node features are the slot
+> [fingerprints](../fingerprints/README.md) (tree-DNA) is meant to fill.
+
 > **Status: experimental.** Distinct from the main box-level pipeline. Kept in
 > `experiments/` to explore truly global connectome inference over the
 > neuron × neuron graph.
