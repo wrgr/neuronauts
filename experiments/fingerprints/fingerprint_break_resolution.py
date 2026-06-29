@@ -178,6 +178,11 @@ def face_hash(
             mu, sd = float(vals.mean()), float(vals.std()) + 1e-3
             sub_em[:, :, k] = (sub_em[:, :, k] - mu) / sd
 
+    # When per_section_norm=True, sub_em is z-scored (mean≈0, std≈1 in tissue);
+    # dark_thresh is a raw-EM value and would mark every voxel as dark.
+    # Use 0.0 (below tissue mean) as the normalized-space equivalent.
+    _dark_thresh = 0.0 if per_section_norm else dark_thresh
+
     ids, counts = np.unique(sub_seg, return_counts=True)
     faces: dict[int, Face] = {}
     for sid, cnt in zip(ids.tolist(), counts.tolist()):
@@ -188,7 +193,7 @@ def face_hash(
         grad_vals = sub_grad[mask]
 
         p10, p50, p90 = np.percentile(em_vals, [10, 50, 90])
-        dark_frac = float((em_vals < dark_thresh).mean())
+        dark_frac = float((em_vals < _dark_thresh).mean())
 
         # Per-section internal blob count (organelle cross-sections), averaged.
         blob_counts = []
@@ -197,7 +202,7 @@ def face_hash(
             m2 = mask[:, :, k]
             if not m2.any():
                 continue
-            dark2 = m2 & (sub_em[:, :, k] < dark_thresh)
+            dark2 = m2 & (sub_em[:, :, k] < _dark_thresh)
             blob_counts.append(_label_2d(dark2))
             xs, ys = np.nonzero(m2)
             xs_all.append(xs)

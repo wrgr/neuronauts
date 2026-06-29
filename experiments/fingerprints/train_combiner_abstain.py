@@ -127,7 +127,7 @@ def main():
     ap.add_argument("--mip", type=int, default=1)
     ap.add_argument("--radius-nm", type=float, default=2000.0)
     ap.add_argument("--max-sites", type=int, default=10)
-    ap.add_argument("--bio", default="experiments/fingerprints/cutface_bio_synth_ft.pt")
+    ap.add_argument("--bio", default="experiments/fingerprints/cutface_bio_synth.pt")
     ap.add_argument("--art", default="experiments/fingerprints/cutface_art_synth.pt")
     ap.add_argument("--out", default="experiments/fingerprints/combiner_abstain_metrics.json")
     args = ap.parse_args()

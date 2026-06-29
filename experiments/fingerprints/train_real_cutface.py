@@ -383,7 +383,7 @@ def main():
         json.dump({"radius_nm": args.radius_nm, "direction_cone_deg": args.direction_cone_deg,
                    "n_train_pairs": int(len(anchors)),
                    "train_neurons": len(train_roots), "test_neurons": len(test_roots),
-                   "final_loss": losses[-1] if losses else None, "summary": summ}, f, indent=2)
+                   "final_loss": losses["train_loss"][-1] if losses.get("train_loss") else None, "summary": summ}, f, indent=2)
     print(f"[out] wrote {args.metrics}")
 
 
