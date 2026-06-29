@@ -30,8 +30,37 @@ Sweeps thresholds, clusters at each, returns the F1-maximising cut plus the full
 - Larger d_model (128-256) for complex morphologies
 - More GNN layers (4-6)
 
-### 3. Endpoint-adjacent edges
+### 3. Endpoint-adjacent edges ← **validated by tree-dna Phase 2.1**
 Add a third edge type: skeleton endpoints (leaf vertices) that are spatially near each other across different segments. These are the principled cross-segment bridge sites — where a real neuron was split by the segmentation. Currently the model only has same-seg edges and spatial k-NN; endpoint edges would give it a direct signal for segment merges.
+
+**Real-data result** (`claude/tree-dna-phase-1-G1DNn`, `real_skeleton_partition.py`, 20 v1412 neurons × 3 skeleton pieces):
+
+| Config | ARI trained | Clusters recovered (true=20) |
+|---|---|---|
+| No endpoint edges, threshold=0.87 | 0.088 | 5/20 |
+| **Endpoint edges 10 µm, threshold=0.87** | **0.418** | **17/20** |
+
+Endpoint edges at 10 µm radius alone produced +0.330 ARI and recovered 17/20 clusters correctly. The mechanism: skeleton split creates piece endpoints within 0–1000 nm of each other; with `endpoint_radius_nm=10_000` all adjacent piece-pair endpoints are captured, giving the GNN direct cross-piece same-neuron evidence that spatial k-NN over synapse positions cannot provide (synapses from different pieces may be widely separated). **This is the single most important improvement.**
+
+---
+
+## Findings from related branches
+
+### DNA node features (tree-dna Phase 1)
+Branch `claude/tree-dna-phase-1-G1DNn` ran a real-data ablation on 30 real Minnie65 v1412 neurons:
+- **Spatial baseline** (uniform synthetic synapses): AUROC **0.493** (chance)
+- **DNA AUC random-init** (SkeletonGNN, no training): **1.000** — real skeleton morphology is sufficient for perfect neuron discrimination *even with random weights*. The geometry of different neurons is distinct enough to separate them without learned features.
+- **DNA AUC trained** (60 epochs): **1.000** (ceiling)
+
+This validates the DNA node feature: real skeletons carry sufficient morphological identity for co-assignment, independent of the edge structure. The challenge is that v117 atoms are fragments (pieces of neurons), not whole skeletons — they have partial morphology. The endpoint-edge result above is the bridge.
+
+### GAEC correlation clustering (tree-stitch Phase 2.2)
+Branch `claude/abstract-tree-stitch` implements `EdgePartitionGNN` + **Greedy Additive Edge Contraction** (GAEC) correlation clustering. Unlike the current greedy-pivot algorithm (which is threshold union-find), GAEC:
+- Contracts on *net* evidence between clusters (not per-edge)
+- Can cut a high-similarity edge when the rest of the graph disagrees — handles the **frankenmerge** case where one spurious high-similarity cross-neuron edge would irreversibly fuse two cells under union-find
+- Exposes `bias` knob for precision/recall trade-off without re-training
+
+Synthetic ablation (20 objects × 3 pieces, frankenmerge_frac=0.25) showed GAEC outperforms threshold union-find at equal input. This is the target inference algorithm when this branch matures.
 
 ---
 

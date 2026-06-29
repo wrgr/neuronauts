@@ -115,7 +115,7 @@ See [NEXT_STEPS.md](../../NEXT_STEPS.md) for the full roadmap.
 **Immediate improvements:**
 1. Threshold tuning / learned threshold — the model learns good scores but the fixed 0.5 threshold is too conservative; a calibration pass on held-out data would improve recall without hurting precision
 2. More GNN layers / larger d_model — the current 3-layer 64-dim model has limited receptive field; neurons that span hundreds of microns need longer-range message passing
-3. Endpoint-adjacent edges — add a third edge type connecting skeleton endpoints that are spatially near each other across different segments; this is the principled cross-segment bridge signal
+3. **Endpoint-adjacent edges** — add a third edge type connecting skeleton endpoints that are spatially near each other across different segments; the principled cross-segment bridge signal. *Validated on real data* (`claude/tree-dna-phase-1-G1DNn`): endpoint edges (10 µm) boosted ARI from 0.088 → 0.418 and recovered 17/20 neurons correctly vs 5/20 without them.
 
 **Medium term:**
 4. Prototype-based assignment (EM-style) — instead of only pairwise similarity, maintain a running embedding per growing neuron hypothesis and assign synapses to prototypes; handles "see through the noise" cases where local pairwise evidence is weak but global neuron shape is recognisable
