@@ -140,6 +140,20 @@ def parse_args() -> argparse.Namespace:
         help="Run learned skeleton-synapse grammar (SkeletonSynapseNet; requires torch)",
     )
     p.add_argument(
+        "--lightweight",
+        action="store_true",
+        help="Fetch synapses via the CAVE-recommended path (dense seg-cutout root "
+             "enumeration + root-filtered synapse lookup) instead of an unfiltered "
+             "spatial scan. Slower per box but completes behind restrictive egress "
+             "proxies where the spatial query times out.",
+    )
+    p.add_argument(
+        "--seg-mip",
+        type=int,
+        default=5,
+        help="MIP level for the --lightweight segmentation cutout (higher = coarser/faster)",
+    )
+    p.add_argument(
         "--verbose",
         action="store_true",
         help="Print per-box stats",
@@ -179,20 +193,42 @@ def _fetch_one_box(
     center_nm: tuple[int, ...],
     side_um: float,
     token: str | None,
+    *,
+    lightweight: bool = False,
+    seg_mip: int = 5,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict[int, int]] | None:
     """Fetch synapses + v117->v1718 remap for one box.
 
     Returns (pre_pt_nm, post_pt_nm, pre_root_id, post_root_id, remap)
     or None when the box yields no usable data.
+
+    When ``lightweight`` is set, synapses are fetched via the CAVE-recommended
+    path -- enumerate every root in the box from an agglomerated segmentation
+    cutout, then look up those roots' synapses with a root-filtered query --
+    instead of an unfiltered spatial scan of the 337M-row synapse table.  This
+    completes behind restrictive egress proxies where the spatial query stalls.
     """
-    from neuronauts.fetch import fetch_synapses, make_cube_bbox_nm
+    from neuronauts.fetch import (
+        fetch_synapses, fetch_synapses_for_roots, seg_root_ids_in_bbox,
+        make_cube_bbox_nm,
+    )
     from neuronauts.cave_root_mapping import map_roots_between_versions
 
     bbox_nm = make_cube_bbox_nm(tuple(center_nm), side_um=side_um)
-    log.info("Fetching synapses in %.0f um box around %s ...", side_um, center_nm)
 
     try:
-        syn = fetch_synapses(bbox_nm, version=117, token=token)
+        if lightweight:
+            log.info("Enumerating roots in %.0f um box around %s (seg mip %d) ...",
+                     side_um, center_nm, seg_mip)
+            roots = seg_root_ids_in_bbox(bbox_nm, version=117, token=token, mip=seg_mip)
+            log.info("  %d roots in box; fetching their synapses (root-filtered) ...",
+                     len(roots))
+            syn = fetch_synapses_for_roots(
+                roots, bbox_nm=bbox_nm, version=117, token=token,
+            )
+        else:
+            log.info("Fetching synapses in %.0f um box around %s ...", side_um, center_nm)
+            syn = fetch_synapses(bbox_nm, version=117, token=token)
     except Exception as exc:
         log.warning("Synapse fetch failed for center %s: %s", center_nm, exc)
         return None
@@ -495,7 +531,10 @@ def main() -> None:
     n_boxes_used = 0
 
     for box_idx, center_nm in enumerate(centers):
-        result = _fetch_one_box(center_nm, args.side_um, args.token)
+        result = _fetch_one_box(
+            center_nm, args.side_um, args.token,
+            lightweight=args.lightweight, seg_mip=args.seg_mip,
+        )
         if result is None:
             continue
         pre_pt_nm, post_pt_nm, pre_root_id, post_root_id, remap = result

@@ -494,7 +494,8 @@ class BuildDatasetTest(unittest.TestCase):
                 cache = BoxCache(d)
                 specs = select_random_boxes(n=3, seed=0)
                 records = build_dataset(
-                    specs, cache, min_synapses=10, max_synapses=30, verbose=False
+                    specs, cache, min_synapses=10, max_synapses=30,
+                    min_root_synapses=0, verbose=False,
                 )
                 self.assertEqual(len(records), 3)
         finally:
@@ -514,7 +515,8 @@ class BuildDatasetTest(unittest.TestCase):
                 cache = BoxCache(d)
                 specs = select_random_boxes(n=3, seed=0)
                 records = build_dataset(
-                    specs, cache, min_synapses=10, max_synapses=50, verbose=False
+                    specs, cache, min_synapses=10, max_synapses=50,
+                    min_root_synapses=0, verbose=False,
                 )
                 self.assertEqual(len(records), 0)
         finally:
@@ -534,7 +536,8 @@ class BuildDatasetTest(unittest.TestCase):
                 cache = BoxCache(d)
                 specs = select_random_boxes(n=3, seed=0)
                 records = build_dataset(
-                    specs, cache, min_synapses=10, max_synapses=100, verbose=False
+                    specs, cache, min_synapses=10, max_synapses=100,
+                    min_root_synapses=0, verbose=False,
                 )
                 self.assertEqual(len(records), 0)
         finally:
@@ -564,11 +567,17 @@ class BuildDatasetTest(unittest.TestCase):
                 specs = select_random_boxes(n=2, seed=0)
 
                 # First call: fetches both.
-                build_dataset(specs, cache, min_synapses=10, max_synapses=30, verbose=False)
+                build_dataset(
+                    specs, cache, min_synapses=10, max_synapses=30,
+                    min_root_synapses=0, verbose=False,
+                )
                 count_after_first = call_count[0]
 
                 # Second call with same specs: should not re-fetch.
-                build_dataset(specs, cache, min_synapses=10, max_synapses=30, verbose=False)
+                build_dataset(
+                    specs, cache, min_synapses=10, max_synapses=30,
+                    min_root_synapses=0, verbose=False,
+                )
                 self.assertEqual(call_count[0], count_after_first,
                                  "build_dataset re-fetched already-cached boxes")
         finally:

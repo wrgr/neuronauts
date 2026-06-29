@@ -425,6 +425,7 @@ def cmd_build_dataset(args: argparse.Namespace) -> int:
         min_synapses=args.min_synapses,
         max_synapses=args.max_synapses,
         min_positive_pairs=getattr(args, "min_positive_pairs", 0),
+        min_root_synapses=getattr(args, "min_root_synapses", 5),
         no_em=getattr(args, "no_em", False),
         token=args.cave_token,
         cave_version=getattr(args, "cave_version", None),
@@ -1029,18 +1030,28 @@ def _validate_box(record, cache, grammar_model, gat_model, args, device):
                     gat_model=gat_model,
                     edge_threshold=args.gat_edge_threshold,
                 )
+        min_root_syn = getattr(args, "min_root_synapses", 0)
         sampled = evaluate_sampled(
             graph,
             label_synapses.pre_root_id,
             label_synapses.post_root_id,
             max_pairs=args.val_sampled_max_pairs,
             seed=args.seed,
+            min_root_synapses=min_root_syn,
         )
         diag["sampled_f1"] = sampled.f1
         diag["sampled_precision"] = sampled.precision
         diag["sampled_recall"] = sampled.recall
 
-        return evaluate(graph, label_synapses.pre_root_id, label_synapses.post_root_id), diag
+        return (
+            evaluate(
+                graph,
+                label_synapses.pre_root_id,
+                label_synapses.post_root_id,
+                min_root_synapses=min_root_syn,
+            ),
+            diag,
+        )
 
     except Exception as exc:
         print(f"  [W] validation failed for {record.box_hash}: {exc}")
@@ -1311,7 +1322,12 @@ def cmd_train_cell_gnn(args: argparse.Namespace) -> int:
                 threshold=cfg.partition_threshold,
             )
             cg = connectivity_graph_from_cell_labels(pre_labels, post_labels, synapses)
-            metrics = lg_evaluate(cg, synapses.pre_root_id, synapses.post_root_id)
+            metrics = lg_evaluate(
+                cg,
+                synapses.pre_root_id,
+                synapses.post_root_id,
+                min_root_synapses=getattr(args, "min_root_synapses", 0),
+            )
             f1_scores.append(metrics.f1)
             print(f"  {rec.box_hash[:8]}: {metrics}")
 
@@ -1614,7 +1630,12 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
                     threshold=args.partition_threshold,
                 )
             cg = connectivity_graph_from_cell_labels(pre_labels, post_labels, synapses)
-        m = lg_evaluate(cg, synapses.pre_root_id, synapses.post_root_id)
+        m = lg_evaluate(
+            cg,
+            synapses.pre_root_id,
+            synapses.post_root_id,
+            min_root_synapses=getattr(args, "min_root_synapses", 0),
+        )
         gnn_f1s.append(m.f1)
         gnn_precs.append(m.precision)
         gnn_recs.append(m.recall)
@@ -1658,7 +1679,12 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
                         learned_merge_score_fn=score_fn,
                         heuristic_config=HeuristicConfig.learned(),
                     )
-                    baseline_m = lg_evaluate(graph, synapses.pre_root_id, synapses.post_root_id)
+                    baseline_m = lg_evaluate(
+                        graph,
+                        synapses.pre_root_id,
+                        synapses.post_root_id,
+                        min_root_synapses=getattr(args, "min_root_synapses", 0),
+                    )
             except Exception as exc:
                 print(f"  [W] baseline failed for {rec.box_hash[:8]}: {exc}")
 
@@ -1837,7 +1863,12 @@ def cmd_sweep(args: argparse.Namespace) -> int:
             pre_labels = infer_cells(model, pre_graph, threshold=part_t)
             post_labels = infer_cells(model, post_graph, threshold=part_t)
             cg = connectivity_graph_from_cell_labels(pre_labels, post_labels, synapses)
-            m = lg_evaluate(cg, synapses.pre_root_id, synapses.post_root_id)
+            m = lg_evaluate(
+                cg,
+                synapses.pre_root_id,
+                synapses.post_root_id,
+                min_root_synapses=getattr(args, "min_root_synapses", 0),
+            )
             val_f1s.append(m.f1)
 
         mean_f1 = float(np.mean(val_f1s)) if val_f1s else 0.0
@@ -2039,6 +2070,15 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--max-synapses", type=int, default=20000,
         help="Maximum synapse pairs per box (default 20000; was 200 for 6µm boxes).",
+    )
+    parser.add_argument(
+        "--min-root-synapses", type=int, default=5,
+        help=(
+            "Drop synapses whose pre- or post-root has fewer than this many "
+            "occurrences in the box.  Removes 0-degree roots and small "
+            "reconstruction fragments that contribute no real connectome edges. "
+            "Pass 0 or 1 to disable.  Default 5."
+        ),
     )
     parser.add_argument("--seed", type=int, default=42)
 

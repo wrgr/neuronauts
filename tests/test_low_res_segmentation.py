@@ -81,8 +81,9 @@ class TestDownsampling:
             240 // 3,
         )
         assert downsampled.shape == expected_shape
-        # Mean of bright region should still be bright
-        assert downsampled[3, 3, 16] > 100
+        # Block [4,4,17] is fully inside the bright region [50:100,50:100,50:100]
+        # (x: 64-79, y: 64-79, z: 51-53 — all 200) so mean must be bright
+        assert downsampled[4, 4, 17] > 150
 
     def test_downsample_max(self, pipeline, sample_volume):
         """Test max pooling downsampling."""
@@ -181,8 +182,8 @@ class TestCoordinateTransformation:
         low_res = pipeline.to_low_res(original)
         restored = pipeline.to_full_res(low_res)
 
-        # Should be close (within downsampling factor)
-        assert np.allclose(restored, original, atol=8)
+        # floor-division round-trip: max error is max_factor - 1 = 15 for xy (factor=16)
+        assert np.allclose(restored, original, atol=15)
 
     def test_to_low_res_list_input(self, pipeline):
         """Test that list input works."""
