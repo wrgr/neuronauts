@@ -12,7 +12,10 @@ until [ -f data/sidetable_big.npz ]; do
   OMP_NUM_THREADS=4 python -u -m experiments.pcfg_synapse_partitions.fetch_bigdata \
       --n-boxes 27 --side-um 40 --out data/sidetable_big.npz || true
   [ -f data/sidetable_big.npz ] && break
-  echo "=== [run_bigdata] exited without sidetable; resuming in 5s ==="
-  sleep 5
+  # Back off on repeated fast failures (e.g. CAVE 503) so we don't hammer the service;
+  # cap at 60s. Cached boxes/svmap persist, so resuming loses nothing.
+  back=$(( n < 12 ? 5*n : 60 ))
+  echo "=== [run_bigdata] exited without sidetable; resuming in ${back}s (attempt $n) ==="
+  sleep "$back"
 done
 echo "=== [run_bigdata] DONE: data/sidetable_big.npz present ==="

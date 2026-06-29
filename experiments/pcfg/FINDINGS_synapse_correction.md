@@ -457,5 +457,21 @@ proximity -- the relational model -- plus far more data. Honest negative for the
 
 **(a) learned seam cut wired into the recursion** (`recursive_corrector.py --cut learned`):
 seam GNN per-edge benefit (keyed by undirected global edge to bridge the two tree rootings),
-run autonomously (abstaining) and as human-assist (top-k, oracle-verified), reported in
-connectivity terms. [numbers below once the grouped-CV run completes]
+run autonomously (abstaining, tau=0.1) and as human-assist (top-5, oracle-verified), reported
+in **connectivity** terms. Grouped-by-cell 4-fold CV, 150 merge objects / 147 cells:
+
+| mode | splits | pre side acc | post side acc | pooled net (pair) | connectivity (both sides) |
+|---|---|---|---|---|---|
+| **autonomous (abstain)** | 621 | 0.880 | 0.979 | **-73.4%** | 0.894 |
+| **human-assist (top-5)** | 166 | 0.882 | 0.980 | **+52.1%** | 0.898 |
+
+The deployable-autonomous answer at column scale is **net-negative** (-73% of do-nothing on the
+pair guardrail), even though pooled side accuracy reads a healthy 0.95 -- because do-nothing
+already places most sides right, so the metric that matters is the pair guardrail, and the
+autonomous learner **over-cuts** (621 splits): the damage lands hardest on the post side
+(dendrite, -197%, 17,246 sides) where a wrong cut shatters the most pairs. This is the
+data-starvation thesis made concrete -- the seam GNN can't yet pick the right edge unaided on
+150 objects. **Human-assist is strongly net-positive: +52% pooled pair reduction with only 166
+cuts (3.7x fewer), 0.898 connectivity** -- a proofreader picking from the model's top-5 is the
+deployable mode today. Closing the autonomous gap is exactly what Track B (bigger data) tests;
+the fetch is now checkpointed per-box so it survives proxy/CAVE outages and resumes.
