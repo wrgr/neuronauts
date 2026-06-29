@@ -442,3 +442,20 @@ The plan's pipeline, validated on cached data (150 v117 over-merged skeletons, g
   edge). The deployable cut is the seam GNN (net-0 autonomous / +14-26% human-assist); wiring it
   into the recursion + the bigger data (Track B) is what tests autonomous net-positive. Merge/join
   (false-split) direction via beam_search is the next increment.
+
+## (a) learned cut into recursion + (b) join direction
+
+**(b) Merge/JOIN of false-splits -- synapse adjacency is the wrong candidate generator.**
+`join_corrector.py`: candidate joins = spatially-adjacent cross-v117-root synapse pairs. Result:
+606,061 candidate root-pairs, **0.0% truly same cell** -- because a synapse IS a pre-cell
+touching a post-cell (adjacent, different cells), synaptic partners drown the ~21 real
+same-cell fragment pairs. The break in a false-split is in the CABLE, between synapses (median
+cross-fragment synapse gap 6,870 nm; only 29% within 4 um). And the 7-box column has only ~21
+false-splits with substantial fragments. So the join direction needs SKELETON continuity
+between fragment tips (do the cables continue: collinear, caliber-matched), not synapse
+proximity -- the relational model -- plus far more data. Honest negative for the synapse-based join.
+
+**(a) learned seam cut wired into the recursion** (`recursive_corrector.py --cut learned`):
+seam GNN per-edge benefit (keyed by undirected global edge to bridge the two tree rootings),
+run autonomously (abstaining) and as human-assist (top-k, oracle-verified), reported in
+connectivity terms. [numbers below once the grouped-CV run completes]

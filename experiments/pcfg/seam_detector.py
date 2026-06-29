@@ -85,7 +85,8 @@ def build_objects(sidetable, skel_dir, min_syn, min_side):
             continue
         edis_a = np.array(edis, np.float64)
         benefit = np.clip((dn - edis_a) / dn, -3.0, 1.0).astype(np.float32)   # frac error reduction
-        objs.append(dict(feat=feat, edges=np.array(edges), edis=np.array(edis, np.int64),
+        objs.append(dict(rv=int(rv), order=list(order), parent=dict(parent),
+                         feat=feat, edges=np.array(edges), edis=np.array(edis, np.int64),
                          rad=np.array(rad), benefit=benefit, dn=int(dn),
                          group=comp.get(rv, -1)))
     return objs
