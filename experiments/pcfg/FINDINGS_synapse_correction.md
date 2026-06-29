@@ -421,3 +421,24 @@ proofreader applies the good ones (skips harmful). 150 objects, oracle ceiling +
   from bad; predicted-benefit abstention tops out at ~0). The lift requires human verification.
 - (oracle-edge-in-top-k looks low at 3-14% because many near-seam edges tie on cut quality;
   the meaningful number is the verified best-of-k net.)
+
+## Recursive corrector built (Phases 1-4): connectivity metric + recursion + RF stop
+
+The plan's pipeline, validated on cached data (150 v117 over-merged skeletons, grouped):
+
+| operator | pooled pair net | pre-side acc | post-side acc | connectivity | splits |
+|---|---|---|---|---|---|
+| single oracle cut | +77.4% | 0.917 | 0.990 | 0.944 | 150 |
+| **recursive, pure stop (ceiling)** | **+90.7%** | 0.972 | 0.997 | 0.979 | 216 |
+| **recursive, RF detector stop** | **+89.0%** | 0.943 | 0.995 | 0.964 | 171 |
+
+- **Pre/post metric (Phase 1)** reproduces cut_report's +78% exactly and reveals what the old
+  pooled metric hid: pre-side (axon) accuracy << post-side (dendrite) -- axons are the hard merges.
+- **Recursion (Phase 4)** lifts the oracle ceiling +77% -> +90.7% by peeling >2-cell merges
+  (216 cuts over 150 objects); pre-side acc 0.917 -> 0.972.
+- **Supervised RF atomicity stop (Phase 3)** reproduces the 0.88 detector and, as the recursion
+  STOP test (no labels at the stop), reaches +89.0% -- within 1.7% of the label-purity ceiling.
+- **Remaining autonomous gap = the CUT.** All the above use the ORACLE edge (labels pick which
+  edge). The deployable cut is the seam GNN (net-0 autonomous / +14-26% human-assist); wiring it
+  into the recursion + the bigger data (Track B) is what tests autonomous net-positive. Merge/join
+  (false-split) direction via beam_search is the next increment.
