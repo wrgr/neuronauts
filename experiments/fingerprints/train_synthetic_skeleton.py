@@ -49,39 +49,52 @@ def _fragment_z_extents(seg, min_vox_per_section=30):
 
 
 def mine_box(vol, *, slab=2, gap_sections=2, sigma=2.0, pairs_per_fragment=2,
-             n_distractors=8, min_vox_per_section=30, seed=0):
-    """Mine synthetic same-fragment band pairs (+hard negatives) from one box."""
+             n_distractors=8, min_vox_per_section=30, max_frags=25, seed=0):
+    """Mine synthetic same-fragment band pairs (+hard negatives) from one box.
+
+    O(F) in fragments: each fragment's band face is computed once (at its mid z)
+    for use as a negative; positives add two band faces per sampled pair.
+    """
     rng = np.random.default_rng(seed)
     ext = _fragment_z_extents(vol.seg, min_vox_per_section)
     big = [f for f, zs in ext.items() if len(zs) >= 2 * slab + gap_sections + 1]
     if len(big) < 4:
         return []
-    samples = []
+    if len(big) > max_frags:
+        big = [int(x) for x in rng.choice(big, max_frags, replace=False)]
+
+    # precompute one band face per fragment (mid z) -> reusable hard negatives
+    face_at = {}
+    nz = vol.em.shape[2]
     for f in big:
+        zs = ext[f]
+        zc = min(zs[len(zs) // 2], nz - slab)
+        bf = _band_face(vol.em, vol.seg, zc, zc + slab, f, sigma)
+        if bf is not None:
+            face_at[f] = bf
+    valid = [f for f in big if f in face_at]
+    if len(valid) < 4:
+        return []
+
+    samples = []
+    for f in valid:
         zs = ext[f]
         z0lo, z0hi = min(zs), max(zs)
         for _ in range(pairs_per_fragment):
-            za = rng.integers(z0lo, max(z0lo + 1, z0hi - slab - gap_sections - slab + 1))
+            hi = max(z0lo + 1, z0hi - slab - gap_sections - slab + 1)
+            za = int(rng.integers(z0lo, hi))
             zb = za + slab + gap_sections           # synthetic gap between the two faces
-            if zb + slab > vol.em.shape[2]:
+            if zb + slab > nz:
                 continue
             fa = _band_face(vol.em, vol.seg, za, za + slab, f, sigma)
             fb = _band_face(vol.em, vol.seg, zb, zb + slab, f, sigma)
             if fa is None or fb is None:
                 continue
-            # hard negatives: other fragments at the anchor slab
-            negs_lo, negs_hi = [], []
-            for g in big:
-                if g == f:
-                    continue
-                bf = _band_face(vol.em, vol.seg, za, za + slab, g, sigma)
-                if bf is not None:
-                    negs_lo.append(bf[0]); negs_hi.append(bf[1])
-            if len(negs_lo) < 2:
-                continue
-            idx = rng.choice(len(negs_lo), size=n_distractors, replace=len(negs_lo) < n_distractors)
-            samples.append((fa[0], fb[0], np.stack([negs_lo[i] for i in idx]),
-                            fa[1], fb[1], np.stack([negs_hi[i] for i in idx])))
+            negs = [g for g in valid if g != f]
+            idx = rng.choice(len(negs), size=n_distractors, replace=len(negs) < n_distractors)
+            nl = np.stack([face_at[negs[i]][0] for i in idx])
+            nh = np.stack([face_at[negs[i]][1] for i in idx])
+            samples.append((fa[0], fb[0], nl, fa[1], fb[1], nh))
     return samples
 
 
@@ -115,6 +128,49 @@ def mine_synthetic(cl, ts, roots, *, mip=0, radius_nm=2000.0, max_sites=6, slab=
             "hi_a": st(hi_a), "hi_p": st(hi_p), "hi_d": st(hi_d)}
 
 
+def mine_from_cache(cache_dir, exclude_keys, *, mip=1, target_pairs=3000, slab=2,
+                    gap_sections=2, sigma=2.0, verbose=True):
+    """Mine synthetic pairs directly from cached v117 box npz files -- no CAVE.
+
+    ``exclude_keys`` are box keys (from test-neuron sites) to skip, so training
+    boxes are disjoint from the evaluation boxes.
+    """
+    import glob
+    from .fingerprint_break_resolution import Volume
+    want_res = 8 if mip == 0 else 16
+    files = sorted(glob.glob(os.path.join(cache_dir, "v117_*.npz")))
+    lo_a, lo_p, lo_d, hi_a, hi_p, hi_d = [], [], [], [], [], []
+    used = 0
+    for fp in files:
+        key = os.path.basename(fp)[len("v117_"):-len(".npz")]
+        if key in exclude_keys:
+            continue
+        try:
+            z = np.load(fp)
+            res = tuple(int(x) for x in z["res"])
+            if res[0] != want_res:
+                continue
+            vol = Volume(em=z["em"], seg=z["seg"], resolution_nm=res,
+                         origin_vox=tuple(int(x) for x in z["origin"]))
+        except Exception:
+            continue
+        got = mine_box(vol, slab=slab, gap_sections=gap_sections, sigma=sigma,
+                       seed=int(key, 16) % 2**31)
+        for (la, lp, ld, ha, hp, hd) in got:
+            lo_a.append(la); lo_p.append(lp); lo_d.append(ld)
+            hi_a.append(ha); hi_p.append(hp); hi_d.append(hd)
+        used += 1
+        if verbose and used % 25 == 0:
+            print(f"  mine: {used} boxes, {len(lo_a)} pairs", flush=True)
+        if len(lo_a) >= target_pairs:
+            break
+    if not lo_a:
+        raise RuntimeError("no synthetic pairs mined from cache")
+    st = lambda L: np.stack(L).astype(np.float32)
+    return {"lo_a": st(lo_a), "lo_p": st(lo_p), "lo_d": st(lo_d),
+            "hi_a": st(hi_a), "hi_p": st(hi_p), "hi_d": st(hi_d)}
+
+
 def main():
     import argparse
     import torch
@@ -139,22 +195,32 @@ def main():
     cl = v._client()
     ts = cl.chunkedgraph.get_oldest_timestamp()
     roots, _ = v.find_split_neurons(cl, n_scan=args.n_scan)
-    rng = np.random.default_rng(0)
-    roots = list(rng.permutation(roots))
-    train_roots = roots[:args.train_neurons]
-    test_roots = roots[args.train_neurons:args.train_neurons + args.test_neurons]
-    print(f"[split] {len(train_roots)} train / {len(test_roots)} test neurons (disjoint)")
+    test_roots = roots[:args.test_neurons]
+    print(f"[eval set] {len(test_roots)} test neurons", flush=True)
+
+    # box keys of the test neurons' sites -> excluded from cache mining (no leak)
+    box_cache = os.environ.get("V117_BOX_CACHE", "data/v117_box_cache")
+    exclude = set()
+    for rt in test_roots:
+        try:
+            for s in v.sites_from_l2_graph(cl, rt, ts, max_gap_nm=args.radius_nm, max_sites=args.max_sites):
+                pts = np.asarray([s.pos_main_nm, s.pos_frag_nm], float)
+                lo = pts.min(0) - args.radius_nm
+                hi = pts.max(0) + args.radius_nm
+                exclude.add(v._box_key((tuple(lo.tolist()), tuple(hi.tolist())), args.mip))
+        except Exception:
+            continue
+    print(f"[exclude] {len(exclude)} test box keys held out of mining", flush=True)
 
     if args.cache and os.path.exists(args.cache):
         z = np.load(args.cache); data = {k: z[k] for k in z.files}
-        print(f"[cache] loaded {len(data['lo_a'])} synthetic pairs")
+        print(f"[cache] loaded {len(data['lo_a'])} synthetic pairs", flush=True)
     else:
-        print(f"[mine] synthetic same-fragment pairs (target {args.target_pairs}) ...")
-        data = mine_synthetic(cl, ts, train_roots, mip=args.mip, radius_nm=args.radius_nm,
-                              max_sites=args.max_sites, sigma=args.sigma,
-                              target_pairs=args.target_pairs)
+        print(f"[mine] from {box_cache} (target {args.target_pairs}, no CAVE) ...", flush=True)
+        data = mine_from_cache(box_cache, exclude, mip=args.mip, target_pairs=args.target_pairs,
+                               sigma=args.sigma)
         if args.cache:
-            np.savez(args.cache, **data); print(f"[cache] wrote {len(data['lo_a'])} pairs")
+            np.savez(args.cache, **data); print(f"[cache] wrote {len(data['lo_a'])} pairs", flush=True)
 
     print(f"[pretrain] bio on {len(data['lo_a'])} synthetic pairs ...")
     bio, _ = finetune(data["lo_a"], data["lo_p"], data["lo_d"], init_ckpt=None, epochs=args.epochs)
