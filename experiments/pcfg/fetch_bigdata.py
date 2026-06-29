@@ -43,6 +43,13 @@ def fetch_box(client, c, side_um, out_path):
     df = client.materialize.query_table("synapses_pni_2",
                                         filter_spatial_dict={"ctr_pt_position": [lo.tolist(), hi.tolist()]},
                                         split_positions=False)
+    # CAVE caps query_table at LIMIT 500000 (seen in the server SQL). A 40um box returns ~36k, so
+    # we are well clear -- but flag it loudly rather than silently lose synapses if a dense box hits
+    # the cap. (Server-side 500/503 crashes are handled by the watcher, not here.)
+    if len(df) >= 500_000:
+        print(f"  !! WARNING box returned {len(df)} rows -- at/over CAVE's 500k cap; "
+              f"shrink --side-um and re-fetch this box.", flush=True)
+        return -1
     if len(df) == 0:
         np.savez(out_path, empty=True); return 0
     np.savez(out_path,
@@ -78,17 +85,28 @@ def main():
 
     # --- 1. per-box synapse fetch (checkpointed) ---
     centers = grid_centers(args.n_boxes, args.side_um)
+    missing = False
     for i, c in enumerate(centers):
         bp = bd / f"box_{i:02d}.npz"
         if bp.exists():
             continue
         n = fetch_box(client, c, args.side_um, bp)
+        if n < 0:                      # truncated at the cap -- left uncached on purpose
+            missing = True; continue
         print(f"[box {i+1}/{len(centers)}] {n} synapses cached", flush=True)
+    if missing:
+        print("[abort] some boxes exceeded the 200k cap; shrink --side-um. Not building SideTable.",
+              flush=True)
+        return
 
     # --- 2. concat boxes ---
     cols = collections.defaultdict(list)
     for i in range(len(centers)):
-        b = np.load(bd / f"box_{i:02d}.npz", allow_pickle=True)
+        bp = bd / f"box_{i:02d}.npz"
+        if not bp.exists():            # gap in the grid (e.g. still-failing box); resume later
+            print(f"[concat] box {i:02d} not cached yet; will resume on next pass", flush=True)
+            return
+        b = np.load(bp, allow_pickle=True)
         if "empty" in b:
             continue
         for k in ("syn_id", "pre_pt", "post_pt", "pre_sv", "post_sv", "pre_rv", "post_rv"):
