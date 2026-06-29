@@ -1,5 +1,10 @@
 # Neuronauts Model & Architecture Note
 
+> ⚠️ **Historical architecture note** — may reference deprecated v1 modules
+> (agent/membrane simulation). See [`../README.md`](../README.md) and
+> [`roadmap_global_assembly.md`](roadmap_global_assembly.md) for the current
+> architecture.
+
 > Captured from design discussion. Covers: agent/grammar/GAT pipeline, global vs box-scale, and the question of hierarchical assembly.
 
 ---

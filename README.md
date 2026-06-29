@@ -48,12 +48,16 @@ CAVE synapse table
 ## Prerequisites
 
 ```bash
-pip install -e ".[dev]"
+pip install -r requirements-dev.txt    # or: make setup  (dev + topology + cave extras)
 
-# CAVE token (for fetching data; not needed to train on existing cache)
+# CAVE token (for fetching data; not needed to train on an existing cache)
 mkdir -p ~/.cloudvolume/secrets
 echo '{"token": "YOUR_TOKEN"}' > ~/.cloudvolume/secrets/cave-secret.json
 ```
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md#dev-setup) for smaller installs and the
+caveclient note; [`docs/CAVE_AUTHENTICATION_SETUP.md`](docs/CAVE_AUTHENTICATION_SETUP.md)
+for token setup.
 
 ### Stage 0 — Check the box cache
 
@@ -175,13 +179,18 @@ pytest tests/test_cell_graph.py
 
 ## Saved checkpoints
 
+Curated, representative checkpoints are tracked in `models/` and catalogued, with
+metrics and provenance, in [`models/README.md`](models/README.md). Highlights:
+
 | File | Description |
 |------|-------------|
-| `models/path_encoder_v3_ep8.pt` | Best path encoder (acc=0.899) |
-| `models/path_encoder_v3.pt` | Final path encoder (acc=0.896) |
-| `models/grammar_30um_v1.pt` | Grammar, best val (ep10, **85.6% merge acc**, val_bce=0.321) |
-| `models/cell_gnn_30um_v1.pt` | CellGNN baseline (ep2) |
-| `models/cell_gnn_v3.pt` | CellGNN + path encoder (training) |
+| `models/grammar_cave_real_50.pt` | Grammar, real boxes, **87.2% val merge acc** |
+| `models/shared_grammar_raw_skel_gat50e.pt` | Shared grammar + GAT, `raw_delta3+skeleton` |
+| `models/cell_gnn_seg.pt` | CellGNN, best **test line-graph F1 0.272** @ t=0.99 |
+| `models/cell_gnn_real.pt` | CellGNN, first real-CAVE no-EM baseline |
+
+Path-encoder checkpoints (`path_encoder_v3*.pt`) are produced locally and not
+tracked; write new runs under `models/scratch/` (git-ignored).
 
 ## Key files
 
@@ -204,7 +213,16 @@ datasets, and evaluation helpers).
 
 Legacy experimental modules are still available via direct module imports
 (e.g. `from neuronauts import vectorized` is **not** supported; use
-`import neuronauts.vectorized` explicitly when needed).
+`import neuronauts.legacy.vectorized` explicitly when needed).
+
+## Research threads
+
+The work is organized as a series of experiments (research threads) feeding this
+core pipeline. See [`experiments/README.md`](experiments/README.md) for the index
+— fingerprints (tree-DNA), error-correction (proofreading supervision), PCFG,
+grammar variants, cell-assignment, root-neighborhood, soma-graph, minnie-column,
+and topology — each with its status, entry point, and checkpoints. The
+longer-range direction is [`docs/roadmap_global_assembly.md`](docs/roadmap_global_assembly.md).
 
 ## Architecture notes
 

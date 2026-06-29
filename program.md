@@ -1,5 +1,12 @@
 # Neuronauts v2: Scaffolded Global Grammar
 
+> ⚠️ **Historical — describes the v2 (EM voxels + agents + GAT) vision, not the
+> pipeline that runs today.** For what currently runs, see [`README.md`](README.md);
+> for the project's direction, see
+> [`docs/roadmap_global_assembly.md`](docs/roadmap_global_assembly.md). Retained
+> because the outer-loop research brief and the "shared learned representation"
+> thesis below still apply.
+
 ## Mission
 
 Build a unified system that goes from EM voxels to connectome using a shared
