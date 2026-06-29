@@ -39,21 +39,48 @@ def test_geometry_helpers_roundtrip():
     np.testing.assert_allclose(np.linalg.norm(v), 1.0, atol=1e-9)
 
 
-def test_evaluate_site_ranks_true_partner(monkeypatch):
-    vol = _synthetic_volume()
+def _split_volume(side=64, nz=24, seed=1):
+    """Query fragment (100) and its true continuation (101) share a texture/shape
+    -- they are 'one neuron split in two'; 102/103 are distractors."""
+    rng = np.random.default_rng(seed)
+    em = rng.integers(115, 140, size=(side, side, nz)).astype(np.uint8)
+    seg = np.zeros((side, side, nz), dtype=np.uint64)
+    r = 6
+    w = 2 * r + 1
+    ly, lx = np.meshgrid(np.arange(w), np.arange(w), indexing="ij")
+    disk = (lx - r) ** 2 + (ly - r) ** 2 <= r * r
+    shared_tmpl = rng.integers(40, 220, size=(w, w)).astype(np.int32)  # 100 & 101 share this
+    tmpls = {100: shared_tmpl, 101: shared_tmpl,
+             102: rng.integers(40, 220, size=(w, w)).astype(np.int32),
+             103: rng.integers(40, 220, size=(w, w)).astype(np.int32)}
+    centers = {100: (16, 16), 101: (40, 40), 102: (16, 46), 103: (46, 16)}
+    for sid, (cx, cy) in centers.items():
+        tmpl = tmpls[sid]
+        for z in range(nz):
+            noise = rng.integers(-3, 4, size=(w, w))
+            block_em = em[cx - r:cx + r + 1, cy - r:cy + r + 1, z]
+            block_seg = seg[cx - r:cx + r + 1, cy - r:cy + r + 1, z]
+            block_em[disk] = np.clip(tmpl + noise, 0, 255).astype(np.uint8)[disk]
+            block_seg[disk] = np.uint64(sid)
+    return Volume(em=em, seg=seg, resolution_nm=(16, 16, 40), origin_vox=(0, 0, 0))
+
+
+def test_evaluate_site_proximity_ranks_true_partner(monkeypatch):
+    vol = _split_volume()
     monkeypatch.setattr(mod, "_fetch_box", lambda *a, **k: vol)
 
-    # main and fragment points both on neurite 100 at different z -> true_id = 100.
+    # query on fragment 100, true continuation is the distinct id 101 (same texture).
     site = mod.ErrorSite(
         root=999,
         pos_main_nm=(16 * 16, 16 * 16, 6 * 40),
-        pos_frag_nm=(16 * 16, 16 * 16, 17 * 40),
-        gap_nm=440.0, frag_l2=5,
+        pos_frag_nm=(40 * 16, 40 * 16, 6 * 40),
+        gap_nm=540.0, frag_l2=5,
     )
     embed_fn = lambda patches: np.asarray(patches).reshape(len(patches), -1)
-    res = mod.evaluate_site(site, embed_fn, mip=1, slab=3, margin_nm=0.0)
+    res = mod.evaluate_site(site, embed_fn, mip=1, slab=3,
+                            candidate_mode="proximity", radius_nm=4000.0)
     assert res is not None
-    assert res.n_candidates >= 3
-    # distinct textures -> the true continuation should rank first
+    assert res.n_candidates >= 3          # 101 + distractors, query (100) excluded
+    # the shared-texture continuation should rank first
     assert res.top1_raw
     assert res.rank_learned == 0

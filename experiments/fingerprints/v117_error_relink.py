@@ -62,6 +62,7 @@ class ErrorSite:
     pos_frag_nm: tuple   # face B (merged-in fragment side)
     gap_nm: float
     frag_l2: int         # number of L2 nodes in the minor fragment
+    tangent_nm: tuple = (0.0, 0.0, 0.0)  # query fragment's local axis (for the direction cone)
 
 
 def find_split_neurons(cl, n_scan=120, seed=7, min_l2=20):
@@ -152,12 +153,27 @@ def sites_for_neuron(cl, root, ts, *, min_gap_nm=300.0, max_gap_nm=5000.0,
         i, j = np.unravel_index(np.argmin(d), d.shape)
         gap = float(d[i, j])
         if min_gap_nm <= gap <= max_gap_nm:
+            tangent = _local_tangent(main_pos, main_pos[j])
             sites.append(ErrorSite(root=int(root),
                                    pos_main_nm=tuple(main_pos[j].tolist()),
                                    pos_frag_nm=tuple(fp[i].tolist()),
-                                   gap_nm=gap, frag_l2=int(counts[list(frags).index(f)])))
+                                   gap_nm=gap, frag_l2=int(counts[list(frags).index(f)]),
+                                   tangent_nm=tuple(tangent.tolist())))
     sites.sort(key=lambda s: s.gap_nm)
     return sites[:max_sites]
+
+
+def _local_tangent(main_pos, tip, k=8) -> np.ndarray:
+    """Principal direction of the main arbor near the query tip (answer-free)."""
+    if len(main_pos) < 3:
+        return np.zeros(3)
+    d = np.linalg.norm(main_pos - tip, axis=1)
+    knn = main_pos[np.argsort(d)[:k]]
+    if len(knn) < 3:
+        return np.zeros(3)
+    cc = knn - knn.mean(axis=0)
+    _, _, vt = np.linalg.svd(cc, full_matrices=False)
+    return vt[0]
 
 
 def _l2_positions(cl, l2_ids) -> np.ndarray:
@@ -212,49 +228,138 @@ def _seg_id_at(vol, pos_nm):
     return int(vol.seg[idx[0], idx[1], idx[2]]), idx
 
 
+def _patch_from_slab(em, seg, z_lo, z_hi, seg_id):
+    """Translation-normalised cut-face patch for one seg id in a z-slab."""
+    from .fingerprint_break_resolution import PATCH
+    sub = em[:, :, z_lo:z_hi].astype(np.float32)
+    mask = seg[:, :, z_lo:z_hi] == seg_id
+    c2 = mask.sum(axis=2)
+    if c2.sum() == 0:
+        return None
+    with np.errstate(invalid="ignore", divide="ignore"):
+        proj = np.where(c2 > 0, (sub * mask).sum(axis=2) / c2, 0.0)
+    xs, ys = np.nonzero(c2 > 0)
+    ci, cj = int(round(xs.mean())), int(round(ys.mean()))
+    h = PATCH // 2
+    out = np.zeros((PATCH, PATCH), np.float32)
+    xi0, xi1 = max(ci - h, 0), min(ci + h, proj.shape[0])
+    yi0, yi1 = max(cj - h, 0), min(cj + h, proj.shape[1])
+    px0, py0 = xi0 - (ci - h), yi0 - (cj - h)
+    out[px0:px0 + (xi1 - xi0), py0:py0 + (yi1 - yi0)] = proj[xi0:xi1, yi0:yi1]
+    return out
+
+
+def _proximity_candidates(vol, idx_main, radius_nm, qa_id, min_vox):
+    """Seg ids with >= min_vox voxels within radius_nm of the query endpoint.
+
+    Returns ``{seg_id: (nearest_voxel_global_idx, n_vox_in_ball)}`` excluding
+    background and the query's own id -- the realistic merge-proposal set: other
+    neurites that physically approach the dangling tip.
+    """
+    vox = np.asarray(vol.resolution_nm, float)
+    shape = vol.seg.shape
+    rvx = [int(np.ceil(radius_nm / vox[d])) for d in range(3)]
+    x0, x1 = max(idx_main[0] - rvx[0], 0), min(idx_main[0] + rvx[0] + 1, shape[0])
+    y0, y1 = max(idx_main[1] - rvx[1], 0), min(idx_main[1] + rvx[1] + 1, shape[1])
+    z0, z1 = max(idx_main[2] - rvx[2], 0), min(idx_main[2] + rvx[2] + 1, shape[2])
+    sub = vol.seg[x0:x1, y0:y1, z0:z1]
+
+    gx = (np.arange(x0, x1) - idx_main[0]) * vox[0]
+    gy = (np.arange(y0, y1) - idx_main[1]) * vox[1]
+    gz = (np.arange(z0, z1) - idx_main[2]) * vox[2]
+    dist = np.sqrt(gx[:, None, None] ** 2 + gy[None, :, None] ** 2 + gz[None, None, :] ** 2)
+    within = dist <= radius_nm
+
+    wseg = sub[within]
+    loc = np.argwhere(within) + np.array([x0, y0, z0])   # global voxel idx
+    wd = dist[within]
+    order = np.argsort(wd, kind="stable")
+    ws_sorted = wseg[order]
+    loc_sorted = loc[order]
+    uids, first_idx, counts = np.unique(ws_sorted, return_index=True, return_counts=True)
+
+    out = {}
+    for s, fi, c in zip(uids.tolist(), first_idx.tolist(), counts.tolist()):
+        if s == 0 or s == qa_id or c < min_vox:
+            continue
+        out[int(s)] = (loc_sorted[fi], int(c))
+    return out
+
+
 def evaluate_site(site: ErrorSite, embed_fn, *, mip=1, slab=3, margin_nm=1200.0,
-                  collect=False):
+                  candidate_mode="proximity", radius_nm=2000.0,
+                  direction_cone_deg=None, min_vox=40, collect=False):
     """Rank the true continuation at a real error site by cut-face hash.
 
-    With ``collect=True`` also returns a dict of patches for visualisation:
-    ``{"query", "true", "top_learned", "top_learned_id", "true_id"}``.
+    ``candidate_mode``:
+      - ``"proximity"`` (default, realistic): candidates are other neurites with
+        a voxel within ``radius_nm`` of the query endpoint -- the set a merge-
+        proposal generator would actually consider.  Optionally cone-filtered by
+        the query fragment's local tangent (``direction_cone_deg``).  Sites whose
+        true partner is farther than ``radius_nm`` are unproposable -> skipped.
+      - ``"slab"`` (legacy): every neurite crossing a z-slab at the fragment
+        point within the box.
+
+    With ``collect=True`` also returns a viz dict
+    ``{"query","true","top_learned","top_learned_id","true_id"}``.
     """
-    vol = _fetch_box(site.pos_main_nm, site.pos_frag_nm, margin_nm, mip)
+    vol = _fetch_box(site.pos_main_nm, site.pos_frag_nm,
+                     max(margin_nm, radius_nm if candidate_mode == "proximity" else margin_nm), mip)
     grad = _grad(vol.em)
     dark = float(np.percentile(vol.em[vol.seg > 0], 25)) if (vol.seg > 0).any() else 128.0
-
-    za = _z_index(vol, site.pos_main_nm[2])
-    zb = _z_index(vol, site.pos_frag_nm[2])
     nz = vol.em.shape[2]
-    a_lo = max(min(za, nz - slab), 0)
-    b_lo = max(min(zb, nz - slab), 0)
 
+    qa_id, idx_main = _seg_id_at(vol, site.pos_main_nm)
     true_id, _ = _seg_id_at(vol, site.pos_frag_nm)
-    if true_id == 0:
+    if qa_id == 0 or true_id == 0 or true_id == qa_id:
         return None
 
-    # query = main-side face (its own seg id), candidates = all faces in B-slab
-    q_faces = face_hash(vol.em, vol.seg, grad, a_lo, a_lo + slab, dark_thresh=dark)
-    qa_id, _ = _seg_id_at(vol, site.pos_main_nm)
-    if qa_id not in q_faces:
-        return None
-    cand = face_hash(vol.em, vol.seg, grad, b_lo, b_lo + slab, dark_thresh=dark)
-    if true_id not in cand or len(cand) < 3:
+    za = max(min(_z_index(vol, site.pos_main_nm[2]), nz - slab), 0)
+    q_patch = _patch_from_slab(vol.em, vol.seg, za, za + slab, qa_id)
+    if q_patch is None:
         return None
 
-    cand_ids = sorted(cand)
-    qp = q_faces[qa_id].patch[None]
-    cp = np.stack([cand[i].patch for i in cand_ids])
+    cand_patch = {}   # seg_id -> patch
+    if candidate_mode == "proximity":
+        if site.gap_nm > radius_nm:
+            return None
+        prox = _proximity_candidates(vol, idx_main, radius_nm, qa_id, min_vox)
+        if true_id not in prox:
+            return None
+        vox = np.asarray(vol.resolution_nm, float)
+        origin = np.asarray(vol.origin_vox, float)
+        pmain = np.asarray(site.pos_main_nm, float)
+        tangent = np.asarray(site.tangent_nm, float)
+        tn = np.linalg.norm(tangent)
+        cone_cos = np.cos(np.deg2rad(direction_cone_deg)) if direction_cone_deg else None
+        for sid, (nv, _) in prox.items():
+            if cone_cos is not None and tn > 1e-6 and sid != true_id:
+                d = (origin + nv + 0.5) * vox - pmain
+                dn = np.linalg.norm(d)
+                if dn > 1e-6 and abs(float(d @ tangent) / (dn * tn)) < cone_cos:
+                    continue  # outside the direction cone
+            zc = max(min(int(nv[2]) - slab // 2, nz - slab), 0)
+            p = _patch_from_slab(vol.em, vol.seg, zc, zc + slab, sid)
+            if p is not None:
+                cand_patch[sid] = p
+    else:  # legacy slab mode
+        zb = max(min(_z_index(vol, site.pos_frag_nm[2]), nz - slab), 0)
+        faces = face_hash(vol.em, vol.seg, grad, zb, zb + slab, dark_thresh=dark)
+        cand_patch = {i: f.patch for i, f in faces.items() if i != qa_id}
 
-    # learned
-    qe = np.asarray(embed_fn(qp))[0]
+    if true_id not in cand_patch or len(cand_patch) < 3:
+        return None
+
+    cand_ids = sorted(cand_patch)
+    cp = np.stack([cand_patch[i] for i in cand_ids])
+
+    qe = np.asarray(embed_fn(q_patch[None]))[0]
     ce = np.asarray(embed_fn(cp))
     qe = qe / (np.linalg.norm(qe) + 1e-9)
     ce = ce / (np.linalg.norm(ce, axis=1, keepdims=True) + 1e-9)
     d_learned = 1.0 - ce @ qe
-    # raw patch
-    qf = _flatnorm(q_faces[qa_id].patch)
-    cf = np.stack([_flatnorm(cand[i].patch) for i in cand_ids])
+    qf = _flatnorm(q_patch)
+    cf = np.stack([_flatnorm(cand_patch[i]) for i in cand_ids])
     d_raw = 1.0 - cf @ qf
 
     tcol = cand_ids.index(true_id)
@@ -270,9 +375,9 @@ def evaluate_site(site: ErrorSite, embed_fn, *, mip=1, slab=3, margin_nm=1200.0,
         return result
     top_col = int(np.argmin(d_learned))
     viz = {
-        "query": q_faces[qa_id].patch,
-        "true": cand[true_id].patch,
-        "top_learned": cand[cand_ids[top_col]].patch,
+        "query": q_patch,
+        "true": cand_patch[true_id],
+        "top_learned": cand_patch[cand_ids[top_col]],
         "top_learned_id": cand_ids[top_col],
         "true_id": int(true_id),
     }
@@ -289,7 +394,8 @@ KNOWN_SPLIT_ROOTS = [
 ]
 
 
-def make_figure(out_png, embed_fn, cl, *, n_examples=6, n_scan=160, mip=1, roots=None):
+def make_figure(out_png, embed_fn, cl, *, n_examples=6, n_scan=160, mip=1, roots=None,
+                candidate_mode="proximity", radius_nm=2000.0, direction_cone_deg=45.0):
     """Render real v117 error sites: query face | true continuation | hash top pick."""
     import matplotlib
     matplotlib.use("Agg")
@@ -308,7 +414,9 @@ def make_figure(out_png, embed_fn, cl, *, n_examples=6, n_scan=160, mip=1, roots
             continue
         for s in sites:
             try:
-                out = evaluate_site(s, embed_fn, mip=mip, collect=True)
+                out = evaluate_site(s, embed_fn, mip=mip, collect=True,
+                                    candidate_mode=candidate_mode, radius_nm=radius_nm,
+                                    direction_cone_deg=direction_cone_deg)
             except Exception:
                 out = None
             if out is not None:
@@ -362,6 +470,14 @@ def main():
     ap.add_argument("--n-scan", type=int, default=120, help="neurons to scan for splits")
     ap.add_argument("--max-neurons", type=int, default=20, help="split neurons to evaluate")
     ap.add_argument("--mip", type=int, default=1)
+    ap.add_argument("--candidate-mode", choices=["proximity", "slab"], default="proximity",
+                    help="proximity = neurites within --radius-nm of the query tip (realistic); "
+                         "slab = every neurite crossing a z-slab (legacy, generous)")
+    ap.add_argument("--radius-nm", type=float, default=2000.0,
+                    help="proximity radius around the query endpoint")
+    ap.add_argument("--direction-cone-deg", type=float, default=None,
+                    help="optional: keep only candidates within this half-angle of the "
+                         "query fragment's local tangent")
     ap.add_argument("--out", default="experiments/fingerprints/v117_relink_metrics.json")
     ap.add_argument("--figure", default=None, help="render a montage PNG and exit")
     args = ap.parse_args()
@@ -373,7 +489,9 @@ def main():
 
     if args.figure:
         print(f"[fig] building montage of real v117 error sites -> {args.figure}")
-        make_figure(args.figure, embed_fn, cl, mip=args.mip)
+        make_figure(args.figure, embed_fn, cl, mip=args.mip,
+                    candidate_mode=args.candidate_mode, radius_nm=args.radius_nm,
+                    direction_cone_deg=args.direction_cone_deg or 45.0)
         print(f"[out] wrote {args.figure}")
         return
 
@@ -390,7 +508,10 @@ def main():
             continue
         for s in sites:
             try:
-                r = evaluate_site(s, embed_fn, mip=args.mip)
+                r = evaluate_site(s, embed_fn, mip=args.mip,
+                                  candidate_mode=args.candidate_mode,
+                                  radius_nm=args.radius_nm,
+                                  direction_cone_deg=args.direction_cone_deg)
             except Exception as e:
                 r = None
             if r is not None:
@@ -407,7 +528,10 @@ def main():
     mrr_learned = np.mean([1.0 / (r.rank_learned + 1) for r in results])
     mrr_raw = np.mean([1.0 / (r.rank_raw + 1) for r in results])
     chance = np.mean([1.0 / r.n_candidates for r in results])
-    print(f"\nReal v117 error sites scored: {n}")
+    cone = f", cone {args.direction_cone_deg}deg" if args.direction_cone_deg else ""
+    mode_desc = (f"proximity r={args.radius_nm:.0f}nm{cone}"
+                 if args.candidate_mode == "proximity" else "slab (legacy)")
+    print(f"\nReal v117 error sites scored: {n}   [candidates: {mode_desc}]")
     print(f"  mean candidates/site : {np.mean([r.n_candidates for r in results]):.1f}")
     print(f"  mean gap             : {np.mean([r.gap_nm for r in results]):.0f} nm")
     print(f"  chance top-1         : {chance:.3f}")
@@ -415,7 +539,11 @@ def main():
     print(f"  LEARNED    top-1 / MRR: {t1_learned:.3f} / {mrr_learned:.3f}")
 
     with open(args.out, "w") as f:
-        json.dump({"n_sites": n, "chance_top1": float(chance),
+        json.dump({"n_sites": n, "candidate_mode": args.candidate_mode,
+                   "radius_nm": args.radius_nm, "direction_cone_deg": args.direction_cone_deg,
+                   "mean_candidates": float(np.mean([r.n_candidates for r in results])),
+                   "mean_gap_nm": float(np.mean([r.gap_nm for r in results])),
+                   "chance_top1": float(chance),
                    "top1_raw": float(t1_raw), "top1_learned": float(t1_learned),
                    "mrr_raw": float(mrr_raw), "mrr_learned": float(mrr_learned),
                    "sites": [asdict(r) for r in results]}, f, indent=2)
