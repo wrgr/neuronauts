@@ -10,7 +10,7 @@ exec 9>data/bigdata/.fetch.lock 2>/dev/null || { mkdir -p data/bigdata; exec 9>d
 flock -n 9 || { echo "[run_bigdata] another pass holds the lock; skip"; exit 0; }
 source .venv/bin/activate 2>/dev/null || true
 
-[ -f data/sidetable_big.npz ] && { echo "[run_bigdata] SideTable already present; done"; exit 0; }
+[ -f data/bigdata/DONE ] && { echo "[run_bigdata] DONE sentinel present; nothing to do"; exit 0; }
 
 port=$(grep -oE '127\.0\.0\.1:[0-9]+' /root/.ccr/README.md 2>/dev/null | head -1)
 [ -n "$port" ] && export HTTPS_PROXY="http://$port" https_proxy="http://$port"

@@ -156,7 +156,14 @@ def main():
     print(f"[skeletons] false-merge v117 roots={len(fm)}  cells={len(cells)}", flush=True)
     fetch_skeletons(fm, 117, args.token, "data/skel_v117", workers=16)
     fetch_skeletons(cells[:4000], args.later_version, args.token, "data/skel_v1718", workers=16)
-    print("[done] Track B complete", flush=True)
+    # DONE sentinel: skeletons cached per-file, so this only "completes" once a pass walks the
+    # whole fm/cells list without a network kill. The SideTable existing is NOT completion.
+    n_v117 = len(list(Path("data/skel_v117").glob("*.npz")))
+    if n_v117 >= int(0.9 * len(fm)):
+        Path("data/bigdata/DONE").write_text(f"v117={n_v117}/{len(fm)} cells_target={min(4000,len(cells))}\n")
+        print("[done] Track B complete -> wrote data/bigdata/DONE", flush=True)
+    else:
+        print(f"[skeletons] {n_v117}/{len(fm)} v117 cached; not DONE yet (rerun resumes)", flush=True)
 
 
 if __name__ == "__main__":
