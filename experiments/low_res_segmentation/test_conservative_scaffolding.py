@@ -8,11 +8,10 @@ from pathlib import Path
 
 import numpy as np
 
-# Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from neuronauts.conservative_scaffolding import ConservativeScaffoldingPipeline
-from evaluate_neuron_purity import create_synthetic_connectome, evaluate_neuron_purity
+from experiments.low_res_segmentation.conservative_scaffolding import ConservativeScaffoldingPipeline
+from experiments.low_res_segmentation.evaluate_neuron_purity import create_synthetic_connectome, evaluate_neuron_purity
 
 
 def main():

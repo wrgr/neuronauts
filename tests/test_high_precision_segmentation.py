@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from neuronauts.high_precision_segmentation import (
+from experiments.low_res_segmentation.high_precision_segmentation import (
     HighPrecisionSegmentation3D,
     SegmentationResult,
     SynapseSeparability,
@@ -40,7 +40,7 @@ def synthetic_volume():
     vol[50:100, 150:200, 50:100] = 180  # Another neurite
 
     # Add some noise
-    vol += np.random.randint(0, 20, vol.shape)
+    vol = (vol.astype(np.int32) + np.random.randint(0, 20, vol.shape))
     return np.clip(vol, 0, 255).astype(np.uint8)
 
 
