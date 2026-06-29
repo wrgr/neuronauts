@@ -41,6 +41,65 @@ def _install_system_trust_store() -> None:
     truststore.inject_into_ssl()
 
 
+# Substrings that mark an *intermittent*, retryable CAVE/proxy failure rather
+# than a real client error. The public endpoint occasionally rejects a valid
+# request with HTTP 400 "bad_auth_header" (the Authorization header we send IS a
+# correct "Bearer <token>" — retrying the identical request succeeds), or drops
+# the connection / returns a 5xx during datastack resolution.
+_TRANSIENT_CAVE_MARKERS = (
+    "bad_auth_header",
+    "must begin with 'Bearer'",
+    "Read timed out",
+    "Connection aborted",
+    "Connection reset",
+    "Remote end closed",
+    "Max retries",
+    "Temporary failure",
+    "500 ", " 500 ", "502 ", " 502 ", "503 ", " 503 ", "504 ", " 504 ",
+)
+
+
+def _is_transient_cave_error(exc: Exception) -> bool:
+    s = str(exc)
+    return any(m in s for m in _TRANSIENT_CAVE_MARKERS)
+
+
+def _build_caveclient(
+    datastack: str,
+    cave_server: str,
+    token: Optional[str],
+    *,
+    max_retries: int = 4,
+    initial_backoff_s: float = 2.0,
+):
+    """Construct a CAVEclient and pre-resolve its datastack info, retrying
+    *intermittent* setup failures.
+
+    The public CAVE endpoint sometimes returns HTTP 400 ``bad_auth_header`` (or
+    drops the connection) on the very first datastack-info request even though
+    the ``Authorization: Bearer <token>`` header is correct — the identical
+    request succeeds on retry. To stop that from killing a whole run, we force
+    the datastack resolution here, inside a backoff retry, and return a warmed
+    client. Warming is best-effort: if it can't succeed after retries it still
+    returns a client so the real operation surfaces any genuine error.
+    """
+    from caveclient import CAVEclient
+
+    client = None
+    for attempt in range(max(1, int(max_retries))):
+        client = CAVEclient(datastack, server_address=cave_server, auth_token=token)
+        try:
+            client.info.get_datastack_info()  # forces the flaky datastack/full call
+            return client
+        except Exception as exc:  # noqa: BLE001 - classified below
+            if not _is_transient_cave_error(exc):
+                return client  # genuine error: let the real call raise it
+            if attempt + 1 >= max(1, int(max_retries)):
+                return client  # exhausted: proceed, real call will retry/raise
+            time.sleep(float(initial_backoff_s) * (2 ** attempt))
+    return client
+
+
 @dataclass
 class VolumeChunk:
     data: np.ndarray
@@ -266,7 +325,7 @@ def fetch_synapses(
     except ImportError as exc:
         raise ImportError("pip install caveclient") from exc
 
-    client = CAVEclient(datastack, server_address=cave_server, auth_token=token)
+    client = _build_caveclient(datastack, cave_server, token)
     if version is not None:
         client.version = version
     (x0, y0, z0), (x1, y1, z1) = bbox_nm
@@ -287,13 +346,14 @@ def fetch_synapses(
             break
         except Exception as exc:
             # Server-side bug: caveclient sends return_pyarrow=True but older CAVE
-            # servers don't handle the ipc_compress parameter. Fall back to JSON.
+            # servers don't handle the ipc_compress parameter. Fall back to a plain
+            # query_table (caveclient >=8 removed the return_pyarrow kwarg, so we
+            # must not pass it -- doing so raises TypeError and masks the real error).
             if "ipc_compress" in str(exc):
                 try:
                     df = client.materialize.query_table(
                         "synapses_pni_2",
                         filter_spatial_dict={"ctr_pt_position": bbox_synapse_units},
-                        return_pyarrow=False,
                     )
                     break
                 except Exception as fallback_exc:
@@ -306,6 +366,22 @@ def fetch_synapses(
         assert last_exc is not None
         raise last_exc
 
+    return _synapse_df_to_table(df, bbox_nm, mip)
+
+
+def _synapse_df_to_table(
+    df,
+    bbox_nm: Tuple[Tuple, Tuple] | None,
+    mip: int = 2,
+) -> SynapseTable:
+    """Convert a CAVE synapse query dataframe into a SynapseTable.
+
+    Positions are returned in MIP-``mip`` voxel coordinates.  When ``bbox_nm``
+    is given they are made box-relative (origin at the box corner), matching the
+    convention used throughout the box-based pipeline; when ``bbox_nm`` is None
+    (e.g. a root-filtered fetch with no spatial box) they are left in global
+    MIP-``mip`` voxels.
+    """
     if len(df) == 0:
         empty = np.zeros((0, 3), dtype=np.float32)
         return SynapseTable(
@@ -316,20 +392,19 @@ def fetch_synapses(
             synapse_id=np.array([], dtype=np.int64),
         )
 
-    vox = MIP_VOXEL_SIZES[mip]
-    bbox_origin_vox = np.array(
-        [
-            bbox_nm[0][0] / vox[0],
-            bbox_nm[0][1] / vox[1],
-            bbox_nm[0][2] / vox[2],
-        ],
-        dtype=np.float32,
-    )
+    syn_vox = np.array(SYNAPSE_VOXEL_SIZE_NM, dtype=np.float32)
+    vox = np.array(MIP_VOXEL_SIZES[mip], dtype=np.float32)
+    if bbox_nm is not None:
+        bbox_origin_vox = np.array(
+            [bbox_nm[0][0] / vox[0], bbox_nm[0][1] / vox[1], bbox_nm[0][2] / vox[2]],
+            dtype=np.float32,
+        )
+    else:
+        bbox_origin_vox = np.zeros(3, dtype=np.float32)
 
     def pts_to_voxels(col: str) -> np.ndarray:
         pts = np.stack(df[col].values)
-        pts_nm = pts * syn_vox
-        pts_vox = pts_nm / np.array(vox, dtype=np.float32)
+        pts_vox = (pts * syn_vox) / vox
         return (pts_vox - bbox_origin_vox).astype(np.float32)
 
     # Pull segment IDs if present in the materialization table.
@@ -352,6 +427,219 @@ def fetch_synapses(
         synapse_id=df.index.values.astype(np.int64),
         pre_seg_id=pre_seg_id,
         post_seg_id=post_seg_id,
+    )
+
+
+def _bbox_to_synapse_voxels(bbox_nm: Tuple[Tuple, Tuple]) -> list:
+    """Convert an nm bounding box to synapse-table voxel units."""
+    (x0, y0, z0), (x1, y1, z1) = bbox_nm
+    syn_vox = np.array(SYNAPSE_VOXEL_SIZE_NM, dtype=np.float32)
+    return [
+        (np.array([x0, y0, z0], dtype=np.float32) / syn_vox).astype(np.int64).tolist(),
+        (np.array([x1, y1, z1], dtype=np.float32) / syn_vox).astype(np.int64).tolist(),
+    ]
+
+
+def _cave_retry(fn, *, max_retries: int, initial_backoff_s: float):
+    """Call ``fn`` with exponential-backoff retries; re-raise the last error."""
+    last_exc: Exception | None = None
+    for attempt in range(max(1, int(max_retries))):
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001 - surfaced after retries
+            last_exc = exc
+            if attempt + 1 >= max(1, int(max_retries)):
+                raise
+            time.sleep(float(initial_backoff_s) * (2 ** attempt))
+    assert last_exc is not None
+    raise last_exc
+
+
+def root_ids_in_bbox(
+    bbox_nm: Tuple[Tuple, Tuple],
+    *,
+    version: int | None = None,
+    datastack: str = MICRONS_DATASTACK,
+    cave_server: str = CAVE_SERVER,
+    token: Optional[str] = None,
+    nucleus_table: str = "nucleus_detection_v0",
+    max_retries: int = 4,
+    initial_backoff_s: float = 2.0,
+) -> list[int]:
+    """Enumerate root IDs of soma-bearing cells whose nucleus is in ``bbox_nm``.
+
+    This is a *cheap* spatial query against the small (~150k-row) nucleus table,
+    used to drive the CAVE-recommended root-filtered synapse fetch
+    (:func:`fetch_synapses_for_roots`).  It returns only cells with a detected
+    nucleus inside the box -- soma-less fragments that merely pass through the
+    region are *not* included.  For region-complete synapse retrieval (e.g.
+    false-split recovery, which depends on those fragments) use the spatial
+    :func:`fetch_synapses` instead.
+    """
+    _install_system_trust_store()
+    from caveclient import CAVEclient
+
+    client = _build_caveclient(datastack, cave_server, token)
+    if version is not None:
+        client.version = version
+
+    nb = _bbox_to_synapse_voxels(bbox_nm)
+    df = _cave_retry(
+        lambda: client.materialize.query_table(
+            nucleus_table, filter_spatial_dict={"pt_position": nb}
+        ),
+        max_retries=max_retries,
+        initial_backoff_s=initial_backoff_s,
+    )
+    if len(df) == 0 or "pt_root_id" not in df.columns:
+        return []
+    roots = np.unique(df["pt_root_id"].values.astype(np.int64))
+    return [int(r) for r in roots if r != 0]
+
+
+def seg_root_ids_in_bbox(
+    bbox_nm: Tuple[Tuple, Tuple],
+    *,
+    version: int | None = None,
+    datastack: str = MICRONS_DATASTACK,
+    cave_server: str = CAVE_SERVER,
+    token: Optional[str] = None,
+    mip: int = 5,
+    max_retries: int = 4,
+    initial_backoff_s: float = 2.0,
+) -> list[int]:
+    """Densely enumerate *all* root IDs whose segmentation occupies ``bbox_nm``.
+
+    Reads an agglomerated cutout of the datastack's graphene segmentation
+    (``client.info.segmentation_source()``) at ``mip`` and returns the unique
+    nonzero root IDs.  Unlike :func:`root_ids_in_bbox` (nucleus table, soma
+    cells only) this includes every passing fragment -- exactly the soma-less
+    pieces that false-split recovery depends on.  When ``version`` is given the
+    cutout is agglomerated at that materialization's timestamp, so the IDs are
+    roots as of that version.
+
+    This is the *lightweight* alternative to an unfiltered spatial synapse scan:
+    a small coarse-mip cutout (a ~20 µm box is ~80³ voxels at mip 5) returns in
+    seconds, where the 337M-row spatial synapse query times out behind
+    restrictive egress proxies.  Pair it with :func:`fetch_synapses_for_roots`
+    to "look up" the synapses of the enumerated roots.
+    """
+    _install_system_trust_store()
+    try:
+        from cloudvolume import CloudVolume
+    except ImportError as exc:  # pragma: no cover
+        raise ImportError("pip install cloud-volume") from exc
+    from caveclient import CAVEclient
+
+    client = _build_caveclient(datastack, cave_server, token)
+    if version is not None:
+        client.version = version
+    seg_src = client.info.segmentation_source()
+    timestamp = client.materialize.get_timestamp(version) if version is not None else None
+
+    cv = CloudVolume(
+        seg_src, mip=mip, use_https=True, progress=False, fill_missing=True,
+        secrets={"token": token} if token else None,
+        agglomerate=True, timestamp=timestamp,
+    )
+    vox = tuple(int(x) for x in cv.resolution)
+    (x0n, y0n, z0n), (x1n, y1n, z1n) = bbox_nm
+    req_lo = [int(x0n / vox[0]), int(y0n / vox[1]), int(z0n / vox[2])]
+    req_hi = [int(x1n / vox[0]), int(y1n / vox[1]), int(z1n / vox[2])]
+    # Clamp to the valid dataset bounds — a box at the volume edge would
+    # otherwise raise OutOfBoundsError.
+    b = cv.bounds
+    lo = [max(req_lo[i], int(b.minpt[i])) for i in range(3)]
+    hi = [min(req_hi[i], int(b.maxpt[i])) for i in range(3)]
+    if any(hi[i] <= lo[i] for i in range(3)):
+        return []
+
+    sl = tuple(slice(lo[i], hi[i]) for i in range(3))
+    data = _cave_retry(
+        lambda: np.squeeze(cv[sl]),
+        max_retries=max_retries,
+        initial_backoff_s=initial_backoff_s,
+    )
+    ids = np.unique(np.asarray(data).astype(np.int64))
+    return [int(r) for r in ids if r != 0]
+
+
+def fetch_synapses_for_roots(
+    root_ids,
+    *,
+    bbox_nm: Tuple[Tuple, Tuple] | None = None,
+    mip: int = 2,
+    version: int | None = None,
+    datastack: str = MICRONS_DATASTACK,
+    cave_server: str = CAVE_SERVER,
+    token: Optional[str] = None,
+    chunk_size: int = 2000,
+    max_retries: int = 4,
+    initial_backoff_s: float = 2.0,
+) -> SynapseTable:
+    """CAVE-recommended synapse fetch: filter by root ID, not by spatial region.
+
+    The ``synapses_pni_2`` table has ~337M rows; the MICrONS tutorial states an
+    unfiltered spatial query "is generally not recommended ... too large to
+    query all at once".  The recommended pattern filters by pre/post root ID
+    (optionally with a bounding box), which uses an index and is dramatically
+    lighter -- it also completes through restrictive egress proxies where the
+    unfiltered spatial scan stalls.
+
+    Synapses touching any of ``root_ids`` on either side are returned (the union
+    of ``pre_ids`` and ``post_ids`` queries, de-duplicated by synapse ID).  When
+    ``bbox_nm`` is given it is passed to the server to clip results to the box
+    and positions are made box-relative; otherwise whole-neuron synapses are
+    returned in global MIP-``mip`` voxels.
+    """
+    _install_system_trust_store()
+    try:
+        import pandas as pd
+    except ImportError as exc:  # pragma: no cover
+        raise ImportError("pip install pandas") from exc
+    from caveclient import CAVEclient
+
+    roots = [int(r) for r in root_ids if int(r) != 0]
+    if not roots:
+        return _synapse_df_to_table(_EMPTY_DF(), bbox_nm, mip)
+
+    client = _build_caveclient(datastack, cave_server, token)
+    if version is not None:
+        client.version = version
+
+    bbox_vox = _bbox_to_synapse_voxels(bbox_nm) if bbox_nm is not None else None
+
+    def _query(side_kw: str, chunk: list) -> "pd.DataFrame":
+        kwargs = {side_kw: chunk}
+        if bbox_vox is not None:
+            kwargs["bounding_box"] = bbox_vox
+            kwargs["bounding_box_column"] = "ctr_pt_position"
+        return _cave_retry(
+            lambda: client.materialize.synapse_query(**kwargs),
+            max_retries=max_retries,
+            initial_backoff_s=initial_backoff_s,
+        )
+
+    frames = []
+    for start in range(0, len(roots), max(1, chunk_size)):
+        chunk = roots[start: start + max(1, chunk_size)]
+        frames.append(_query("pre_ids", chunk))
+        frames.append(_query("post_ids", chunk))
+
+    df = pd.concat(frames, ignore_index=True) if frames else _EMPTY_DF()
+    if len(df) and "id" in df.columns:
+        df = df.drop_duplicates(subset=["id"], keep="first")
+    return _synapse_df_to_table(df, bbox_nm, mip)
+
+
+def _EMPTY_DF():
+    import pandas as pd
+
+    return pd.DataFrame(
+        columns=[
+            "pre_pt_position", "post_pt_position",
+            "pre_pt_root_id", "post_pt_root_id",
+        ]
     )
 
 
@@ -389,7 +677,7 @@ def fetch_root_skeleton(
             from caveclient import CAVEclient
         except ImportError as exc:
             raise ImportError("pip install caveclient") from exc
-        client = CAVEclient(datastack, server_address=cave_server, auth_token=token)
+        client = _build_caveclient(datastack, cave_server, token)
         client.version = int(version)
 
     last_exc: Exception | None = None
@@ -451,7 +739,7 @@ def fetch_root_skeletons(
     except ImportError as exc:
         raise ImportError("pip install caveclient") from exc
 
-    client = CAVEclient(datastack, server_address=cave_server, auth_token=token)
+    client = _build_caveclient(datastack, cave_server, token)
     client.version = int(version)
     # segmentation_cloudvolume() is used only for root-id validation inside get_skeleton;
     # cloudvolume may be absent or broken in this environment — skip the check safely.

@@ -143,3 +143,51 @@ print('smoke test passed -- tokens:', toks[:8])
 | `pcfg_partitions.py` | Core grammar: tokenize, bigram\_features, cond\_entropy, partition\_features, extract\_partitions, build\_merge\_pairs |
 | `run_experiment.py` | CLI: loads BoxCache + remap TSV, builds dataset, runs CV, prints results |
 | `README.md` | This file |
+
+## Running on live CAVE (`scripts/v117_pcfg.py`) — setup & troubleshooting
+
+This runs **here, against live CAVE** (no laptop needed). Typical invocation:
+
+```bash
+python scripts/v117_pcfg.py --token $CAVE_TOKEN --n-boxes 1 --side-um 20 --use-learned
+```
+
+### One-time token setup
+Save your token once so every CAVE client picks it up automatically:
+
+```python
+from caveclient import CAVEclient
+CAVEclient(server_address="https://global.daf-apis.com").auth.save_token(token="<YOUR_TOKEN>", overwrite=True)
+```
+
+(You can still pass `--token`/`CAVE_TOKEN`; saving it just avoids cold-start auth flakiness.)
+
+### Intermittent `bad_auth_header` on the first CAVE call
+You may occasionally see the run fail immediately with:
+
+```
+400 Client Error: BAD REQUEST ... /info/api/v2/datastack/full/minnie65_public
+{"error": "bad_auth_header", "message": "Authorization header must begin with 'Bearer'"}
+```
+
+This is **not** a bad token and not a code bug: the header we send *is* a correct
+`Bearer <token>`, and the identical request succeeds on retry — the public
+endpoint intermittently rejects a valid request during datastack resolution.
+`neuronauts/fetch.py` now resolves the datastack info up front inside a backoff
+retry (`_build_caveclient`), so transient `bad_auth`/connection blips
+auto-recover. If a run still dies at that step, just **re-run it, or start a
+fresh session** — it clears on its own.
+
+### Slow / hanging synapse query
+The default fetch is an unfiltered spatial query over the ~337M-row
+`synapses_pni_2` table. With stable connectivity that completes; if it hangs,
+**re-run in a fresh session**. (An experimental `--lightweight` path exists —
+dense seg-cutout root enumeration + root-filtered lookup — but its synapse
+**counts are not yet validated** against the spatial query, so don't trust its
+numbers until that check is done.)
+
+### Rule of thumb
+A failed CAVE run here is almost always transient connectivity, *or* a setup
+mistake on our side — never assume the service is "down" or "throttling" without
+checking (CAVE returns no `429`/`Retry-After`; a `bad_auth` 400 is the transient
+above). A fresh session is the fastest reset.
