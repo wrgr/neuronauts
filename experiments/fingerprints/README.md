@@ -169,7 +169,62 @@ gap_nm norm Ncand chance | top1: spatial   raw   LEARNED | hard(N) learned_on_ha
    normalisation is the normalisation that actually matters. (`--augment`
    enables it for the ablation.)
 
-## Disambiguating at REAL v117 errors (`v117_error_relink.py`)
+## Headline: disambiguating REAL v117 errors on the reconstructed v117 seg
+
+The faithful experiment (`v117_reconstructed.py`) and its result come first
+because they are the point of the whole line of work. Everything below it is the
+path that got here (including two wrong turns worth remembering).
+
+**Setup.** Take error sites in their **v117 (split) state** and use the later
+**v14XX merges as the answer key**:
+- Reconstruct the segmentation *as it was at the v117-era (oldest) timestamp*:
+  fetch the supervoxel/watershed layer per box and map each supervoxel to its
+  root at that timestamp → the box is painted with the *split* fragments (the
+  errored "question").
+- Map the same supervoxels to their *current* root → two v117 fragments are a
+  true merge iff they share a current root (the proofreading answer).
+- At each interface: query = a v117 fragment's cut-face; candidates = nearby
+  v117 fragments (proximity + direction cone); true partner = the one sharing
+  the query's current root. Rank it by cut-face hash similarity.
+
+**Result** (`v117_reconstructed_metrics.json`, N = 78 real error sites, mean 38
+candidates/site, **chance top-1 = 0.085**):
+
+| method | top-1 | MRR |
+|---|---|---|
+| raw patch | 0.205 | 0.333 |
+| planar-trained encoder | 0.423 | 0.544 |
+| **real-trained encoder** | **0.474** | **0.572** |
+
+**Read-out:**
+
+- At genuine v117 errors the learned cut-face hash picks the correct merge
+  partner **top-1 ~47%** of the time vs **8.5% chance** (~5.6×), ranking the
+  truth ~2nd on average (MRR 0.57). The fingerprint does real work.
+- **Learned ≫ raw** (top-1 0.47 vs 0.21): the cross-section *pattern* matters,
+  and it must be *learned*, not hand-summarised.
+- **Computing the hash on the right data is the biggest lever — proven twice.**
+  The identical method scored ~0 on the intermediate flat seg (which had already
+  merged most sites) and **0.47 on the reconstructed v117 seg**. And training the
+  encoder on *real* error cross-sections edges out the planar-cut encoder
+  (0.474 vs 0.423) — reversing the transfer failure seen on artificial cuts.
+
+**Location vs correction (two different models).** This experiment measures
+*correction*: given a real interface and a candidate panel, pick the partner.
+The other half — *location* (which edges are errors / candidates at all) — is a
+separate model. In deployment the location model is the candidate generator:
+flood it (a 2 µm proximity ball ≈ 256 distractors) and correction drowns; feed
+it a clean panel (proximity + cone ≈ 38) and correction works. Evaluate the two
+separately — location by recall, correction by top-1 given good candidates —
+rather than conflating them.
+
+## Earlier: disambiguating at v117 errors on the flat seg (`v117_error_relink.py`)
+
+> **Superseded.** This masks from the *flat* MICrONS seg, an intermediate
+> snapshot that already has most merges baked in, so ~all real interfaces look
+> already-merged and get skipped (only ~8 scoreable; numbers were noise). It is
+> kept for the site-finding machinery (`sites_from_l2_graph`) and the candidate
+> generators, which the headline experiment reuses. Use `v117_reconstructed.py`.
 
 The cuts above are *artificial* planar z-cuts. This experiment tests the hash
 where it actually matters: at locations the automated segmentation **got wrong**
