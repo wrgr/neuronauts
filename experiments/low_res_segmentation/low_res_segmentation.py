@@ -266,7 +266,11 @@ class LowResNeuronSegmentationPipeline:
             # Simple estimate: use median
             threshold = np.median(low_res_vol[low_res_vol > 0])
 
-        binary_mask = low_res_vol > threshold
+        # When threshold == max (e.g. uniform volume), use >= so all voxels are foreground
+        if threshold >= low_res_vol.max():
+            binary_mask = low_res_vol >= threshold
+        else:
+            binary_mask = low_res_vol > threshold
 
         # Connected component analysis
         if self.connectivity == "6":
