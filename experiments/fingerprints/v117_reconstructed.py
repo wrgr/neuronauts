@@ -202,6 +202,8 @@ def evaluate(cl, ts, roots, embedders, *, mip=1, radius_nm=2000.0,
     """
     methods = ["geom", "raw", *embedders, "fused"]
     ranks = {m: [] for m in methods}
+    gated = {m: [] for m in ("geom_top2+hash", "geom_top3+hash", "geom_top5+hash",
+                             "margin0.3", "margin0.6", "margin1.0")}
     geom_hit, fused_hit = [], []   # paired on the geom-fails (hard) subset
     ncand, ntrue = [], []
     for n, rt in enumerate(roots):
@@ -241,13 +243,29 @@ def evaluate(cl, ts, roots, embedders, *, mip=1, radius_nm=2000.0,
             d_fused = _z(d_geom) + _z(d_hash)        # equal-weight geometry + hash
             ranks["fused"].append(_best_rank(d_fused, it))
 
+            # --- gated fusion: trust geometry unless it is ambiguous ----------
+            # (a) shortlist: geometry proposes its top-k, the hash picks within.
+            og = np.argsort(d_geom)
+            for k in (2, 3, 5):
+                short = og[:min(k, len(og))]
+                pick = short[int(np.argmin(d_hash[short]))]
+                gated[f"geom_top{k}+hash"].append(int(bool(it[pick])))
+            # (b) margin gate: if geom's top-1 is a clear winner, take it; else
+            #     defer to the hash. Margin = (2nd-1st geom dist) / spread.
+            sg = np.sort(d_geom)
+            spread = d_geom.std() + 1e-9
+            margin = (sg[1] - sg[0]) / spread if len(sg) > 1 else 1e9
+            for tau in (0.3, 0.6, 1.0):
+                pick = int(np.argmin(d_geom)) if margin >= tau else int(np.argmin(d_hash))
+                gated[f"margin{tau}"].append(int(bool(it[pick])))
+
             # paired hard subset: sites where geometry alone misses top-1
             if _best_rank(d_geom, it) != 0:
                 geom_hit.append(0)
                 fused_hit.append(int(_best_rank(d_fused, it) == 0))
         if verbose and ranks["geom"]:
             print(f"  eval: {n + 1}/{len(roots)} neurons, {len(ranks['geom'])} sites")
-    return ranks, ncand, ntrue, (geom_hit, fused_hit)
+    return ranks, ncand, ntrue, (geom_hit, fused_hit), gated
 
 
 def main():
@@ -279,7 +297,7 @@ def main():
         embedders["real"] = make_embed_fn(load_encoder(args.real))
 
     fuse_with = "real" if "real" in embedders else ("planar" if "planar" in embedders else "raw")
-    ranks, ncand, ntrue, (geom_hit, fused_hit) = evaluate(
+    ranks, ncand, ntrue, (geom_hit, fused_hit), gated = evaluate(
         cl, ts, roots, embedders, mip=args.mip, radius_nm=args.radius_nm,
         direction_cone_deg=args.direction_cone_deg, max_sites=args.max_sites,
         fuse_with=fuse_with)
@@ -308,6 +326,12 @@ def main():
         g = summ["geom_miss_recovered_by_fusion"]
         print(f"  fusion recovers {g['fused_top1_on_those']:.3f} of the {g['n_geom_misses']} "
               f"sites geometry-alone gets wrong")
+    summ["gated"] = {m: float(np.mean(h)) for m, h in gated.items() if h}
+    print("  gated fusion (top-1 prediction accuracy; beat geom alone = "
+          f"{summ['geom']['top1']:.3f}):")
+    for m, val in summ["gated"].items():
+        flag = "  <-- beats geom" if val > summ["geom"]["top1"] else ""
+        print(f"      {m:16s}: {val:.3f}{flag}")
 
     with open(args.out, "w") as f:
         json.dump({"radius_nm": args.radius_nm, "direction_cone_deg": args.direction_cone_deg,
