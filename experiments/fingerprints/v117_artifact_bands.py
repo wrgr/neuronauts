@@ -105,10 +105,21 @@ def site_faces_bands(cl, ts, site, *, mip=1, slab=2, radius_nm=2000.0,
     tangent = np.asarray(site.tangent_nm, float)
     tn = np.linalg.norm(tangent)
     cone_cos = np.cos(np.deg2rad(direction_cone_deg)) if direction_cone_deg else None
+    curseg = getattr(vol, "curseg", None)
+
+    def _cur_of(sid, nv):
+        # Direct per-candidate current root at the candidate's nearest voxel --
+        # no historical-root -> majority-current vote.  Fall back to frag2cur
+        # only for legacy boxes cached without a curseg.
+        if curseg is not None:
+            c = int(curseg[int(nv[0]), int(nv[1]), int(nv[2])])
+            if c != 0:
+                return c
+        return int(frag2cur.get(int(sid), 0))
 
     lows, highs, is_true, gdist = [], [], [], []
     for sid, (nv, _) in prox.items():
-        same = frag2cur.get(sid) == q_cur
+        same = _cur_of(sid, nv) == q_cur
         d = (origin + nv + 0.5) * vox - pmain
         dn = float(np.linalg.norm(d))
         if cone_cos is not None and tn > 1e-6 and not same:

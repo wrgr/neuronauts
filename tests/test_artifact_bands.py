@@ -53,6 +53,26 @@ def test_site_faces_bands_marks_true(monkeypatch):
     assert f["is_true"].sum() == 1
 
 
+def test_site_faces_bands_direct_curseg_beats_majority_vote(monkeypatch):
+    # frag2cur misresolves the partner (101 -> 5), but its per-voxel current root
+    # (curseg) is the query's root 9.  Direct lookup must recover it as the partner.
+    import numpy as np
+    from tests.test_v117_reconstructed import _frag_volume
+    vol, _ = _frag_volume()
+    curseg = np.zeros_like(vol.seg)
+    curseg[(vol.seg == 100) | (vol.seg == 101)] = 9      # both really on root 9
+    curseg[vol.seg == 102] = 5
+    curseg[vol.seg == 103] = 7
+    vol.curseg = curseg
+    frag2cur = {100: 9, 101: 5, 102: 5, 103: 7}          # 101 mislabeled by the vote
+    monkeypatch.setattr(r, "fetch_v117_box", lambda *a, **k: (vol, frag2cur))
+    from experiments.fingerprints import v117_error_relink as v
+    site = v.ErrorSite(root=9, pos_main_nm=(16 * 16, 16 * 16, 6 * 40),
+                       pos_frag_nm=(40 * 16, 40 * 16, 6 * 40), gap_nm=540.0, frag_l2=5)
+    f = ab.site_faces_bands(None, None, site, radius_nm=4000.0, direction_cone_deg=45.0)
+    assert f is not None and f["is_true"].sum() == 1     # 101 recovered via curseg
+
+
 def test_site_faces_bands_discards_not_a_split(monkeypatch):
     # No distinct same-root partner (only fragment 100 maps to root 9) AND the
     # query fragment occupies pos_frag -> not a real break -> dropped.

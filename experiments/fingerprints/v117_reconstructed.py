@@ -80,7 +80,8 @@ def fetch_v117_box(cl, ts, pos_a, pos_b, margin_nm, mip=1):
                 z = np.load(path)
                 vol = Volume(em=z["em"], seg=z["seg"],
                              resolution_nm=tuple(int(x) for x in z["res"]),
-                             origin_vox=tuple(int(x) for x in z["origin"]))
+                             origin_vox=tuple(int(x) for x in z["origin"]),
+                             curseg=z["curseg"] if "curseg" in z.files else None)
                 frag2cur = {int(k): int(val) for k, val in zip(z["frag"], z["cur"])}
                 return vol, frag2cur
             except Exception:
@@ -103,7 +104,14 @@ def fetch_v117_box(cl, ts, pos_a, pos_b, margin_nm, mip=1):
     umap = np.array([sv2hist.get(int(x), 0) if x != 0 else 0 for x in u], dtype=np.uint64)
     v117seg = umap[inv].reshape(sv.shape)
 
-    # frag (v117 root) -> majority current root
+    # Per-supervoxel current root -> a current-root-painted volume.  This is the
+    # direct, vote-free identity of every voxel; the matcher reads it instead of
+    # resolving historical root -> majority current root.
+    sv2cur = {int(s): int(c) for s, c in zip(svids.tolist(), cur.tolist())}
+    cmap = np.array([sv2cur.get(int(x), 0) if x != 0 else 0 for x in u], dtype=np.uint64)
+    curseg = cmap[inv].reshape(sv.shape)
+
+    # frag (v117 root) -> majority current root  (kept for back-compat callers)
     frag2cur = {}
     if len(svids):
         from collections import Counter, defaultdict
@@ -114,13 +122,14 @@ def fetch_v117_box(cl, ts, pos_a, pos_b, margin_nm, mip=1):
         frag2cur = {h: Counter(cs).most_common(1)[0][0] for h, cs in buckets.items()}
 
     vol = Volume(em=em.data.astype(np.uint8), seg=v117seg,
-                 resolution_nm=tuple(int(x) for x in vox), origin_vox=(x0, y0, z0))
+                 resolution_nm=tuple(int(x) for x in vox), origin_vox=(x0, y0, z0),
+                 curseg=curseg)
 
     if path:
         os.makedirs(V117_CACHE_DIR, exist_ok=True)
         tmp = path + f".tmp{os.getpid()}.npz"
         try:
-            np.savez_compressed(tmp, em=vol.em, seg=vol.seg,
+            np.savez_compressed(tmp, em=vol.em, seg=vol.seg, curseg=curseg,
                                 res=np.asarray(vol.resolution_nm),
                                 origin=np.asarray(vol.origin_vox),
                                 frag=np.asarray(list(frag2cur.keys()), dtype=np.uint64),

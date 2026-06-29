@@ -65,6 +65,8 @@ class Volume:
     seg: np.ndarray           # uint64 [X, Y, Z]
     resolution_nm: tuple      # (x, y, z) nm per voxel
     origin_vox: tuple         # (x0, y0, z0) voxel offset of this chunk
+    curseg: np.ndarray = None  # optional uint64 [X, Y, Z] painted by *current* root
+                               # (per-supervoxel, no majority vote) for v117 boxes
 
 
 def fetch_volume(
