@@ -43,8 +43,6 @@ from ..fetch import (
     fetch_root_skeleton,
     fetch_synapses,
 )
-from ..cave_root_mapping import map_roots_between_versions
-
 log = logging.getLogger(__name__)
 
 # Default auth token for the public MICrONS / minnie65_public datastack.
@@ -133,6 +131,7 @@ def _robust_map_roots(
         # Runs in a daemon thread; a stalled call is abandoned (the thread is
         # left to die with the process) rather than blocking the pipeline.
         try:
+            from ..cave_root_mapping import map_roots_between_versions
             box["result"] = map_roots_between_versions(
                 batch, old_version, new_version, token=token,
             )

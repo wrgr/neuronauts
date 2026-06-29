@@ -91,6 +91,24 @@ def _partition_log_score(
     return float(np.where(same, np.log(p), np.log(1 - p)).sum())
 
 
+def _canonical_key(labels: np.ndarray) -> bytes:
+    """Stable bytes key for a partition regardless of arbitrary cluster ID assignment.
+
+    Two label arrays that represent the same partition (same clusters, different
+    integer IDs) produce the same key. IDs are remapped in first-occurrence order
+    so the result is deterministic.
+    """
+    mapping: dict[int, int] = {}
+    canonical = np.empty_like(labels)
+    next_id = 0
+    for i, lbl in enumerate(labels.tolist()):
+        if lbl not in mapping:
+            mapping[lbl] = next_id
+            next_id += 1
+        canonical[i] = mapping[lbl]
+    return canonical.tobytes()
+
+
 def materializations(
     n_nodes: int,
     edge_src: np.ndarray,
@@ -118,7 +136,7 @@ def materializations(
             n_nodes, edge_src, edge_dst, edge_probs,
             threshold=threshold, rng=rng,
         )
-        key = labels.tobytes()
+        key = _canonical_key(labels)
         if key in seen:
             continue
         seen.add(key)

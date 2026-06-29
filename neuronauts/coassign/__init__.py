@@ -38,7 +38,6 @@ Quick start
 """
 
 from .graph import SynapseGraph, build_synapse_graph
-from .model import SynapseCoassigner
 from .cluster import (
     calibrate_threshold,
     coverage_at_k,
@@ -46,7 +45,15 @@ from .cluster import (
     materializations,
     pairwise_precision_recall,
 )
-from .train import train
+
+# SynapseCoassigner and train require torch. Import them eagerly when torch is
+# present; leave them absent (ImportError at use time) otherwise so that
+# graph/cluster helpers stay importable in torch-free environments.
+try:
+    from .model import SynapseCoassigner
+    from .train import train
+except ImportError:
+    pass
 
 __all__ = [
     "SynapseGraph",
