@@ -84,3 +84,32 @@ def test_evaluate_site_proximity_ranks_true_partner(monkeypatch):
     # the shared-texture continuation should rank first
     assert res.top1_raw
     assert res.rank_learned == 0
+
+
+def test_fetch_box_disk_cache(tmp_path, monkeypatch):
+    """_fetch_box caches each fetched box and reuses it (no second network call)."""
+    from neuronauts.fetch import VolumeChunk
+    calls = {"n": 0}
+
+    def fake_em(bbox, mip=1):
+        calls["n"] += 1
+        em = np.full((8, 8, 4), 120, np.uint8)
+        return VolumeChunk(data=em, voxel_size_nm=(16, 16, 40),
+                           bbox_voxels=((0, 0, 0), (8, 8, 4)), mip=mip)
+
+    def fake_seg(bbox, mip=1):
+        seg = np.zeros((8, 8, 4), np.uint64)
+        seg[2:6, 2:6, :] = 7
+        return VolumeChunk(data=seg, voxel_size_nm=(16, 16, 40),
+                           bbox_voxels=((0, 0, 0), (8, 8, 4)), mip=mip)
+
+    monkeypatch.setattr(mod, "_fetch_em", fake_em)
+    monkeypatch.setattr(mod, "_fetch_seg", fake_seg)
+    monkeypatch.setattr(mod, "BOX_CACHE_DIR", str(tmp_path))
+
+    v1 = mod._fetch_box((100.0, 100.0, 80.0), (150.0, 150.0, 120.0), 200.0, 1)
+    assert calls["n"] == 1
+    v2 = mod._fetch_box((100.0, 100.0, 80.0), (150.0, 150.0, 120.0), 200.0, 1)
+    assert calls["n"] == 1                      # served from disk cache, not refetched
+    assert np.array_equal(v1.seg, v2.seg)
+    assert v2.resolution_nm == (16, 16, 40)

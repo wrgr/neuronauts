@@ -302,15 +302,55 @@ class SiteResult:
     sim_learned_true: float
 
 
+# On-disk cache of fetched EM+seg boxes.  The per-box CloudVolume fetch (uint64
+# seg over a ~5 um cube) is by far the slowest step, so caching each fetched box
+# lets every re-run (different encoder, eval, candidate settings) reuse it
+# instead of re-hitting CAVE/EM.  Default dir lives under data/ (gitignored);
+# set EM_BOX_CACHE="" to disable.
+BOX_CACHE_DIR = os.environ.get("EM_BOX_CACHE", "data/em_box_cache")
+
+
+def _box_key(bbox, mip) -> str:
+    import hashlib
+    flat = tuple(int(round(c)) for pt in bbox for c in pt) + (int(mip),)
+    return hashlib.md5(repr(flat).encode()).hexdigest()[:16]
+
+
 def _fetch_box(pos_a, pos_b, margin_nm, mip):
     pts = np.asarray([pos_a, pos_b], float)
     lo = pts.min(0) - margin_nm
     hi = pts.max(0) + margin_nm
     bbox = (tuple(lo.tolist()), tuple(hi.tolist()))
+
+    path = None
+    if BOX_CACHE_DIR:
+        path = os.path.join(BOX_CACHE_DIR, f"box_{_box_key(bbox, mip)}.npz")
+        if os.path.exists(path):
+            try:
+                z = np.load(path)
+                return Volume(em=z["em"], seg=z["seg"],
+                              resolution_nm=tuple(int(x) for x in z["res"]),
+                              origin_vox=tuple(int(x) for x in z["origin"]))
+            except Exception:
+                pass  # corrupt/partial cache entry -> refetch
+
     em = _fetch_em(bbox, mip=mip)
     seg = _fetch_seg(bbox, mip=mip)
-    return Volume(em=em.data.astype(np.uint8), seg=seg.data.astype(np.uint64),
-                  resolution_nm=seg.voxel_size_nm, origin_vox=seg.bbox_voxels[0])
+    vol = Volume(em=em.data.astype(np.uint8), seg=seg.data.astype(np.uint64),
+                 resolution_nm=seg.voxel_size_nm, origin_vox=seg.bbox_voxels[0])
+    if path:
+        os.makedirs(BOX_CACHE_DIR, exist_ok=True)
+        # np.savez_compressed appends ".npz" if absent, so keep it on the temp name.
+        tmp = path + f".tmp{os.getpid()}.npz"
+        try:
+            np.savez_compressed(tmp, em=vol.em, seg=vol.seg,
+                                res=np.asarray(vol.resolution_nm),
+                                origin=np.asarray(vol.origin_vox))
+            os.replace(tmp, path)   # atomic; safe under concurrent runs
+        except Exception:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+    return vol
 
 
 def _z_index(vol, z_nm):
