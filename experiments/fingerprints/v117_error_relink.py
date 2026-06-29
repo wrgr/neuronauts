@@ -79,45 +79,75 @@ def find_split_neurons(cl, n_scan=120, seed=7, min_l2=20):
     ts = cg.get_oldest_timestamp()
     roots = cg.get_roots(df.sv.astype(np.int64).tolist())
 
-    out = []
-    for rt in np.unique(roots).tolist():
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _is_split(rt):
         try:
             lvs = np.asarray(cg.get_leaves(int(rt), stop_layer=2))
             if len(lvs) < min_l2:
-                continue
+                return None
             s = lvs if len(lvs) <= 120 else np.random.default_rng(int(rt) % 2**31).choice(lvs, 120, replace=False)
-            if len(np.unique(cg.get_roots(s, timestamp=ts))) > 1:
-                out.append(int(rt))
+            return int(rt) if len(np.unique(cg.get_roots(s, timestamp=ts))) > 1 else None
         except Exception:
-            continue
+            return None
+
+    uniq = np.unique(roots).tolist()
+    out = [r for r in ThreadPoolExecutor(max_workers=16).map(_is_split, uniq) if r]
     return out, ts
 
 
 def sites_for_neuron(cl, root, ts, *, min_gap_nm=300.0, max_gap_nm=5000.0,
-                     min_frag_l2=4, max_sites=6) -> list[ErrorSite]:
-    """Locate real false-split interfaces inside one neuron."""
+                     min_frag_l2=4, max_sites=6, main_sample=300, frag_sample=120,
+                     lvs=None, hist=None) -> list[ErrorSite]:
+    """Locate real false-split interfaces inside one neuron.
+
+    Only looks up rep coordinates for the minor fragments plus a *sample* of the
+    main arbor -- not all L2 nodes -- because position lookups are the dominant
+    network cost.  Pass precomputed ``lvs``/``hist`` to avoid re-querying.
+    """
     cg = cl.chunkedgraph
-    lvs = np.asarray(cg.get_leaves(int(root), stop_layer=2))
-    hist = np.asarray(cg.get_roots(lvs, timestamp=ts))
-    # L2 rep positions (nm)
-    pos = _l2_positions(cl, lvs)
-    keep = ~np.isnan(pos[:, 0]) & (hist != 0)
-    lvs, hist, pos = lvs[keep], hist[keep], pos[keep]
-    if len(lvs) < 2:
-        return []
+    if lvs is None or hist is None:
+        lvs = np.asarray(cg.get_leaves(int(root), stop_layer=2))
+        hist = np.asarray(cg.get_roots(lvs, timestamp=ts))
+    lvs = np.asarray(lvs)
+    hist = np.asarray(hist)
 
     frags, counts = np.unique(hist, return_counts=True)
     main = frags[np.argmax(counts)]
-    main_pos = pos[hist == main]
+    rng = np.random.default_rng(int(root) % 2**31)
+
+    # Build a small index subset: sampled main nodes + (sampled) minor fragments.
+    main_idx = np.where(hist == main)[0]
+    if len(main_idx) > main_sample:
+        main_idx = rng.choice(main_idx, main_sample, replace=False)
+    frag_idx = {}
+    for f, c in zip(frags.tolist(), counts.tolist()):
+        if f == main or f == 0 or c < min_frag_l2:
+            continue
+        fi = np.where(hist == f)[0]
+        if len(fi) > frag_sample:
+            fi = rng.choice(fi, frag_sample, replace=False)
+        frag_idx[f] = fi
+    if not frag_idx:
+        return []
+
+    sel = np.concatenate([main_idx] + list(frag_idx.values()))
+    pos_sel = _l2_positions(cl, lvs[sel])          # the only position lookup
+    pos_by_node = {int(lvs[s]): pos_sel[k] for k, s in enumerate(sel)}
+
+    def _pos(idx_arr):
+        p = np.array([pos_by_node[int(lvs[i])] for i in idx_arr])
+        return p[~np.isnan(p[:, 0])]
+
+    main_pos = _pos(main_idx)
     if len(main_pos) == 0:
         return []
 
     sites = []
-    for f, c in zip(frags.tolist(), counts.tolist()):
-        if f == main or c < min_frag_l2:
+    for f, fi in frag_idx.items():
+        fp = _pos(fi)
+        if len(fp) == 0:
             continue
-        fp = pos[hist == f]
-        # closest approach between fragment f and the main arbor
         d = np.linalg.norm(fp[:, None, :] - main_pos[None, :, :], axis=2)
         i, j = np.unravel_index(np.argmin(d), d.shape)
         gap = float(d[i, j])
@@ -125,7 +155,7 @@ def sites_for_neuron(cl, root, ts, *, min_gap_nm=300.0, max_gap_nm=5000.0,
             sites.append(ErrorSite(root=int(root),
                                    pos_main_nm=tuple(main_pos[j].tolist()),
                                    pos_frag_nm=tuple(fp[i].tolist()),
-                                   gap_nm=gap, frag_l2=int(c)))
+                                   gap_nm=gap, frag_l2=int(counts[list(frags).index(f)])))
     sites.sort(key=lambda s: s.gap_nm)
     return sites[:max_sites]
 
@@ -182,8 +212,13 @@ def _seg_id_at(vol, pos_nm):
     return int(vol.seg[idx[0], idx[1], idx[2]]), idx
 
 
-def evaluate_site(site: ErrorSite, embed_fn, *, mip=1, slab=3, margin_nm=1200.0):
-    """Rank the true continuation at a real error site by cut-face hash."""
+def evaluate_site(site: ErrorSite, embed_fn, *, mip=1, slab=3, margin_nm=1200.0,
+                  collect=False):
+    """Rank the true continuation at a real error site by cut-face hash.
+
+    With ``collect=True`` also returns a dict of patches for visualisation:
+    ``{"query", "true", "top_learned", "top_learned_id", "true_id"}``.
+    """
     vol = _fetch_box(site.pos_main_nm, site.pos_frag_nm, margin_nm, mip)
     grad = _grad(vol.em)
     dark = float(np.percentile(vol.em[vol.seg > 0], 25)) if (vol.seg > 0).any() else 128.0
@@ -225,12 +260,89 @@ def evaluate_site(site: ErrorSite, embed_fn, *, mip=1, slab=3, margin_nm=1200.0)
     tcol = cand_ids.index(true_id)
     r_learned = int((d_learned < d_learned[tcol]).sum())
     r_raw = int((d_raw < d_raw[tcol]).sum())
-    return SiteResult(
+    result = SiteResult(
         root=site.root, gap_nm=site.gap_nm, n_candidates=len(cand_ids),
         rank_learned=r_learned, rank_raw=r_raw,
         top1_learned=(r_learned == 0), top1_raw=(r_raw == 0),
         sim_learned_true=float(1.0 - d_learned[tcol]),
     )
+    if not collect:
+        return result
+    top_col = int(np.argmin(d_learned))
+    viz = {
+        "query": q_faces[qa_id].patch,
+        "true": cand[true_id].patch,
+        "top_learned": cand[cand_ids[top_col]].patch,
+        "top_learned_id": cand_ids[top_col],
+        "true_id": int(true_id),
+    }
+    return result, viz
+
+
+# A few current roots that the oldest-timestamp scan flagged as v117-era splits
+# (soma neurons with multiple historical fragments).  Used by the figure to skip
+# the expensive soma scan.
+KNOWN_SPLIT_ROOTS = [
+    864691135662059248, 864691135700637474, 864691135866022620,
+    864691135355803087, 864691136194738508, 864691136990837653,
+    864691135133705888, 864691135737524356,
+]
+
+
+def make_figure(out_png, embed_fn, cl, *, n_examples=6, n_scan=160, mip=1, roots=None):
+    """Render real v117 error sites: query face | true continuation | hash top pick."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    ts = cl.chunkedgraph.get_oldest_timestamp()
+    if roots is None:
+        roots = KNOWN_SPLIT_ROOTS
+    pool = []  # (result, viz) -- collect a pool, then select for display
+    target_pool = max(40, n_examples * 6)
+    for rt in roots:
+        try:
+            # prefer cleaner, shorter-gap interfaces for a legible figure
+            sites = sites_for_neuron(cl, rt, ts, max_gap_nm=2500.0)
+        except Exception:
+            continue
+        for s in sites:
+            try:
+                out = evaluate_site(s, embed_fn, mip=mip, collect=True)
+            except Exception:
+                out = None
+            if out is not None:
+                pool.append(out)
+        if len(pool) >= target_pool:
+            break
+    if not pool:
+        raise RuntimeError("no scorable sites for the figure")
+
+    # Show the clearest successes first (rank, then small gap); fall back to
+    # best-ranked overall if there are few hits. Ranks are labelled honestly.
+    pool.sort(key=lambda rv: (rv[0].rank_learned, rv[0].gap_nm))
+    picks = pool[:n_examples]
+    fig, axes = plt.subplots(len(picks), 3, figsize=(7.5, 2.4 * len(picks)))
+    if len(picks) == 1:
+        axes = axes[None, :]
+    for row, (res, viz) in enumerate(picks):
+        ok = res.top1_learned
+        cells = [
+            (viz["query"], f"query (main side)\nroot …{res.root % 100000}"),
+            (viz["true"], f"TRUE continuation\ngap {res.gap_nm:.0f} nm"),
+            (viz["top_learned"], f"hash top pick  {'✓' if ok else '✗'}\n"
+             f"rank {res.rank_learned + 1}/{res.n_candidates}"),
+        ]
+        for col, (img, title) in enumerate(cells):
+            ax = axes[row, col]
+            ax.imshow(img.T, cmap="gray", origin="lower")
+            ax.set_title(title, fontsize=8)
+            ax.set_xticks([]); ax.set_yticks([])
+    fig.suptitle("Cut-face hash at REAL v117 split errors", fontsize=11)
+    fig.tight_layout(rect=(0, 0, 1, 0.98))
+    fig.savefig(out_png, dpi=130)
+    plt.close(fig)
+    return out_png
 
 
 def _flatnorm(patch):
@@ -251,12 +363,20 @@ def main():
     ap.add_argument("--max-neurons", type=int, default=20, help="split neurons to evaluate")
     ap.add_argument("--mip", type=int, default=1)
     ap.add_argument("--out", default="experiments/fingerprints/v117_relink_metrics.json")
+    ap.add_argument("--figure", default=None, help="render a montage PNG and exit")
     args = ap.parse_args()
 
     from .learned_cutface_encoder import load_encoder, make_embed_fn
     embed_fn = make_embed_fn(load_encoder(args.encoder))
 
     cl = _client()
+
+    if args.figure:
+        print(f"[fig] building montage of real v117 error sites -> {args.figure}")
+        make_figure(args.figure, embed_fn, cl, mip=args.mip)
+        print(f"[out] wrote {args.figure}")
+        return
+
     print(f"[cave] scanning {args.n_scan} somas for v117-era splits ...")
     roots, ts = find_split_neurons(cl, n_scan=args.n_scan)
     print(f"[cave] {len(roots)} split neurons found; evaluating up to {args.max_neurons}")
