@@ -42,6 +42,7 @@ Thumbs.db
 models/*.pt
 models/*.npz
 models/*.json
+.v117_cache/
 models/scratch/
 
 # Curated keepers (force-add a new one with `git add -f` and add a manifest row)

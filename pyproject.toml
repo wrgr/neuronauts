@@ -50,7 +50,13 @@ llm = [
 neuronauts = "neuronauts.legacy.run:main"
 
 [tool.setuptools]
-packages = ["neuronauts", "neuronauts.legacy"]
+packages = [
+    "neuronauts",
+    "neuronauts.legacy",
+    "neuronauts.coassign",
+    "neuronauts.data",
+    "neuronauts.represent",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

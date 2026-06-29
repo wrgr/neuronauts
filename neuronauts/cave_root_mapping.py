@@ -8,7 +8,11 @@ from caveclient import CAVEclient
 
 
 def get_client(version: int, token: str | None = None) -> CAVEclient:
-    """Construct a CAVEclient for minnie65_public at a given materialization."""
+    """Construct a CAVEclient for minnie65_public at a given materialization.
+
+    Passing ``token`` authenticates the client without relying on a CAVE
+    secret file on disk — required when running in an ephemeral environment.
+    """
     client = CAVEclient("minnie65_public", auth_token=token)
     client.version = version
     return client
