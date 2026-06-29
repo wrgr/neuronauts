@@ -1,112 +1,136 @@
-# Thread: fingerprints
+# Cut-face fingerprints: can micro-ultrastructure re-link a severed neurite?
 
-**Goal.** Give each segmentation fragment (a v117 "atom") a **connectivity
-fingerprint** — an identity signature derived from *who it synapses with* (and
-where) — so that fragments of the same neuron can be retrieved as siblings.
-Where [tree_dna](../tree_dna/README.md) encodes a fragment's own *morphology*,
-fingerprints encode its *connectivity context*: synaptic partners, partner
-co-occurrence (TF-IDF over partner roots), and spatial proximity.
+A small, local experiment probing whether EM neurons carry an idiosyncratic
+"fingerprint" — a locality-sensitive **hash** of their cross-sectional
+ultrastructure — that uniquely re-links the two faces of a segmentation break,
+in the spirit of barcode-based identity methods (FISSEQ et al.).
 
-> **fingerprints ≠ tree-DNA.** They are two different identity cues for the same
-> stitching problem and live on different branches. Earlier docs conflated them;
-> this thread is the connectivity one.
+## The idea
 
-**Status:** external — the work lives on an unmerged branch, not in this tree.
-See [Findings](#findings-from-small-e2e-test-b9k2g) below for the quantitative
-summary from the earlier v117-atom probe.
+EM connectomics has a *self-inflicted* reconstruction problem. To image the
+tissue at all, we slice a continuous 3D object into ~40 nm sections and then ask
+an algorithm to stitch it back together. **Every true split error is a cut
+through what was, physically, one continuous process.** Across that cut the
+local ultrastructure — caliber, mitochondria, the axoplasmic / smooth ER,
+microtubule packing, membrane texture — was continuous.
 
-## Where the code is
+So the question becomes concrete and falsifiable:
 
-- **`claude/neuron-fingerprints-connectivity-jg95xp`** — the primary branch
-  (44 commits ahead of `main`, 0 behind as of 2026-06-29: strictly ahead and
-  PR-ready). Not merged here yet.
-- **`claude/small-e2e-test-B9k2g`** — related earlier probe: v117-atom
-  split-recovery via sibling retrieval (TF-IDF / cosine / proximity AUROC on real
-  v117 atoms). Its finding — real v117 atoms have too few synapses (median ~10)
-  to carry strong fingerprint content at the atomic scale — is the constraint
-  this thread is up against.
+> Given the top face of a severed neurite, can a hash of its local
+> ultrastructure rank the **true** bottom partner as its nearest neighbour,
+> against a panel of distractor neurites crossing the same plane — and does it
+> beat the trivial spatial-proximity cue that current pipelines already use?
 
-To read the branch: `git fetch origin claude/neuron-fingerprints-connectivity-jg95xp`
-then `git show FETCH_HEAD:<path>`.
+Ground truth is free: the public MICrONS proofread segmentation gives the
+*same* id to both sides of the cut, so the true partner of top-face `k` is
+bottom-face `k`. We cut a small volume at its z-midplane, remove a gap, hash the
+faces on either side, and rank matches.
 
-## Relationship to other threads
+No CAVE token needed — only the public EM + segmentation precomputed volumes.
 
-- Complements [tree_dna](../tree_dna/README.md): morphology (shape) + connectivity
-  (partners) are independent evidence for "same neuron".
-- Feeds the same global-assembly goal as
-  [cell_assignment](../cell_assignment/README.md) and the co-assignment /
-  stitch branches (`synapse-coassign`, `abstract-tree-stitch`).
+## What we measure
 
-## Findings from `small-e2e-test-B9k2g`
+Three hashes, plus baselines, all scored by top-1 re-identification:
 
-Source: `FRAGMENT_ASSEMBLY_RESULTS.md` on branch `claude/small-e2e-test-B9k2g`
-(250 v1412 cells, 927k synapses; branch closed after findings folded here).
+| Method | What it uses |
+|---|---|
+| `spatial` (baseline) | xy centroid proximity only — the cue current pipelines lean on |
+| `scalar` hash | aggregate ultrastructure summaries (caliber, intensity stats, dark-blob count, eccentricity) — position-free |
+| `PATCH` hash | the cross-section **image** itself: a translation-normalised, masked mean-intensity patch — keeps the *arrangement* of internal structure |
+| `fused` | standardised spatial + patch distances added |
+| `chance` | `1 / n_candidates` |
 
-### Synthetic fragment assembly (balanced PCA bisection)
+Three honesty controls:
 
-Each cell PCA-bisected into K disjoint fragments; top-1 = sibling recovered
-as the single nearest neighbor out of N−1 candidates.
+- **Gap sweep** (40 → 640 nm). Separates a true idiosyncratic *fingerprint*
+  from mere local *continuity*. A tiny gap is trivially matchable because
+  neurites are locally smooth; the question is how far the signal survives.
+- **Per-section normalisation** (`norm` column, `T`/`F`). EM contrast varies
+  section-to-section (staining / imaging batch effect). Two nearby faces share
+  that batch effect — a *processing-artifact* hash, not biology. We re-score
+  with each section z-scored to its own tissue; signal that survives is
+  structural.
+- **Hard subset.** Cases where spatial proximity picks the **wrong** partner —
+  the genuinely ambiguous breaks. `patch_on_hard` is the fraction of those the
+  image hash recovers (chance ≈ `1/n`).
 
-| K | conn-tfidf top-1 | top-10 | AUROC | proximity AUROC |
-|--:|--:|--:|--:|--:|
-| 2 (500 fragments) | **23.0%** | 65.6% | **0.952** | 0.789 |
-| 4 (1000)          | **30.0%** | 75.4% | **0.912** | 0.819 |
-| 8 (2000)          | **33.8%** | 72.4% | **0.851** | 0.825 |
+## How to run
 
-Key: **the fingerprint is a near-perfect narrower** — the median sibling ranks
-within ~1% of the haystack (narrowing factor 0.99+). Top-1 undersells it;
-top-50 hits 92% at K=2, 94% at K=4. Plain cosine and Jaccard trail TF-IDF;
-TF-IDF's downweighting of high-degree hub cells is doing real work.
+```bash
+pip install numpy scipy cloud-volume matplotlib   # plus a working `cryptography`
 
-Proximity fails at top-1 (0%) when the PCA bisection is adversarial (sibling
-halves placed far apart by construction), but connectivity stays strong.
-The trained path encoder (30 µm windows) scores below chance (AUROC 0.43–0.53)
-— the encoder's spatial scale doesn't compose into cell-level identity.
+# MIP1 (16 nm) — fast smoke run
+python -m experiments.fingerprints.fingerprint_break_resolution \
+  --mip 1 --size 320 320 80 \
+  --out experiments/fingerprints/results_mip1_smoke.json
 
-### Real v117 atoms (the actual working scale)
+# MIP0 (8 nm) — resolves finer ultrastructure (ER, microtubule bundles)
+python -m experiments.fingerprints.fingerprint_break_resolution \
+  --mip 0 --size 512 512 64 \
+  --figure experiments/fingerprints/cutface_montage_mip0.png \
+  --out experiments/fingerprints/results_mip0_smoke.json
+```
 
-Each v1412 cell decomposes into v117 root_ids (median **74 atoms/cell**,
-median **10 synapses/atom**). Ground truth: same v1412 parent = sibling.
+## What we found (smoke runs, single ~4–8 µm box)
 
-| min-syn | atoms | cells | conn-tfidf AUROC | proximity AUROC |
-|--:|--:|--:|--:|--:|
-| 5   | 6944 | 237 | 0.517 | **0.680** |
-| 20  | 1729 | 213 | 0.577 | **0.737** |
-| 50  |  770 | 159 | 0.679 | **0.800** |
-| 100 |  343 | 105 | 0.763 | **0.844** |
-| 200 |  142 |  56 | 0.871 | 0.885 |
+`results_mip0_smoke.json` (8 nm, 117 candidate neurites at the cut plane):
 
-**The synthetic experiment over-promised.** At the realistic atomic scale
-(min-syn 5), TF-IDF AUROC is 0.52 vs 0.68 for proximity. Real atoms have a
-median of ~10 synapses — not enough fingerprint content. Filtering to
-min-syn ≥ 100 recovers AUROC to 0.76, but at the cost of 74% of cells (237→63)
-and 95% of atoms. Proximity beats connectivity at every threshold.
+```
+gap_nm norm Ncand chance | top1: spatial  scalar  PATCH  FUSED | hard(N) patch_on_hard
+    40   F   117  0.009 |       0.716   0.018   0.220   0.596 |   31   0.161
+    80   F   118  0.008 |       0.626   0.009   0.140   0.514 |   40   0.050
+   160   F   117  0.009 |       0.485   0.010   0.087   0.330 |   53   0.057
+   320   F   121  0.008 |       0.289   0.062   0.082   0.206 |   69   0.058
+   640   F   119  0.008 |       0.101   0.038   0.101   0.190 |   71   0.113
+```
 
-### Split recovery vs. merge detection: different features
+(MIP1 in `results_mip1_smoke.json` is qualitatively identical, patch top-1
+≈ 0.30 at a 40 nm gap.)
 
-Partner-set coherence (TF-IDF cosine between two halves of a fragment):
-AUROC **0.69** for detecting wrongful merges, vs. **0.91** for spatial
-coherence. The features are complementary: use connectivity for *split
-recovery* (where proximity is adversarial), spatial coherence for *merge
-detection* (where the two fused cells are physically far apart).
+**Read-out:**
 
-### Design implications for the fingerprints thread
+1. **Cross-section *pattern* carries real identity; scalar summaries do not.**
+   The image-patch hash is ~20–30× chance and an order of magnitude above the
+   scalar-summary hash. Where you put the mitochondria/ER and what the footprint
+   shape is matters; mean intensity and a blob count do not.
 
-1. **Need ≥ ~100 synapses per atom** for the fingerprint to carry signal.
-   Possible fix: aggregate atoms into "scaffolds" before fingerprinting, or
-   route small atoms to a different mechanism.
-2. **TF-IDF as a candidate filter, not a ranker.** Even at AUROC 0.52, the
-   narrowing factor stays at 0.985+ — fingerprint narrows 6944 candidates to
-   ~50 for downstream disambiguation.
-3. **The path encoder's 30 µm scale is the bottleneck.** AUROC 0.43 on this
-   task. Extending it to whole-cell or multi-scale representations is the lever.
-4. **Combine proximity + connectivity** at the atomic scale. Neither alone
-   exceeds AUROC 0.70 at realistic min-syn; together they plausibly do.
+2. **It resolves a meaningful slice of the genuinely ambiguous breaks.** On the
+   *hard* subset — where proximity picks the wrong partner — the image hash alone
+   recovers ~16% at a 40 nm gap (chance < 1%). That is identity information
+   beyond position.
 
-## Graduation
+3. **But it is a short-range hash, not a long-range barcode.** Matchability
+   decays over a few hundred nm. The signal behaves like *local continuity* of
+   ultrastructure, not a globally unique molecular barcode. Useful for the
+   short gaps that dominate real splits; not a whole-cell identifier.
 
-When it lands: open a PR from `claude/neuron-fingerprints-connectivity-jg95xp`,
-and if the fingerprint retrieval beats the baselines above on real v117 atoms,
-fold the encoder into the `represent/` stage alongside tree-DNA. The threshold
-to beat is proximity AUROC 0.68 at min-syn 5 (all atoms) or 0.84 at min-syn
-100 (large atoms only).
+4. **The signal is substantially structural, not just staining.** Per-section
+   normalisation (`norm=T`) reduces but does not kill it — so it is not merely
+   the section-level contrast batch effect.
+
+5. **Naive fusion with proximity does not win.** For small artificial gaps
+   proximity is near-perfect, so equal-weight fusion adds noise. The payoff is
+   as a **tie-breaker** on ambiguous edges, not a global replacement for
+   proximity.
+
+![cut-face montage](cutface_montage_mip0.png)
+
+*Each row: query top face · true partner · the hash's top pick. The query faces
+are visibly brighter (a per-section staining offset) yet still match — the hash
+keys on shape/texture pattern, which it survives.*
+
+## Honest limitations & obvious next steps
+
+- One box, one cut plane, hand-crafted patch hash. The patch is a raw masked
+  mean-intensity crop with **no rotation normalisation** and no learning — it
+  almost certainly *under*-reads the available signal. A learned embedding
+  (small CNN / contrastive head trained to pull true partners together) is the
+  natural next step and is exactly what would exploit ER / microtubule
+  arrangement that a raw 8 nm crop is too noisy to expose cleanly.
+- "Break" here is a clean planar z-cut. Real splits are at membrane-ambiguous
+  3D surfaces; the partner panel and face extraction would change.
+- The right place to deploy this in the existing pipeline is the boundary-edge
+  resolver in `neuronauts/em_corridor.py`: replace / augment the intensity
+  heuristic with a cut-face hash similarity as an edge feature.
+- Bigger evaluation: many boxes, report rank distributions, and restrict to the
+  hard subset where it actually pays.
