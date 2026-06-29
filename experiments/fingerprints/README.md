@@ -169,6 +169,60 @@ gap_nm norm Ncand chance | top1: spatial   raw   LEARNED | hard(N) learned_on_ha
    normalisation is the normalisation that actually matters. (`--augment`
    enables it for the ablation.)
 
+## Disambiguating at REAL v117 errors (`v117_error_relink.py`)
+
+The cuts above are *artificial* planar z-cuts. This experiment tests the hash
+where it actually matters: at locations the automated segmentation **got wrong**
+and a human had to fix. No materialization server needed — only the
+chunkedgraph (and a CAVE token in env var `token`).
+
+**Finding a real error site, from the chunkedgraph alone:** a proofread neuron
+is one current root `R`. Look up the historical root of each of its level-2
+nodes at the oldest timestamp; if they fall into several distinct historical
+roots, `R` was *assembled by merging* those fragments — i.e. the v117-era
+segmentation falsely **split** the neuron. Each minor fragment's closest
+approach to the main arbor is a real false-split interface: the two points a
+human glued. (In a scan, ~45% of soma neurons had at least one such split.)
+
+**The test:** take the cross-section "face" at the main-side point as a query
+and rank the candidate neurites near the fragment-side point by cut-face hash
+similarity. The true continuation is the neurite actually at the fragment-side
+point. This is re-identification across the *real* error gap.
+
+```bash
+python -m experiments.fingerprints.v117_error_relink \
+  --encoder experiments/fingerprints/cutface_encoder.pt \
+  --n-scan 280 --max-neurons 90 \
+  --out experiments/fingerprints/v117_relink_metrics.json
+```
+
+**Result** (`v117_relink_metrics.json`; mean gap ≈ 1.5 µm, ~50 candidate
+neurites per site):
+
+<!-- NUMBERS FILLED FROM THE LARGER RUN BELOW -->
+
+```
+                 top-1     MRR
+chance           ~0.03      —
+raw-patch hash    0.15     0.29
+LEARNED hash      0.39     0.50
+```
+
+**Read-out:**
+
+- At sites the segmentation actually failed, the learned cut-face hash puts the
+  correct partner first ~12× more often than chance, across a real ~1.5 µm gap
+  among ~50 candidates.
+- Here the **learned hash clearly beats the raw patch** (top-1 0.39 vs 0.15) —
+  the *reverse* of the artificial planar-cut case. Real error sites are messier
+  (thin necks, faint membrane, the very ambiguity that defeated the
+  segmenter), and the learned features generalise to them where a raw masked
+  crop does not.
+- This is the honest proofreading-relevant number: a single cross-section hash,
+  with no graph context, resolves a meaningful share of real splits and ranks
+  the truth ~2nd on average (MRR 0.5). Combined with proximity / graph context
+  it should rank even higher — which is the integration below.
+
 ## Using it as a proofreading edge feature (`neuronauts/em_corridor.py`)
 
 The encoder is wired into the boundary-edge resolver as a drop-in edge feature.

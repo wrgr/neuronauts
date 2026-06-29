@@ -1,0 +1,140 @@
+{
+  "n_sites": 13,
+  "chance_top1": 0.03322113231237194,
+  "top1_raw": 0.15384615384615385,
+  "top1_learned": 0.38461538461538464,
+  "mrr_raw": 0.2853708673077868,
+  "mrr_learned": 0.5002502526209424,
+  "sites": [
+    {
+      "root": 864691134966306591,
+      "gap_nm": 316.1771655259121,
+      "n_candidates": 65,
+      "rank_learned": 31,
+      "rank_raw": 63,
+      "top1_learned": false,
+      "top1_raw": false,
+      "sim_learned_true": 0.48996496200561523
+    },
+    {
+      "root": 864691134966306591,
+      "gap_nm": 4092.662702935584,
+      "n_candidates": 48,
+      "rank_learned": 1,
+      "rank_raw": 1,
+      "top1_learned": false,
+      "top1_raw": false,
+      "sim_learned_true": 0.5874060392379761
+    },
+    {
+      "root": 864691135133705888,
+      "gap_nm": 536.6563145999495,
+      "n_candidates": 20,
+      "rank_learned": 0,
+      "rank_raw": 0,
+      "top1_learned": true,
+      "top1_raw": true,
+      "sim_learned_true": 0.9746190905570984
+    },
+    {
+      "root": 864691135209995456,
+      "gap_nm": 435.9082472264089,
+      "n_candidates": 23,
+      "rank_learned": 0,
+      "rank_raw": 20,
+      "top1_learned": true,
+      "top1_raw": false,
+      "sim_learned_true": 0.9513837695121765
+    },
+    {
+      "root": 864691135308222022,
+      "gap_nm": 3489.3575339881695,
+      "n_candidates": 85,
+      "rank_learned": 5,
+      "rank_raw": 3,
+      "top1_learned": false,
+      "top1_raw": false,
+      "sim_learned_true": 0.6708641052246094
+    },
+    {
+      "root": 864691135355803087,
+      "gap_nm": 835.3011433010253,
+      "n_candidates": 69,
+      "rank_learned": 1,
+      "rank_raw": 67,
+      "top1_learned": false,
+      "top1_raw": false,
+      "sim_learned_true": 0.7507410049438477
+    },
+    {
+      "root": 864691135355803087,
+      "gap_nm": 941.6920940519783,
+      "n_candidates": 52,
+      "rank_learned": 0,
+      "rank_raw": 1,
+      "top1_learned": true,
+      "top1_raw": false,
+      "sim_learned_true": 0.6896930932998657
+    },
+    {
+      "root": 864691135355803087,
+      "gap_nm": 1210.2231199245864,
+      "n_candidates": 63,
+      "rank_learned": 13,
+      "rank_raw": 59,
+      "top1_learned": false,
+      "top1_raw": false,
+      "sim_learned_true": 0.47279632091522217
+    },
+    {
+      "root": 864691135355803087,
+      "gap_nm": 2235.137579658129,
+      "n_candidates": 100,
+      "rank_learned": 57,
+      "rank_raw": 37,
+      "top1_learned": false,
+      "top1_raw": false,
+      "sim_learned_true": 0.24803519248962402
+    },
+    {
+      "root": 864691135355803087,
+      "gap_nm": 3314.8683231766536,
+      "n_candidates": 107,
+      "rank_learned": 5,
+      "rank_raw": 0,
+      "top1_learned": false,
+      "top1_raw": true,
+      "sim_learned_true": 0.7459309101104736
+    },
+    {
+      "root": 864691135403706094,
+      "gap_nm": 321.6955082061296,
+      "n_candidates": 12,
+      "rank_learned": 0,
+      "rank_raw": 11,
+      "top1_learned": true,
+      "top1_raw": false,
+      "sim_learned_true": 0.8895208835601807
+    },
+    {
+      "root": 864691135454964586,
+      "gap_nm": 480.3332176728984,
+      "n_candidates": 9,
+      "rank_learned": 0,
+      "rank_raw": 4,
+      "top1_learned": true,
+      "top1_raw": false,
+      "sim_learned_true": 0.9544909000396729
+    },
+    {
+      "root": 864691135474942016,
+      "gap_nm": 662.214466770396,
+      "n_candidates": 37,
+      "rank_learned": 19,
+      "rank_raw": 17,
+      "top1_learned": false,
+      "top1_raw": false,
+      "sim_learned_true": 0.4433518648147583
+    }
+  ]
+}
