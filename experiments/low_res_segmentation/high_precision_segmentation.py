@@ -577,7 +577,10 @@ class HighPrecisionSegmentation3D:
             boundary_mask = boundary_mask & (refined_labels == 0)
 
             # Voxels with high gradient stay as boundary
-            high_grad = grad_mag > np.percentile(grad_mag[boundary_mask], 75)
+            boundary_vals = grad_mag[boundary_mask]
+            if boundary_vals.size == 0:
+                continue
+            high_grad = grad_mag > np.percentile(boundary_vals, 75)
             refined_labels[boundary_mask & ~high_grad] = 0
 
         return SegmentationResult(
