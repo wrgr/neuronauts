@@ -169,7 +169,8 @@ def _edge_benefit(net, o):
     return out
 
 
-def run_learned_cv(sidetable, skel_cache, folds, epochs, seed, max_rounds, min_side, tau, topk):
+def run_learned_cv(sidetable, skel_cache, folds, epochs, seed, max_rounds, min_side, tau, topk,
+                   axon_tau=0.0):
     from sklearn.model_selection import GroupKFold
     from experiments.pcfg_synapse_partitions.seam_detector import build_objects
     d = np.load(sidetable)
@@ -184,9 +185,10 @@ def run_learned_cv(sidetable, skel_cache, folds, epochs, seed, max_rounds, min_s
     print(f"learned-cut CV: {len(objs)} merge objects, {len(np.unique(groups))} cells")
 
     corr_auto = tab.root_v117.copy()
+    corr_axon = tab.root_v117.copy()       # axon-aware abstention (per-object tau raised by axon-ness)
     corr_assist = tab.root_v117.copy()
     nid = [int(tab.root_v117.max()) + 1]
-    used, ns_auto, ns_assist = [], 0, 0
+    used, ns_auto, ns_axon, ns_assist = [], 0, 0, 0
     gkf = GroupKFold(n_splits=max(2, min(folds, len(np.unique(groups)))))
     for fold, (tr, te) in enumerate(gkf.split(objs, np.zeros(len(objs)), groups)):
         net = _train_seam([objs[i] for i in tr], epochs, seed)
@@ -213,6 +215,19 @@ def run_learned_cv(sidetable, skel_cache, folds, epochs, seed, max_rounds, min_s
                 best = max(cands, key=lambda v: edge_ben(obj, v))
                 return best if edge_ben(obj, best) > tau else None
 
+            # axon-aware autonomous: raise tau in proportion to this object's axon (pre-side)
+            # fraction, so axon-dominated merges -- where the seam signal is weak and the GNN
+            # over-cuts -- abstain more and fall back to do-nothing (net 0) instead of a bad cut.
+            pre_frac = float(np.mean(tab.side[idxs] == 0)) if len(idxs) else 0.0
+            tau_eff = tau + axon_tau * pre_frac
+
+            def choose_auto_axon(obj, rows_local, cnt, tot):
+                cands = _candidates(obj, rows_local, cnt, tot, min_side)
+                if not cands:
+                    return None
+                best = max(cands, key=lambda v: edge_ben(obj, v))
+                return best if edge_ben(obj, best) > tau_eff else None
+
             # human-assist: top-k by benefit, human (oracle) verifies -> pick min disagreement, only if it helps
             def choose_assist(obj, rows_local, cnt, tot):
                 cands = _candidates(obj, rows_local, cnt, tot, min_side)
@@ -237,6 +252,7 @@ def run_learned_cv(sidetable, skel_cache, folds, epochs, seed, max_rounds, min_s
                 return best_v
 
             for choose, corr, kind in ((choose_auto, corr_auto, "auto"),
+                                       (choose_auto_axon, corr_axon, "axon"),
                                        (choose_assist, corr_assist, "assist")):
                 cells = correct_object_cb(obj, lab_index, choose, max_rounds=max_rounds, min_side=min_side)
                 nsplits = max(0, len(cells) - 1)
@@ -246,11 +262,15 @@ def run_learned_cv(sidetable, skel_cache, folds, epochs, seed, max_rounds, min_s
                         corr[idxs[li]] = cid
                 if kind == "auto":
                     ns_auto += nsplits
+                elif kind == "axon":
+                    ns_axon += nsplits
                 else:
                     ns_assist += nsplits
 
-    print("\n=== LEARNED cut, AUTONOMOUS (abstaining) ===")
+    print("\n=== LEARNED cut, AUTONOMOUS flat-tau (abstaining) ===")
     conn_metric.evaluate(tab, corr_auto, used, n_splits=ns_auto, n_merges=0)
+    print(f"\n=== LEARNED cut, AUTONOMOUS axon-aware tau (+{axon_tau:.2f}*axon_frac) ===")
+    conn_metric.evaluate(tab, corr_axon, used, n_splits=ns_axon, n_merges=0)
     print(f"\n=== LEARNED cut, HUMAN-ASSIST (top-{topk}, verified) ===")
     conn_metric.evaluate(tab, corr_assist, used, n_splits=ns_assist, n_merges=0)
 
@@ -268,11 +288,13 @@ def main():
     ap.add_argument("--tau", type=float, default=0.1)
     ap.add_argument("--topk", type=int, default=5)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--axon-tau", type=float, default=0.4,
+                    help="extra abstention tau applied as axon_tau*axon_fraction per object")
     args = ap.parse_args()
 
     if args.cut == "learned":
         run_learned_cv(args.sidetable, args.skel_cache, args.folds, args.epochs, args.seed,
-                       args.max_rounds, 2, args.tau, args.topk)
+                       args.max_rounds, 2, args.tau, args.topk, axon_tau=args.axon_tau)
         return
 
     d = np.load(args.sidetable)

@@ -503,3 +503,39 @@ in aggregate -- the data-starvation thesis confirmed. The pre/post split shows w
 vertices, 3.9% seam): SimHash cosine-LSH retrieves seams from a seam query at **5.21x base rate /
 6.05x over a non-seam location** (was 2.98x / 4.12x on the column). More data -> more separable
 merge-seam signature -> a stronger content-addressable error prior.
+
+## Axon frontier: oracle proves it's a model gap; axon-aware abstention removes the harm
+
+The autonomous learned cut's residual weakness is the **pre-side (axon): -60%** while the
+dendrite side is positive. Two experiments localize and partly close it (big sample, 513 obj).
+
+**1. Oracle cut isolates the cause to the MODEL, not the operator.** Running the oracle edge
+(labels pick the cut, no GNN) on the same objects:
+
+| side | learned cut | oracle cut |
+|---|---|---|
+| pre (axon)      | -60.4% | **+91.9%** |
+| post (dendrite) | +5.6%  | +84.6% |
+| pooled          | +4.6%  | +88.6% |
+| connectivity    | 0.892  | 0.991 |
+
+Axons are the *best* side under the oracle (+91.9%) -- entirely cuttable. So the -60% is purely
+the seam GNN mis-locating the cut on axon merges (weak seam signal: uniform thin caliber, pre-heavy
+on both sides). Not a metric/operator limit.
+
+**2. Axon-aware abstention (raise tau by axon-fraction) removes the harm.** Per object,
+`tau_eff = tau + 0.4*axon_frac`, so axon-dominated merges abstain more and fall back to do-nothing:
+
+| autonomous policy | pre/axon | post | pooled | splits | connectivity |
+|---|---|---|---|---|---|
+| flat tau        | -63.8% | +5.2% | +4.1% | 1221 | 0.890 |
+| **axon-aware tau** | **+0.9%** | +6.6% | **+8.1%** | 670 | 0.881 |
+
+Pre-side recovers -63.8% -> +0.9% (to the do-nothing floor); pooled net doubles +4.1% -> +8.1%;
+~half the cuts (the harmful axon ones) are abstained. Honest tradeoff: connectivity dips 0.890 ->
+0.881 -- abstaining leaves some axon merges uncut, so a few synapses keep a wrong pre-side
+(connectivity needs both sides). So abstention is a do-no-harm knob, not the upside.
+
+**Frontier, now precise:** abstention caps axons at the do-nothing floor (~0); the oracle shows
++92% is available if the *right* axon edge is found. Closing that is an edge-SELECTION problem
+(more Track B data / axon-specific seam features), not abstention.
