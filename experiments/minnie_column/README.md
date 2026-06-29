@@ -1,5 +1,9 @@
 # Minnie Column experiments
 
+> **Status: active (data)** — experiment thread; see the index in
+> [`../README.md`](../README.md). The bounded, full-depth ROI testbed for global
+> assembly.
+
 Implements the workflow in [`docs/minnie_column_paradigm.md`](../../docs/minnie_column_paradigm.md) and **[`docs/minnie_column_downloads.md`](../../docs/minnie_column_downloads.md)** (EM, seg, meshes, skeletons, synapse tables).
 
 ## Prerequisites

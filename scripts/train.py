@@ -325,7 +325,7 @@ def cmd_build_dataset(args: argparse.Namespace) -> int:
         )
     elif strategy == "proofread-core":
         try:
-            from experiments.root_neighborhood_dataset import (
+            from experiments.root_neighborhood.dataset import (
                 build_root_neighborhood_cache,
                 sample_proofread_roots,
             )

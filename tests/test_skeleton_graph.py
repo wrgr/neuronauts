@@ -69,6 +69,10 @@ class FetchRootSkeletonTest(unittest.TestCase):
             def __init__(self, datastack, server_address=None, auth_token=None):
                 self.version = None
                 self.skeleton = FakeSkeletonService()
+                # fetch_root_skeletons stubs client.info.segmentation_cloudvolume
+                # to skip cloudvolume root validation; the fake needs an assignable
+                # `info` for that to work (a real CAVEclient has one).
+                self.info = mock.Mock()
 
         with mock.patch.dict("sys.modules", {"caveclient": mock.Mock(CAVEclient=FakeClient)}):
             out = fetch_root_skeletons([101, 202], version=117)

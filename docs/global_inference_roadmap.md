@@ -1,5 +1,9 @@
 ## Neuronauts: Global Inference Roadmap
 
+> ⚠️ **Superseded by [`roadmap_global_assembly.md`](roadmap_global_assembly.md).**
+> Kept for history; see [`../README.md`](../README.md) for the pipeline that runs
+> today.
+
 This document tracks the planned transition from the current box-scale grammar and heuristic assembly toward a scaffold-aware, globally optimized connectome inference system.
 
 ### PR 1: Transformer-Based Multi-Modal Path Encoding ✓ COMPLETE

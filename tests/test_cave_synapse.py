@@ -1,5 +1,5 @@
-"""Tests for CAVE synapse/degree modules (cave_synapse_degrees_v1412,
-cave_synapse_counts_v1412) using mocked CAVEclient.
+"""Tests for the consolidated CAVE synapse/degree module
+(neuronauts.cave_synapse) using a mocked CAVEclient.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ class BuildRootTableDegreesTest(unittest.TestCase):
     """Test build_root_table in cave_synapse_degrees_v1412 (pure logic)."""
 
     def test_build_root_table_sums_in_out_and_flags_soma(self):
-        from neuronauts.cave_synapse_degrees_v1412 import build_root_table
+        from neuronauts.cave_synapse import build_degree_root_table as build_root_table
 
         deg_df = pd.DataFrame({
             "root_id": [100, 200, 300],
@@ -34,7 +34,7 @@ class BuildRootTableDegreesTest(unittest.TestCase):
         self.assertEqual(list(result["has_soma"]), [False, True, True])
 
     def test_build_root_table_sorts_by_total_descending(self):
-        from neuronauts.cave_synapse_degrees_v1412 import build_root_table
+        from neuronauts.cave_synapse import build_degree_root_table as build_root_table
 
         deg_df = pd.DataFrame({
             "root_id": [1, 2, 3],
@@ -49,7 +49,7 @@ class BuildRootTableCountsTest(unittest.TestCase):
     """Test build_root_table in cave_synapse_counts_v1412 (pure logic)."""
 
     def test_build_root_table_combines_pre_post_counts(self):
-        from neuronauts.cave_synapse_counts_v1412 import build_root_table
+        from neuronauts.cave_synapse import build_counts_root_table as build_root_table
 
         pre_counts = {10: 50, 20: 30}
         post_counts = {10: 20, 30: 5}
@@ -70,7 +70,7 @@ class FetchDegreeTableMockedTest(unittest.TestCase):
     """Test fetch_degree_table with mocked CAVE client."""
 
     def test_fetch_degree_table_normalizes_pt_root_id_column(self):
-        from neuronauts.cave_synapse_degrees_v1412 import fetch_degree_table
+        from neuronauts.cave_synapse import fetch_degree_table
 
         mock_df = pd.DataFrame({
             "pt_root_id": [100, 200],
@@ -92,7 +92,7 @@ class FetchSomaRootsMockedTest(unittest.TestCase):
     """Test fetch_soma_roots with mocked client."""
 
     def test_fetch_soma_roots_uses_soma_counts_when_available(self):
-        from neuronauts.cave_synapse_degrees_v1412 import fetch_soma_roots
+        from neuronauts.cave_synapse import fetch_soma_roots
 
         mock_client = MagicMock()
         mock_client.materialize.get_tables.return_value = ["soma_counts", "other"]
@@ -109,11 +109,11 @@ class GetClientTest(unittest.TestCase):
     """Smoke test get_client (no network if we patch CAVEclient)."""
 
     def test_get_client_returns_client_with_version(self):
-        with patch("neuronauts.cave_synapse_degrees_v1412.CAVEclient") as MockCAVE:
+        with patch("neuronauts.cave_synapse.CAVEclient") as MockCAVE:
             mock_inst = MagicMock()
             MockCAVE.return_value = mock_inst
 
-            from neuronauts.cave_synapse_degrees_v1412 import get_client
+            from neuronauts.cave_synapse import get_client
 
             client = get_client(version=1412)
             self.assertIs(client, mock_inst)

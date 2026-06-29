@@ -45,7 +45,7 @@ class TrainCliProofreadCoreTest(unittest.TestCase):
             calls["sample"] = kwargs
             return [111, 222]
 
-        fake_module = types.ModuleType("experiments.root_neighborhood_dataset")
+        fake_module = types.ModuleType("experiments.root_neighborhood.dataset")
         fake_module.build_root_neighborhood_cache = _fake_build_root_neighborhood_cache
         fake_module.sample_proofread_roots = _fake_sample_proofread_roots
 
@@ -81,7 +81,7 @@ class TrainCliProofreadCoreTest(unittest.TestCase):
                 proofread_require_axon=False,
             )
 
-            with mock.patch.dict(sys.modules, {"experiments.root_neighborhood_dataset": fake_module}):
+            with mock.patch.dict(sys.modules, {"experiments.root_neighborhood.dataset": fake_module}):
                 rc = self.mod.cmd_build_dataset(args)
 
         self.assertEqual(rc, 0)
@@ -101,7 +101,7 @@ class TrainCliProofreadCoreTest(unittest.TestCase):
             calls["sample"] = kwargs
             return [303, 404]
 
-        fake_module = types.ModuleType("experiments.root_neighborhood_dataset")
+        fake_module = types.ModuleType("experiments.root_neighborhood.dataset")
         fake_module.build_root_neighborhood_cache = _fake_build_root_neighborhood_cache
         fake_module.sample_proofread_roots = _fake_sample_proofread_roots
 
@@ -130,7 +130,7 @@ class TrainCliProofreadCoreTest(unittest.TestCase):
                 proofread_require_axon=True,
             )
 
-            with mock.patch.dict(sys.modules, {"experiments.root_neighborhood_dataset": fake_module}):
+            with mock.patch.dict(sys.modules, {"experiments.root_neighborhood.dataset": fake_module}):
                 rc = self.mod.cmd_build_dataset(args)
 
         self.assertEqual(rc, 0)
