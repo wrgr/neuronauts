@@ -179,18 +179,54 @@ def sites_from_l2_graph(cl, root, ts, *, min_gap_nm=300.0, max_gap_nm=3000.0,
     of a sampling-inflated closest-approach estimate.
 
     Returns de-duplicated :class:`ErrorSite`s (one per ~``dedup_nm`` region).
+
+    Results are cached to disk per (root, params): site-finding is the dominant,
+    uncached CAVE cost (~15-30 s/neuron), repeated on every run.  Set
+    ``SITES_CACHE=""`` to disable.
     """
     from collections import defaultdict
+
+    cache_dir = os.environ.get("SITES_CACHE", "data/sites_cache")
+    cache_path = None
+    if cache_dir:
+        cache_path = os.path.join(
+            cache_dir, f"{int(root)}_{int(min_gap_nm)}_{int(max_gap_nm)}_"
+                       f"{min_frag_l2}_{max_sites}_{int(dedup_nm)}.json")
+        if os.path.exists(cache_path):
+            try:
+                rows = json.load(open(cache_path))
+                return [ErrorSite(root=int(r["root"]),
+                                  pos_main_nm=tuple(r["pos_main_nm"]),
+                                  pos_frag_nm=tuple(r["pos_frag_nm"]),
+                                  gap_nm=float(r["gap_nm"]), frag_l2=int(r["frag_l2"]),
+                                  tangent_nm=tuple(r["tangent_nm"])) for r in rows]
+            except Exception:
+                pass
+
+    def _save(site_list):
+        if not cache_path:
+            return
+        try:
+            os.makedirs(cache_dir, exist_ok=True)
+            rows = [{"root": s.root, "pos_main_nm": list(s.pos_main_nm),
+                     "pos_frag_nm": list(s.pos_frag_nm), "gap_nm": s.gap_nm,
+                     "frag_l2": s.frag_l2, "tangent_nm": list(s.tangent_nm)} for s in site_list]
+            tmp = cache_path + f".tmp{os.getpid()}"
+            json.dump(rows, open(tmp, "w"))
+            os.replace(tmp, cache_path)
+        except Exception:
+            pass
+
     cg = cl.chunkedgraph
     edges = np.asarray(cg.level2_chunk_graph(int(root)))
     if edges.ndim != 2 or len(edges) == 0:
-        return []
+        _save([]); return []
     nodes = np.unique(edges)
     hist = np.asarray(cg.get_roots(nodes, timestamp=ts))
     hm = {int(n): int(h) for n, h in zip(nodes.tolist(), hist.tolist())}
     nz = hist[hist != 0]
     if len(nz) == 0:
-        return []
+        _save([]); return []
     frags, counts = np.unique(nz, return_counts=True)
     size = {int(f): int(c) for f, c in zip(frags.tolist(), counts.tolist())}
 
@@ -203,7 +239,7 @@ def sites_from_l2_graph(cl, root, ts, *, min_gap_nm=300.0, max_gap_nm=3000.0,
     hb = np.array([hm[int(b)] for b in edges[:, 1]])
     cross = edges[ha != hb]
     if len(cross) == 0:
-        return []
+        _save([]); return []
 
     pairs, want = [], set()
     for a, b in cross:
@@ -223,7 +259,7 @@ def sites_from_l2_graph(cl, root, ts, *, min_gap_nm=300.0, max_gap_nm=3000.0,
                     if hm.get(n2) == hm[m]:
                         want.add(n2)
     if not pairs:
-        return []
+        _save([]); return []
 
     want = np.array(sorted(want))
     pos = _l2_positions(cl, want)
@@ -257,6 +293,7 @@ def sites_from_l2_graph(cl, root, ts, *, min_gap_nm=300.0, max_gap_nm=3000.0,
                                tangent_nm=tuple(tangent.tolist())))
         if len(sites) >= max_sites:
             break
+    _save(sites)
     return sites
 
 
