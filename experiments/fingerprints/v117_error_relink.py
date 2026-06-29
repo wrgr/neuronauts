@@ -98,13 +98,17 @@ def find_split_neurons(cl, n_scan=120, seed=7, min_l2=20):
 
 
 def sites_for_neuron(cl, root, ts, *, min_gap_nm=300.0, max_gap_nm=5000.0,
-                     min_frag_l2=4, max_sites=6, main_sample=300, frag_sample=120,
+                     min_frag_l2=4, max_sites=10, main_sample=800, frag_sample=400,
                      lvs=None, hist=None) -> list[ErrorSite]:
     """Locate real false-split interfaces inside one neuron.
 
     Only looks up rep coordinates for the minor fragments plus a *sample* of the
     main arbor -- not all L2 nodes -- because position lookups are the dominant
     network cost.  Pass precomputed ``lvs``/``hist`` to avoid re-querying.
+
+    ``main_sample``/``frag_sample`` trade gap accuracy for lookup cost: too small
+    a sample over-estimates the true closest-approach gap (and wrongly drops
+    proposable sites under a tight ``max_gap_nm``), so they default generously.
     """
     cg = cl.chunkedgraph
     if lvs is None or hist is None:
