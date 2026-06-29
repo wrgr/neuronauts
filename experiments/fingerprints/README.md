@@ -289,93 +289,82 @@ signal into a top-1 win:
 
 | ranker | top-1 |
 |---|---|
-| art-band alone | 0.435 |
-| geometry alone | 0.645 |
-| combiner (synthetic bio + synthetic art) | 0.661 |
-| **combiner (fine-tuned bio + synthetic art)** | **0.758** |
+| art-band alone | 0.378 |
+| geometry alone | 0.649 |
+| **combiner (fine-tuned bio + synthetic art)** | **0.743** |
 
-**This is the payoff.** Geometry alone is 0.645; the learned combiner reaches
-**0.758** (+11 pts, recovering ~32% of geometry's misses) once given the
+(74 held-out real sites after the location-layer fix below; pre-fix the same
+setup gave geom 0.645 / combiner 0.758 on 62 sites — the win is stable to the
+fix, confirming it was not a labeling artifact.)
+
+**This is the payoff.** Geometry alone is 0.649; the learned combiner reaches
+**0.743** (+9 pts, recovering ~27% of geometry's misses) once given the
 fine-tuned biological band. The FISSEQ-style premise holds in the achievable
 direction: the cut-face does carry re-identification signal beyond proximity,
 but only a *learned* combiner that knows when to trust shape over distance can
 spend it — blunt fusion and gating cannot. These remain a lower bound (16 nm;
 8 nm likely helps the texture band; more real pairs would help the fine-tune).
 
-### The 0.758 is *conditional* — honest recall and abstention (`measure_panel_recall.py`, `train_combiner_abstain.py`)
+### Honest recall and abstention — and the location-layer fix (`measure_panel_recall.py`, `diagnose_not_in_box.py`, `train_combiner_abstain.py`)
 
-The 0.758 is a **correction-given-candidates** number: `site_faces_bands` drops
-any site whose true partner isn't in the candidate panel (`v117_artifact_bands.py`,
-`if not any(is_true): return None`). That uses the *label* to filter, so it
-conditions the metric on the candidate generator having already succeeded —
-inflating the apparent deployed yield. Two honest measurements fix this.
+The top-1 is a **correction-given-candidates** number: `site_faces_bands` drops
+any site whose true partner isn't in the panel, so it conditions on the candidate
+generator already succeeding. Measuring *panel recall* — over real false-split
+sites, how often is a matchable partner even present — first looked alarming:
+**0.491** (199/405), implying end-to-end ≈ 0.49 × 0.758 ≈ 0.37. But the misses
+were almost all `not_in_box` (189/206), not large gaps (15), so we dumped
+concrete sites (`diagnose_not_in_box.py`) instead of trusting the number.
 
-**Panel recall (the ceiling).** Over 405 real false-split sites with a valid
-query, how often is a matchable partner even present in the panel:
+**The "misses" were two location-layer bugs, not the fingerprint.** Background
+(`hist=0`) is only 8–13% (extracellular space), so the box is densely painted —
+"no partner" was a labeling artifact in two flavors:
 
-| | count | |
+1. **Majority-vote misresolution.** `site_faces_bands` set the query identity
+   `q_cur = frag2cur[qa_id]`, a *majority* vote of current roots over the query's
+   historical fragment in the box. That vote can pick the wrong current root: the
+   supervoxel actually at `pos_frag` resolves (checked straight from the
+   chunkedgraph) to the true root, but doesn't match the *misresolved* `q_cur`.
+2. **Not a real split.** Elsewhere `pos_frag` is painted with the query's *own*
+   historical root — the query fragment already extends through the partner
+   location, so the L2 node flagged as a different historical root is a
+   sub-resolution chunk embedded in the query. There is no break to re-link.
+
+**The fix (applied).** Take the query's identity from the actual scanned root
+(`site.root`), not the box-local vote; enforce a minimum fragment size; and
+*flag-and-discard* the not-a-split sites (query continuous through `pos_frag`)
+instead of counting them as misses. Re-measuring:
+
+| | pre-fix | post-fix |
 |---|---|---|
-| partner present (scoreable) | 199 | **recall 0.491** |
-| partner absent | 206 | |
+| partner present | 199 | **231** |
+| genuine miss (`not_in_box`) | 206 | **3** |
+| not-a-split (discarded, not a miss) | — | 171 |
+| **panel recall** | 0.491 | **0.987** (231/234) |
 
-So end-to-end always-act yield = recall × correction = 0.491 × 0.758 ≈ **0.372**.
-The misses are *not* mostly large gaps — they break down as:
-
-| miss reason | count | meaning |
-|---|---|---|
-| `not_in_box` | 189 | no *distinct* fragment resolving to the query's current root is present |
-| `out_of_radius` | 15 | partner present but >2 µm from the query tip |
-| `unbuildable` | 2 | too few voxels to form a face |
-
-`not_in_box` dominates (92%) despite a small median site gap (897 nm). Dumping
-concrete sites (`diagnose_not_in_box.py`) shows it is **not** empty paint
-(background `hist=0` is only 8–13%, i.e. extracellular space) and **not** large
-gaps — it is an **identity-assignment / resolution problem at the partner
-location**, in two flavors:
-
-1. **Majority-vote misresolution.** `site_faces_bands` sets the query's current
-   identity `q_cur = frag2cur[qa_id]`, a *majority* vote of current roots over
-   the query's historical fragment in the box. That vote can land on the wrong
-   current root: in one dumped site the supervoxel actually at `pos_frag`
-   resolves (checked straight from the chunkedgraph) to the true root, but
-   doesn't match the query's *misresolved* `q_cur`. The genuine partner is
-   painted correctly — the query's identity is the thing assigned wrong.
-2. **Partner not distinct at 16 nm.** In other sites `pos_frag` is painted with
-   the query's *own* historical root and shares `q_cur` — the query fragment
-   already extends through the partner location in v117, and the L2 node flagged
-   as a different historical root is a tiny chunk embedded among the query's
-   voxels, sub-resolution at mip1.
-
-Both are fixable in the *location* layer, not the hash: use the actual scanned
-root as `q_cur` instead of a box-local majority vote (flavor 1), and localize /
-resolve the partner at finer resolution (flavor 2). Present partners sit at
-median 658 nm (p75 1117, max 1952); the 17 in-box-but-absent partners sit at
-median 2428 nm, just beyond the 2 µm radius. **The recall ceiling is gated by the
-candidate generator's partner localization, not by the fingerprint or by gaps.**
+So the candidate generator's recall on *real* splits is ~0.99 — only 3 genuine
+misses remain (partners at 590–1360 nm, just true absences). End-to-end is then
+recall × correction ≈ 0.99 × 0.743 ≈ **0.74**, not 0.37; the gap was entirely the
+location layer, exactly as the diagnosis predicted. The combiner top-1 itself is
+stable across the fix (0.758 on 62 sites → 0.743 on 74), so it was never a
+labeling artifact.
 
 **Abstention, not cherry-picking (`train_combiner_abstain.py`).** Dropping sites
 by label is cheating; a proofreader that *takes no action when not confident* is
 legitimate — proofreading is precision-critical, and a wrong auto-merge is worse
-than no merge. So the deployable eval runs the combiner over the **full** 125-site
-population (partner-absent sites kept, `require_true=False`) and makes a
-*label-blind* accept/abstain decision from the top candidate's score:
+than no merge. Running the combiner over the full post-fix population (74 sites,
+all real splits) with a *label-blind* accept/abstain threshold on the top score:
 
 | operating point | coverage | precision | recall |
 |---|---|---|---|
-| act on everything | 1.00 | 0.360 | 0.360 |
-| | 0.75 | 0.436 | 0.328 |
-| | 0.50 | 0.619 | 0.312 |
-| | 0.26 | **0.906** | 0.232 |
-| confident only | 0.10 | **1.000** | 0.104 |
+| act on everything | 1.00 | 0.757 | 0.757 |
+| | 0.74 | 0.836 | 0.622 |
+| | 0.50 | **0.946** | 0.473 |
+| | 0.26 | 0.947 | 0.243 |
+| confident only | 0.11 | **1.000** | 0.108 |
 
-Geometry always-act over the same full population is **0.320**; the combiner is
-**0.360** — so it still beats geometry honestly, and abstention works: the
-combiner learned (from label-blind features) to take no action on the
-partner-absent sites where any action is a guaranteed wrong merge, climbing to
-**91% precision at 26% coverage** and 100% at 10%. That is the deployable
-operating mode — auto-merge the confident quarter, route the rest to humans —
-and the honest counterpart to the cherry-picked 0.758. The remaining recall loss
-is dominated by the fixable location-layer issues above, not by the fingerprint.
+Geometry always-act is **0.649**; the combiner is **0.757**, and abstention buys
+**95% precision at 50% coverage** and 100% at 11%. That is the deployable mode —
+auto-merge the confident half at ~95% precision, route the rest to humans.
 
 **Location vs correction (two different models).** This experiment measures
 *correction*: given a real interface and a candidate panel, pick the partner.

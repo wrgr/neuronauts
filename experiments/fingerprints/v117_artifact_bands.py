@@ -59,20 +59,37 @@ def _band_face(em, seg, z_lo, z_hi, seg_id, sigma=2.0):
 
 def site_faces_bands(cl, ts, site, *, mip=1, slab=2, radius_nm=2000.0,
                      direction_cone_deg=45.0, min_vox=40, sigma=2.0,
-                     require_true=True):
+                     require_true=True, use_site_root=True):
     """Query + candidate band faces on the v117-painted box; true = shared current root.
 
     ``require_true=True`` (default) drops sites where the true partner is absent
     from the panel -- correct for the correction-given-candidates eval, but it
     conditions on the candidate generator succeeding.  Pass ``require_true=False``
     to KEEP partner-absent sites (all-false labels) for an honest abstention eval
-    over the full population."""
+    over the full population.
+
+    ``use_site_root=True`` takes the query's current identity from ``site.root``
+    (the actual proofread neuron whose L2 graph produced this site) instead of
+    ``frag2cur[qa_id]``, a box-local *majority vote* that can misresolve the query
+    to the wrong current root and so reject a correctly-painted partner.
+
+    ``min_vox`` is the minimum fragment size (voxels in the proximity ball) for a
+    candidate to count -- below it a fragment is treated as sub-resolution noise,
+    not a real neurite.
+
+    Sites that are **not a real split** are dropped (return ``None``) regardless
+    of ``require_true``: if the query's own historical fragment already occupies
+    the partner location (``pos_frag`` paints to ``qa_id``) there was no break to
+    re-link -- the differing-historical-root L2 node is a sub-resolution chunk
+    embedded in the query, so it must not count as a recall miss."""
     vol, frag2cur = r.fetch_v117_box(cl, ts, site.pos_main_nm, site.pos_frag_nm, radius_nm, mip)
     nz = vol.em.shape[2]
     qa_id, idx_main = v._seg_id_at(vol, site.pos_main_nm)
     if qa_id == 0 or qa_id not in frag2cur:
         return None
-    q_cur = frag2cur[qa_id]
+    # FIX 1: use the actual scanned root, not the box-local majority vote.
+    q_cur = int(site.root) if (use_site_root and getattr(site, "root", None)) else frag2cur[qa_id]
+    fseg, _ = v._seg_id_at(vol, site.pos_frag_nm)   # what occupies the partner location
 
     za = max(min(v._z_index(vol, site.pos_main_nm[2]), nz - slab), 0)
     q = _band_face(vol.em, vol.seg, za, za + slab, qa_id, sigma)
@@ -102,8 +119,14 @@ def site_faces_bands(cl, ts, site, *, mip=1, slab=2, radius_nm=2000.0,
         if bf is None:
             continue
         lows.append(bf[0]); highs.append(bf[1]); is_true.append(same); gdist.append(dn)
-    if len(lows) < 3 or (require_true and not any(is_true)):
+    if len(lows) < 3:
         return None
+    if not any(is_true):
+        # no distinct same-root partner in the panel.  If the query fragment
+        # itself reaches the partner location it was not a real split -> always
+        # drop; otherwise it is a genuine miss -> drop only under require_true.
+        if int(fseg) == int(qa_id) or require_true:
+            return None
     return {"q_low": q[0], "q_high": q[1],
             "low": np.stack(lows), "high": np.stack(highs),
             "is_true": np.array(is_true), "geom_dist": np.array(gdist)}

@@ -43,10 +43,24 @@ def test_site_faces_bands_marks_true(monkeypatch):
     vol, frag2cur = _frag_volume()
     monkeypatch.setattr(r, "fetch_v117_box", lambda *a, **k: (vol, frag2cur))
     from experiments.fingerprints import v117_error_relink as v
-    site = v.ErrorSite(root=1, pos_main_nm=(16 * 16, 16 * 16, 6 * 40),
+    # site.root is the scanned neuron's current root: 100 & 101 both resolve to 9
+    site = v.ErrorSite(root=9, pos_main_nm=(16 * 16, 16 * 16, 6 * 40),
                        pos_frag_nm=(40 * 16, 40 * 16, 6 * 40), gap_nm=540.0, frag_l2=5)
     f = ab.site_faces_bands(None, None, site, radius_nm=4000.0, direction_cone_deg=45.0)
     assert f is not None
     assert f["q_low"].shape == (PATCH, PATCH)
     assert f["low"].shape[0] == f["high"].shape[0] == len(f["is_true"])
     assert f["is_true"].sum() == 1
+
+
+def test_site_faces_bands_discards_not_a_split(monkeypatch):
+    # No distinct same-root partner (only fragment 100 maps to root 9) AND the
+    # query fragment occupies pos_frag -> not a real break -> dropped.
+    from tests.test_v117_reconstructed import _frag_volume
+    vol, _ = _frag_volume()
+    frag2cur = {100: 9, 101: 5, 102: 5, 103: 7}     # 100 is the only one on root 9
+    monkeypatch.setattr(r, "fetch_v117_box", lambda *a, **k: (vol, frag2cur))
+    from experiments.fingerprints import v117_error_relink as v
+    site = v.ErrorSite(root=9, pos_main_nm=(16 * 16, 16 * 16, 6 * 40),
+                       pos_frag_nm=(16 * 16, 16 * 16, 6 * 40), gap_nm=0.0, frag_l2=5)
+    assert ab.site_faces_bands(None, None, site, radius_nm=4000.0, require_true=False) is None

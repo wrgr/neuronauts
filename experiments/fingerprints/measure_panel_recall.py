@@ -52,24 +52,30 @@ def site_partner_status(cl, ts, site, *, mip=1, slab=2, radius_nm=2000.0,
     plus diagnostics on why a partner was missed.
 
     Returns a dict with 'status' in:
-      'no_query'   query supervoxel invalid (no scoreable site)
-      'no_prox'    no proximity candidates at all
-      'too_few'    <3 buildable candidate faces (panel too thin to score)
-      'present'    true partner is in the panel  (correction gets a chance)
-      'absent'     true partner fell outside proximity / unbuildable (recall miss)
+      'no_query'    query supervoxel invalid (no scoreable site)
+      'not_a_split' query fragment reaches pos_frag -> no real break (discarded)
+      'no_prox'     no proximity candidates at all
+      'too_few'     <3 buildable candidate faces (panel too thin to score)
+      'present'     true partner is in the panel  (correction gets a chance)
+      'absent'      true partner fell outside proximity / unbuildable (recall miss)
     and (when status in present/absent) diagnostic fields:
       site_gap_nm        the L2-graph gap for this site (pos_main -> pos_frag)
       n_faces            buildable candidate faces in the panel
       partner_dist_nm    nearest same-root voxel distance (None if not in box)
       partner_in_box     was any same-root fragment present in the box at all
       miss_reason        for 'absent': 'not_in_box' | 'out_of_radius' | 'unbuildable'
+
+    'not_a_split' sites are excluded from the recall denominator -- they are not
+    real false-splits, so failing to "fix" them is not a miss.
     """
     vol, frag2cur = r.fetch_v117_box(cl, ts, site.pos_main_nm, site.pos_frag_nm, radius_nm, mip)
     nz = vol.em.shape[2]
     qa_id, idx_main = v._seg_id_at(vol, site.pos_main_nm)
     if qa_id == 0 or qa_id not in frag2cur:
         return {"status": "no_query"}
-    q_cur = frag2cur[qa_id]
+    # FIX 1: query identity from the actual scanned root, not a box-local vote.
+    q_cur = int(site.root) if getattr(site, "root", None) else frag2cur[qa_id]
+    fseg, _ = v._seg_id_at(vol, site.pos_frag_nm)   # what occupies the partner location
 
     za = max(min(v._z_index(vol, site.pos_main_nm[2]), nz - slab), 0)
     q = _band_face(vol.em, vol.seg, za, za + slab, qa_id, sigma)
@@ -111,7 +117,11 @@ def site_partner_status(cl, ts, site, *, mip=1, slab=2, radius_nm=2000.0,
             "partner_dist_nm": pdist, "partner_in_box": in_box}
     if partner_in:
         return {"status": "present", **base}
-    # partner missing from panel -- classify why
+    # no distinct same-root partner.  Query fragment reaching pos_frag => the
+    # L2-flagged break was not real -> discard (not a recall miss).
+    if int(fseg) == int(qa_id):
+        return {"status": "not_a_split", **base}
+    # otherwise a genuine miss -- classify why
     if not in_box:
         reason = "not_in_box"
     elif pdist is not None and pdist > radius_nm:
@@ -170,7 +180,8 @@ def main():
 
     present = counts["present"]
     absent = counts["absent"]
-    scoreable = present + absent           # valid query, non-thin panel
+    not_a_split = counts["not_a_split"]
+    scoreable = present + absent           # real splits with a buildable panel
     recall = present / scoreable if scoreable else 0.0
     end_to_end = recall * args.correction_top1
 
@@ -185,6 +196,7 @@ def main():
     out = {"mip": args.mip, "radius_nm": args.radius_nm,
            "counts": dict(counts),
            "scoreable_sites": scoreable,
+           "not_a_split_discarded": not_a_split,
            "panel_recall": recall,
            "correction_top1": args.correction_top1,
            "end_to_end_top1": end_to_end,
@@ -193,7 +205,8 @@ def main():
            "present_site_gap_nm": _summ(present_gap),
            "absent_partner_dist_nm": _summ(absent_dist),
            "absent_site_gap_nm": _summ(absent_gap)}
-    print(f"\nPanel recall (partner present | scoreable site): {recall:.3f}"
+    print(f"\nnot-a-split discarded (query continuous through pos_frag): {not_a_split}")
+    print(f"Panel recall (partner present | real split with panel): {recall:.3f}"
           f"  ({present}/{scoreable})")
     print(f"End-to-end = recall x correction_top1 = {recall:.3f} x {args.correction_top1:.3f}"
           f" = {end_to_end:.3f}")
