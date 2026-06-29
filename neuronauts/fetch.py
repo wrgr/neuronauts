@@ -55,7 +55,7 @@ _TRANSIENT_CAVE_MARKERS = (
     "Remote end closed",
     "Max retries",
     "Temporary failure",
-    " 500 ", " 502 ", " 503 ", " 504 ",
+    "500 ", " 500 ", "502 ", " 502 ", "503 ", " 503 ", "504 ", " 504 ",
 )
 
 
@@ -605,9 +605,9 @@ def fetch_synapses_for_roots(
         frames.append(_query("pre_ids", chunk))
         frames.append(_query("post_ids", chunk))
 
-    df = pd.concat(frames) if frames else _EMPTY_DF()
-    if len(df):
-        df = df[~df.index.duplicated(keep="first")]
+    df = pd.concat(frames, ignore_index=True) if frames else _EMPTY_DF()
+    if len(df) and "id" in df.columns:
+        df = df.drop_duplicates(subset=["id"], keep="first")
     return _synapse_df_to_table(df, bbox_nm, mip)
 
 
