@@ -1,27 +1,29 @@
 #!/usr/bin/env bash
-# Good-citizen Track-B watcher. CAVE rejects flooding/recursive-loop traffic outright (503/429)
-# rather than slowing it, so we do NOT hammer: while materialize is unhealthy we make ONE cheap
-# unauthenticated curl probe every PROBE_S seconds, and only spin up the heavy checkpointed fetch
-# once materialize answers 200. The fetch itself is per-box checkpointed, so a mid-run failure
-# just drops us back to probing and resumes from the next uncached box. Stops when the SideTable
-# exists.
+# Track-B fetch: self-healing loop. Runs in bash (no model cost). The agent proxy restarts and
+# CHANGES PORT periodically; a baked-in HTTPS_PROXY then points at a dead port -- that stale-port
+# assumption is what caused the earlier debug loop. So each iteration re-derives the LIVE port
+# from /root/.ccr/README.md (the proxy rewrites that file on restart). Per-box checkpointed:
+# a CAVE 500/503 or a port blip just means a box isn't cached and the next iteration retries it.
+# A hard container restart can still kill this process; the supervising cron relaunches it then.
 set -u
 cd "$(dirname "$0")"
 source .venv/bin/activate 2>/dev/null || true
-PROBE_S="${PROBE_S:-300}"
-HEALTH="https://minnie.microns-daf.com/materialize/version"
+mkdir -p data/bigdata
+echo $$ > data/bigdata/watcher.pid
 
 while [ ! -f data/sidetable_big.npz ]; do
-  code=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH" 2>/dev/null)
+  port=$(grep -oE '127\.0\.0\.1:[0-9]+' /root/.ccr/README.md 2>/dev/null | head -1)
+  [ -n "$port" ] && export HTTPS_PROXY="http://$port" https_proxy="http://$port"
+  code=$(curl -s -o /dev/null -w "%{http_code}" "https://minnie.microns-daf.com/materialize/version" 2>/dev/null)
   if [ "$code" = "200" ]; then
-    echo "=== [run_bigdata] materialize healthy (200) $(date -u +%H:%M:%S); running one fetch pass ==="
+    echo "=== [run_bigdata] $(date -u +%H:%M:%S) proxy=$port materialize=200; fetch pass ==="
     OMP_NUM_THREADS=4 python -u -m experiments.pcfg_synapse_partitions.fetch_bigdata \
         --n-boxes 27 --side-um 40 --out data/sidetable_big.npz || true
-    [ -f data/sidetable_big.npz ] && break
-    echo "=== [run_bigdata] pass ended without SideTable; re-probing in ${PROBE_S}s ==="
   else
-    echo "=== [run_bigdata] materialize HTTP $code $(date -u +%H:%M:%S); waiting ${PROBE_S}s (no load) ==="
+    echo "=== [run_bigdata] $(date -u +%H:%M:%S) proxy=$port materialize=$code; wait (no load) ==="
   fi
-  sleep "$PROBE_S"
+  [ -f data/sidetable_big.npz ] && break
+  sleep 180
 done
-echo "=== [run_bigdata] DONE: data/sidetable_big.npz present ==="
+echo "=== [run_bigdata] DONE: sidetable_big.npz present ==="
+rm -f data/bigdata/watcher.pid
