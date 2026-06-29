@@ -101,7 +101,7 @@ def collect_training_set(cl, roots, ts, *, mip=1, radius_nm=2000.0,
     anchors, positives, distractors = [], [], []
     for n, rt in enumerate(roots):
         try:
-            sites = v.sites_for_neuron(cl, rt, ts, max_gap_nm=radius_nm, max_sites=max_sites)
+            sites = v.sites_from_l2_graph(cl, rt, ts, max_gap_nm=radius_nm, max_sites=max_sites)
         except Exception:
             continue
         for s in sites:
@@ -197,7 +197,7 @@ def evaluate_methods(cl, roots, ts, embedders, *, mip=1, radius_nm=2000.0,
     ncand = []
     for n, rt in enumerate(roots):
         try:
-            sites = v.sites_for_neuron(cl, rt, ts, max_gap_nm=radius_nm, max_sites=max_sites)
+            sites = v.sites_from_l2_graph(cl, rt, ts, max_gap_nm=radius_nm, max_sites=max_sites)
         except Exception:
             continue
         for s in sites:
@@ -256,6 +256,7 @@ def main():
     ap.add_argument("--radius-nm", type=float, default=2000.0)
     ap.add_argument("--direction-cone-deg", type=float, default=45.0)
     ap.add_argument("--epochs", type=int, default=40)
+    ap.add_argument("--max-sites", type=int, default=4, help="cap sites/neuron (bounds EM fetches)")
     ap.add_argument("--init", default="experiments/fingerprints/cutface_encoder.pt",
                     help="planar encoder to initialise from")
     ap.add_argument("--cache", default=None, help="npz cache of collected training patches")
@@ -281,7 +282,7 @@ def main():
         print("[collect] gathering real error-site faces ...")
         anchors, positives, distractors = collect_training_set(
             cl, train_roots, ts, mip=args.mip, radius_nm=args.radius_nm,
-            direction_cone_deg=args.direction_cone_deg)
+            direction_cone_deg=args.direction_cone_deg, max_sites=args.max_sites)
         if args.cache:
             np.savez(args.cache, anchors=anchors, positives=positives, distractors=distractors)
             print(f"[cache] wrote {len(anchors)} pairs -> {args.cache}")
@@ -299,7 +300,7 @@ def main():
         embedders["planar"] = make_embed_fn(load_encoder(args.init))
     ranks, ncand = evaluate_methods(cl, test_roots, ts, embedders, mip=args.mip,
                                     radius_nm=args.radius_nm,
-                                    direction_cone_deg=args.direction_cone_deg)
+                                    direction_cone_deg=args.direction_cone_deg, max_sites=args.max_sites)
     summ = _summary(ranks, ncand)
     print("\nHeld-out v117 re-linking (proximity + cone):")
     print(f"  sites={summ.get('raw',{}).get('n',0)}  mean candidates={summ['mean_candidates']:.1f}  "

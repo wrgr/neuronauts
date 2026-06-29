@@ -167,6 +167,99 @@ def sites_for_neuron(cl, root, ts, *, min_gap_nm=300.0, max_gap_nm=5000.0,
     return sites[:max_sites]
 
 
+def sites_from_l2_graph(cl, root, ts, *, min_gap_nm=300.0, max_gap_nm=3000.0,
+                        min_frag_l2=2, max_sites=40, dedup_nm=1500.0) -> list:
+    """Find real false-split interfaces via the L2 *adjacency* graph (accurate).
+
+    The correct way to locate where proofreading merged fragments: in the
+    current level-2 chunk graph, an edge whose two endpoints had *different*
+    historical roots at ``ts`` is a real merge interface.  The merge-created
+    nodes have historical root 0 and sit exactly at the seams, so they are kept
+    (not excluded).  This finds every interface, topologically adjacent, instead
+    of a sampling-inflated closest-approach estimate.
+
+    Returns de-duplicated :class:`ErrorSite`s (one per ~``dedup_nm`` region).
+    """
+    from collections import defaultdict
+    cg = cl.chunkedgraph
+    edges = np.asarray(cg.level2_chunk_graph(int(root)))
+    if edges.ndim != 2 or len(edges) == 0:
+        return []
+    nodes = np.unique(edges)
+    hist = np.asarray(cg.get_roots(nodes, timestamp=ts))
+    hm = {int(n): int(h) for n, h in zip(nodes.tolist(), hist.tolist())}
+    nz = hist[hist != 0]
+    if len(nz) == 0:
+        return []
+    frags, counts = np.unique(nz, return_counts=True)
+    size = {int(f): int(c) for f, c in zip(frags.tolist(), counts.tolist())}
+
+    adj = defaultdict(list)
+    for a, b in edges:
+        adj[int(a)].append(int(b))
+        adj[int(b)].append(int(a))
+
+    ha = np.array([hm[int(a)] for a in edges[:, 0]])
+    hb = np.array([hm[int(b)] for b in edges[:, 1]])
+    cross = edges[ha != hb]
+    if len(cross) == 0:
+        return []
+
+    pairs, want = [], set()
+    for a, b in cross:
+        a, b = int(a), int(b)
+        # main side = endpoint in the larger fragment (size 0 for the glue node)
+        m, fr = (a, b) if size.get(hm[a], 0) >= size.get(hm[b], 0) else (b, a)
+        if hm[fr] != 0 and size.get(hm[fr], 0) < min_frag_l2:
+            continue
+        pairs.append((m, fr))
+        want.add(m)
+        want.add(fr)
+        # 2-hop same-fragment neighbourhood of the main endpoint -> local tangent
+        for n1 in adj[m]:
+            if hm.get(n1) == hm[m]:
+                want.add(n1)
+                for n2 in adj[n1][:4]:
+                    if hm.get(n2) == hm[m]:
+                        want.add(n2)
+    if not pairs:
+        return []
+
+    want = np.array(sorted(want))
+    pos = _l2_positions(cl, want)
+    pm = {int(n): pos[k] for k, n in enumerate(want.tolist())}
+
+    sites, seen = [], []
+    pairs.sort(key=lambda mf: np.linalg.norm(pm[mf[0]] - pm[mf[1]])
+               if (not np.isnan(pm[mf[0]][0]) and not np.isnan(pm[mf[1]][0])) else 1e18)
+    for m, fr in pairs:
+        a_pos, b_pos = pm.get(m), pm.get(fr)
+        if a_pos is None or b_pos is None or np.isnan(a_pos[0]) or np.isnan(b_pos[0]):
+            continue
+        gap = float(np.linalg.norm(a_pos - b_pos))
+        if not (min_gap_nm <= gap <= max_gap_nm):
+            continue
+        if any(np.linalg.norm(a_pos - s) < dedup_nm for s in seen):
+            continue
+        nbp = []
+        for n1 in adj[m]:
+            if hm.get(n1) == hm[m] and n1 in pm and not np.isnan(pm[n1][0]):
+                nbp.append(pm[n1])
+            for n2 in adj[n1][:4]:
+                if hm.get(n2) == hm[m] and n2 in pm and not np.isnan(pm[n2][0]):
+                    nbp.append(pm[n2])
+        tangent = (_local_tangent(np.array(nbp + [a_pos]), a_pos)
+                   if len(nbp) >= 2 else np.zeros(3))
+        seen.append(a_pos)
+        sites.append(ErrorSite(root=int(root), pos_main_nm=tuple(a_pos.tolist()),
+                               pos_frag_nm=tuple(b_pos.tolist()), gap_nm=gap,
+                               frag_l2=int(size.get(hm[fr], 0)),
+                               tangent_nm=tuple(tangent.tolist())))
+        if len(sites) >= max_sites:
+            break
+    return sites
+
+
 def _local_tangent(main_pos, tip, k=8) -> np.ndarray:
     """Principal direction of the main arbor near the query tip (answer-free)."""
     if len(main_pos) < 3:
