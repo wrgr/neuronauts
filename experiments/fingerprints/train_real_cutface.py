@@ -134,20 +134,50 @@ def collect_training_set(cl, roots, ts, *, mip=1, radius_nm=2000.0,
 # Fine-tune with InfoNCE (anchor=main face, positive=true partner, +distractors)
 # ---------------------------------------------------------------------------
 
+def _infonce_batch(enc, A, P, D, bi, temperature, torch):
+    a = torch.from_numpy(A[bi]).unsqueeze(1)
+    p = torch.from_numpy(P[bi]).unsqueeze(1)
+    d = torch.from_numpy(D[bi].reshape(-1, PATCH, PATCH)).unsqueeze(1)
+    za, zp, zd = enc(a), enc(p), enc(d)
+    pool = torch.cat([zp, zd], dim=0)              # [B + B*k, D]
+    logits = za @ pool.t() / temperature           # [B, B + B*k]
+    target = torch.arange(len(bi))                 # positive i is column i
+    loss = torch.nn.functional.cross_entropy(logits, target)
+    # per-pair top-1: is the own positive nearest among own positive + own distractors?
+    k = D.shape[1]
+    own = torch.cat([zp[:, None, :], zd.reshape(len(bi), k, -1)], dim=1)  # [B, 1+k, D]
+    sim = (za[:, None, :] * own).sum(-1)            # [B, 1+k]
+    top1 = (sim.argmax(1) == 0).float().mean()
+    return loss, float(top1)
+
+
 def finetune(anchors, positives, distractors, *, init_ckpt=None, embed_dim=32,
-             epochs=40, batch=32, lr=5e-4, temperature=0.2, seed=0, verbose=True):
+             epochs=40, batch=32, lr=5e-4, temperature=0.2, seed=0, verbose=True,
+             val_frac=0.15, eval_every=2, patience=8, ckpt_path=None):
+    """Contrastive fine-tune with validation-based early stopping + best checkpoint.
+
+    Holds out ``val_frac`` of the pairs; every ``eval_every`` epochs evaluates
+    val InfoNCE loss and val per-pair top-1, keeps the best-val weights, and stops
+    after ``patience`` checks without val-top1 improvement.  ``epochs`` is the
+    cap.  When ``ckpt_path`` is set the best checkpoint (weights + optimizer +
+    epoch) is written there so training can be resumed/extended.  Returns the
+    best encoder and a history dict.
+    """
     import torch
 
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
     enc = build_encoder(embed_dim)
+    opt = torch.optim.Adam(enc.parameters(), lr=lr)
+    start_ep = 0
     if init_ckpt and os.path.exists(init_ckpt):
         ck = torch.load(init_ckpt, map_location="cpu", weights_only=False)
         enc.load_state_dict(ck["state_dict"])
+        if "opt_state" in ck:                       # true resume (optimizer + epoch)
+            opt.load_state_dict(ck["opt_state"])
+            start_ep = int(ck.get("epoch", 0))
         if verbose:
-            print(f"  init from {init_ckpt}")
-    opt = torch.optim.Adam(enc.parameters(), lr=lr)
-    enc.train()
+            print(f"  init from {init_ckpt} (start epoch {start_ep})")
 
     A = _normalize_patches(anchors)
     P = _normalize_patches(positives)
@@ -155,34 +185,70 @@ def finetune(anchors, positives, distractors, *, init_ckpt=None, embed_dim=32,
     D = _normalize_patches(distractors.reshape(-1, PATCH, PATCH)).reshape(len(anchors), k, PATCH, PATCH)
     N = len(A)
 
-    losses = []
-    for ep in range(epochs):
-        idx = rng.permutation(N)
+    perm = rng.permutation(N)
+    n_val = max(batch, int(val_frac * N)) if val_frac > 0 and N > 4 * batch else 0
+    val_idx, train_idx = perm[:n_val], perm[n_val:]
+
+    history = {"train_loss": [], "val_loss": [], "val_top1": []}
+    best = {"top1": -1.0, "loss": 1e9, "state": None, "epoch": -1}
+    since_improve = 0
+    for ep in range(start_ep, epochs):
+        enc.train()
+        order = rng.permutation(len(train_idx))
         ep_loss, nb = 0.0, 0
-        for b0 in range(0, N, batch):
-            bi = idx[b0:b0 + batch]
+        for b0 in range(0, len(train_idx), batch):
+            bi = train_idx[order[b0:b0 + batch]]
             if len(bi) < 4:
                 continue
-            a = torch.from_numpy(A[bi]).unsqueeze(1)
-            p = torch.from_numpy(P[bi]).unsqueeze(1)
-            d = torch.from_numpy(D[bi].reshape(-1, PATCH, PATCH)).unsqueeze(1)
-            za = enc(a)
-            zp = enc(p)
-            zd = enc(d)
-            pool = torch.cat([zp, zd], dim=0)          # [B + B*k, D]
-            logits = za @ pool.t() / temperature        # [B, B + B*k]
-            target = torch.arange(len(bi))              # positive i is column i
-            loss = torch.nn.functional.cross_entropy(logits, target)
-            opt.zero_grad()
-            loss.backward()
-            opt.step()
-            ep_loss += float(loss.detach())
-            nb += 1
-        losses.append(ep_loss / max(nb, 1))
-        if verbose and (ep % 5 == 0 or ep == epochs - 1):
-            print(f"  epoch {ep:3d}  infonce={losses[-1]:.4f}")
+            loss, _ = _infonce_batch(enc, A, P, D, bi, temperature, torch)
+            opt.zero_grad(); loss.backward(); opt.step()
+            ep_loss += float(loss.detach()); nb += 1
+        history["train_loss"].append(ep_loss / max(nb, 1))
+
+        if n_val and (ep % eval_every == 0 or ep == epochs - 1):
+            enc.eval()
+            with torch.no_grad():
+                vl, vt, vb = 0.0, 0.0, 0
+                for b0 in range(0, n_val, batch):
+                    bi = val_idx[b0:b0 + batch]
+                    if len(bi) < 4:
+                        continue
+                    loss, top1 = _infonce_batch(enc, A, P, D, bi, temperature, torch)
+                    vl += float(loss); vt += top1; vb += 1
+            vloss, vtop1 = vl / max(vb, 1), vt / max(vb, 1)
+            history["val_loss"].append((ep, vloss)); history["val_top1"].append((ep, vtop1))
+            improved = vtop1 > best["top1"] + 1e-4
+            if improved:
+                best = {"top1": vtop1, "loss": vloss,
+                        "state": {kk: vv.clone() for kk, vv in enc.state_dict().items()},
+                        "epoch": ep}
+                since_improve = 0
+                if ckpt_path:
+                    torch.save({"state_dict": enc.state_dict(), "opt_state": opt.state_dict(),
+                                "epoch": ep + 1, "embed_dim": embed_dim, "patch": PATCH,
+                                "val_top1": vtop1}, ckpt_path)
+            else:
+                since_improve += 1
+            if verbose:
+                print(f"  epoch {ep:3d}  train={history['train_loss'][-1]:.4f}  "
+                      f"val={vloss:.4f}  val_top1={vtop1:.3f}"
+                      f"{'  *best' if improved else ''}", flush=True)
+            if since_improve >= patience:
+                if verbose:
+                    print(f"  early stop at epoch {ep} (best val_top1 {best['top1']:.3f} "
+                          f"@ep{best['epoch']})", flush=True)
+                break
+        elif verbose and ep % 5 == 0:
+            print(f"  epoch {ep:3d}  train={history['train_loss'][-1]:.4f}", flush=True)
+
+    if best["state"] is not None:
+        enc.load_state_dict(best["state"])
     enc.eval()
-    return enc, losses
+    if ckpt_path and (best["state"] is None or not os.path.exists(ckpt_path)):
+        # fallback save (e.g. no val split) so a resumable checkpoint always exists
+        torch.save({"state_dict": enc.state_dict(), "opt_state": opt.state_dict(),
+                    "epoch": epochs, "embed_dim": embed_dim, "patch": PATCH}, ckpt_path)
+    return enc, history
 
 
 # ---------------------------------------------------------------------------

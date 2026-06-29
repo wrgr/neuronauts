@@ -182,7 +182,8 @@ def main():
     ap.add_argument("--radius-nm", type=float, default=1500.0)
     ap.add_argument("--max-sites", type=int, default=6)
     ap.add_argument("--target-pairs", type=int, default=3000)
-    ap.add_argument("--epochs", type=int, default=30)
+    ap.add_argument("--epochs", type=int, default=80, help="epoch CAP (val early-stop selects)")
+    ap.add_argument("--resume", action="store_true", help="warm-resume from out-bio/out-art checkpoints")
     ap.add_argument("--sigma", type=float, default=2.0)
     ap.add_argument("--finetune-real", action="store_true",
                     help="after synthetic pretrain, fine-tune on real v117 pairs")
@@ -222,12 +223,16 @@ def main():
         if args.cache:
             np.savez(args.cache, **data); print(f"[cache] wrote {len(data['lo_a'])} pairs", flush=True)
 
-    print(f"[pretrain] bio on {len(data['lo_a'])} synthetic pairs ...")
-    bio, _ = finetune(data["lo_a"], data["lo_p"], data["lo_d"], init_ckpt=None, epochs=args.epochs)
-    print(f"[pretrain] art on {len(data['hi_a'])} synthetic pairs ...")
-    art, _ = finetune(data["hi_a"], data["hi_p"], data["hi_d"], init_ckpt=None, epochs=args.epochs)
-    torch.save({"state_dict": bio.state_dict(), "embed_dim": 32, "patch": PATCH, "band": "low"}, args.out_bio)
-    torch.save({"state_dict": art.state_dict(), "embed_dim": 32, "patch": PATCH, "band": "high"}, args.out_art)
+    # epochs is now a CAP; finetune early-stops on val top-1 and writes the best
+    # (resumable, with optimizer state) to ckpt_path. Resume later via --resume.
+    print(f"[pretrain] bio on {len(data['lo_a'])} synthetic pairs (cap {args.epochs}) ...", flush=True)
+    bio, hb = finetune(data["lo_a"], data["lo_p"], data["lo_d"],
+                       init_ckpt=(args.out_bio if args.resume else None),
+                       epochs=args.epochs, ckpt_path=args.out_bio)
+    print(f"[pretrain] art on {len(data['hi_a'])} synthetic pairs (cap {args.epochs}) ...", flush=True)
+    art, ha = finetune(data["hi_a"], data["hi_p"], data["hi_d"],
+                       init_ckpt=(args.out_art if args.resume else None),
+                       epochs=args.epochs, ckpt_path=args.out_art)
 
     print("[eval] held-out real v117 sites (synthetic-pretrained encoders) ...")
     ranks, ncand, recov = evaluate_bands_learned(

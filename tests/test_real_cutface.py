@@ -1,5 +1,7 @@
 """Offline tests for real-error encoder training plumbing (no CAVE / no network)."""
 
+import os
+
 import numpy as np
 import pytest
 
@@ -56,9 +58,10 @@ def test_finetune_reduces_loss():
     anchors = base + 0.1 * rng.normal(size=base.shape).astype(np.float32)
     positives = base + 0.1 * rng.normal(size=base.shape).astype(np.float32)
     distractors = rng.normal(size=(48, 6, PATCH, PATCH)).astype(np.float32)
-    enc, losses = tr.finetune(
+    enc, hist = tr.finetune(
         anchors, positives, distractors, init_ckpt=None, epochs=10, batch=16, verbose=False)
-    assert losses[-1] < losses[0]          # InfoNCE should drop when pos shares structure
+    tl = hist["train_loss"]
+    assert tl[-1] < tl[0]                  # InfoNCE should drop when pos shares structure
     from experiments.fingerprints.learned_cutface_encoder import make_embed_fn
     assert make_embed_fn(enc)(anchors[:2]).shape == (2, 32)
 
@@ -68,3 +71,29 @@ def test_summary_shapes():
     assert s["real"]["n"] == 4
     assert 0.0 <= s["real"]["top1"] <= 1.0
     assert s["chance_top1"] == pytest.approx(0.1)
+
+
+def test_finetune_val_earlystop_and_checkpoint(tmp_path):
+    pytest.importorskip("torch")
+    import torch
+    P = PATCH
+    rng = np.random.default_rng(1)
+    # N large enough to trigger the val split (N > 4*batch)
+    base = rng.normal(size=(160, P, P)).astype(np.float32)
+    anchors = base + 0.05 * rng.normal(size=base.shape).astype(np.float32)
+    positives = base + 0.05 * rng.normal(size=base.shape).astype(np.float32)
+    distractors = rng.normal(size=(160, 4, P, P)).astype(np.float32)
+    ck = str(tmp_path / "enc.pt")
+    enc, hist = tr.finetune(anchors, positives, distractors, init_ckpt=None,
+                            epochs=12, batch=16, val_frac=0.2, eval_every=2,
+                            patience=10, ckpt_path=ck, verbose=False)
+    assert hist["val_top1"] and hist["val_loss"]          # validation was tracked
+    assert os.path.exists(ck)                              # best checkpoint written
+    saved = torch.load(ck, map_location="cpu", weights_only=False)
+    assert "opt_state" in saved and "epoch" in saved      # resumable (optimizer + epoch)
+
+    # warm-resume: continue a couple epochs from the checkpoint
+    enc2, hist2 = tr.finetune(anchors, positives, distractors, init_ckpt=ck,
+                              epochs=int(saved["epoch"]) + 2, batch=16, val_frac=0.2,
+                              eval_every=2, patience=10, verbose=False)
+    assert hist2["train_loss"]                             # resumed and ran

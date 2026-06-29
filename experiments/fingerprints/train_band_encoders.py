@@ -133,7 +133,7 @@ def main():
     ap.add_argument("--direction-cone-deg", type=float, default=45.0)
     ap.add_argument("--max-sites", type=int, default=8)
     ap.add_argument("--sigma", type=float, default=2.0)
-    ap.add_argument("--epochs", type=int, default=40)
+    ap.add_argument("--epochs", type=int, default=80, help="epoch CAP (val early-stop selects)")
     ap.add_argument("--cache", default=None, help="npz cache of collected band patches")
     ap.add_argument("--out-bio", default="experiments/fingerprints/cutface_encoder_bio.pt")
     ap.add_argument("--out-art", default="experiments/fingerprints/cutface_encoder_art.pt")
@@ -163,14 +163,14 @@ def main():
             np.savez(args.cache, **data)
             print(f"[cache] wrote {len(data['lo_a'])} pairs -> {args.cache}")
 
-    print(f"[train] bio encoder (low-pass), {len(data['lo_a'])} pairs ...")
-    bio_enc, _ = finetune(data["lo_a"], data["lo_p"], data["lo_d"], init_ckpt=None, epochs=args.epochs)
-    torch.save({"state_dict": bio_enc.state_dict(), "embed_dim": 32, "patch": PATCH,
-                "band": "low", "mip": args.mip}, args.out_bio)
-    print(f"[train] art encoder (high-pass), {len(data['hi_a'])} pairs ...")
-    art_enc, _ = finetune(data["hi_a"], data["hi_p"], data["hi_d"], init_ckpt=None, epochs=args.epochs)
-    torch.save({"state_dict": art_enc.state_dict(), "embed_dim": 32, "patch": PATCH,
-                "band": "high", "mip": args.mip}, args.out_art)
+    # epochs is a CAP; finetune early-stops on val top-1 and writes the best
+    # (resumable) checkpoint to ckpt_path.
+    print(f"[train] bio encoder (low-pass), {len(data['lo_a'])} pairs (cap {args.epochs}) ...")
+    bio_enc, _ = finetune(data["lo_a"], data["lo_p"], data["lo_d"], init_ckpt=None,
+                          epochs=args.epochs, ckpt_path=args.out_bio)
+    print(f"[train] art encoder (high-pass), {len(data['hi_a'])} pairs (cap {args.epochs}) ...")
+    art_enc, _ = finetune(data["hi_a"], data["hi_p"], data["hi_d"], init_ckpt=None,
+                          epochs=args.epochs, ckpt_path=args.out_art)
 
     print("[eval] held-out test neurons (8 nm bands) ...")
     ranks, ncand, recov = evaluate_bands_learned(
