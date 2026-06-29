@@ -31,6 +31,14 @@
     "geom_miss_recovered_by_fusion": {
       "n_geom_misses": 51,
       "fused_top1_on_those": 0.2549019607843137
+    },
+    "gated": {
+      "geom_top2+hash": 0.5256410256410257,
+      "geom_top3+hash": 0.4807692307692308,
+      "geom_top5+hash": 0.46794871794871795,
+      "margin0.3": 0.6730769230769231,
+      "margin0.6": 0.6474358974358975,
+      "margin1.0": 0.5897435897435898
     }
   }
 }

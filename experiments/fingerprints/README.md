@@ -209,13 +209,18 @@ path that got here (including two wrong turns worth remembering).
 - **Naive equal-weight fusion HURTS** (0.58 < 0.67): adding the noisier hash
   drags down the many cases geometry already nails. Blunt fusion is the wrong
   way to combine them.
-- **But the hash is genuinely complementary on the hard subset:** of the 51
-  sites where **geometry alone is wrong**, the hash **recovers 25.5% top-1**.
-  That is the real value — a second opinion on the ~1/3 of merges geometry gets
-  wrong (overlapping / parallel processes where proximity is ambiguous), which
-  is exactly the FISSEQ-style case. Realising it needs a *gated/learned* fusion
-  (trust geometry when confident; consult the hash when geometry is ambiguous),
-  not an equal-weight sum.
+- **The hash is complementary on the hard subset but not yet *exploitable*.** Of
+  the 51 sites where geometry alone is wrong, the hash recovers 25.5% top-1 — but
+  **no fusion beats geometry's 0.673**: equal-weight fusion drops to 0.583, and
+  gated strategies (geometry's top-k re-ranked by the hash; margin gates) top out
+  at exactly 0.673 only by *never deferring* to the hash. The moment the hash is
+  allowed to override geometry, it breaks more correct calls than it fixes. So
+  the 25% recovery is real signal that simple combiners can't isolate. Capturing
+  it needs either a **learned per-site confidence combiner** (predict when the
+  hash is trustworthy from geom-margin / hash-margin / agreement) or a
+  **stronger hash** — and the current encoder is trained on only tens of pairs,
+  so it is likely undertrained. (FISSEQ-style promise intact; engineering not yet
+  there.)
 - **Right data is still the biggest lever** (proven twice): the identical method
   scored ~0 on the intermediate flat seg (most sites already merged) vs these
   numbers on the reconstructed v117 seg. (At a smaller N=78 the real-trained
