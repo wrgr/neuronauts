@@ -36,8 +36,27 @@ Thumbs.db
 # Training and fetch logs
 *.log
 
-# Model checkpoints (large binaries — track outside git if needed)
+# Model checkpoints. The curated keepers in models/README.md are tracked
+# (force-added); everything else under models/ — and all throwaway runs in
+# models/scratch/ — is ignored. See models/README.md for the convention.
 models/*.pt
 models/*.npz
 models/*.json
 .v117_cache/
+models/scratch/
+
+# Curated keepers (force-add a new one with `git add -f` and add a manifest row)
+!models/README.md
+!models/grammar_cave_real_50.pt
+!models/grammar_synthetic.pt
+!models/shared_grammar_real.pt
+!models/shared_grammar_raw_skel_50e.pt
+!models/shared_grammar_raw_skel_gat50e.pt
+!models/gat_skeleton_50e.pt
+!models/shared_grammar_root_neighborhood_run001.pt
+!models/cell_gnn_seg.pt
+!models/cell_gnn_seg.metrics.json
+!models/cell_gnn_5feat.pt
+!models/cell_gnn_5feat.metrics.json
+!models/cell_gnn_real.pt
+!models/cell_gnn_real.metrics.json

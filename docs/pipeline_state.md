@@ -1,5 +1,11 @@
 # Pipeline State & Reinitialization Guide
 
+> ⚠️ **Historical (2026-05-01 snapshot).** Mixes the v1 agent/simulation framing
+> with the no-EM pipeline and references checkpoints that have since been curated
+> away. Canonical sources: [`../README.md`](../README.md) (what runs today),
+> [`../models/README.md`](../models/README.md) (checkpoints), and
+> [`roadmap_global_assembly.md`](roadmap_global_assembly.md) (direction).
+
 Status: 2026-05-01 (updated).
 
 ---

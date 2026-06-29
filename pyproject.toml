@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "neuronauts"
 version = "0.1.0"
-description = "Agent-based connectome recovery experiments."
+description = "Reconstruct neurons from EM connectome (CAVE) synapses: lineage-supervised representation learning + synapse-graph cell assignment, scored as line-graph F1."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Train the attention-based arbor validator on a multi-branch dataset."""
+"""Train the attention-based arbor validator on a multi-branch dataset.
+
+Thread-specific helper for the **topology** experiment (see
+``experiments/README.md``). The primary CLI is ``scripts/train.py``; this script
+is kept for the standalone topology-validator training flow it implements.
+"""
 
 from __future__ import annotations
 

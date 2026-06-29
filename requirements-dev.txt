@@ -1,0 +1,16 @@
+# Full development environment for neuronauts — one command:
+#
+#     pip install -r requirements-dev.txt
+#
+# This installs the package in editable mode with every extra needed to run the
+# complete test suite:
+#   dev       -> pytest, pandas, matplotlib   (runs most of the suite)
+#   topology  -> torch                         (CellGNN / grammar / GAT tests)
+#   cave      -> caveclient                    (the tests/test_cave_*.py modules)
+#
+# Without the `cave` extra, the caveclient-dependent tests fail to import; run
+# `pytest --continue-on-collection-errors` to skip them (see CONTRIBUTING.md).
+#
+# Note for Debian/root containers: if `caveclient` errors while uninstalling the
+# system `packaging`, install it with:  pip install --ignore-installed packaging caveclient
+-e .[dev,topology,cave]

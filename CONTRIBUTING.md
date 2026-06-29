@@ -37,11 +37,23 @@ cache, and test your stage in isolation.
 
 ## Dev setup
 
+One command installs the package (editable) with every extra the full test
+suite needs — `dev` (pytest/pandas/matplotlib), `topology` (torch), and `cave`
+(caveclient):
+
 ```bash
-pip install -e ".[dev,topology]"   # numpy, scipy, pytest, pandas, matplotlib, torch
-# Optional, only for live CAVE fetching (not needed to run tests on a cache):
-pip install -e ".[cave]"           # caveclient  (may need network + a CAVE token)
+pip install -r requirements-dev.txt      # or: make setup
 ```
+
+Prefer a smaller install? The extras are still available individually:
+
+```bash
+pip install -e ".[dev,topology]"   # everything except the caveclient tests
+pip install -e ".[cave]"           # caveclient — live CAVE fetching + tests/test_cave_*
+```
+
+> On Debian/root containers `caveclient` may fail while uninstalling the system
+> `packaging`; install it with `pip install --ignore-installed packaging caveclient`.
 
 ## Testing
 

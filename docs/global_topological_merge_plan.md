@@ -136,7 +136,7 @@ CLI entry point: `python scripts/train.py train-cell-gnn --cache-dir <dir>`
 
 Workflow:
 1. Build proofread-core cache:
-   `python experiments/root_neighborhood_dataset.py build-cache --cache-dir data/proofread --version 1718`
+   `python experiments/root_neighborhood/dataset.py build-cache --cache-dir data/proofread --version 1718`
 2. Train CellGNN:
    `python scripts/train.py train-cell-gnn --cache-dir data/proofread --epochs 50`
 
