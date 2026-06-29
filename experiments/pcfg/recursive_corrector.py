@@ -139,12 +139,14 @@ def _candidates(obj, rows_local, cnt, tot, min_side):
             and min(cnt[v], tot - cnt[v]) >= min_side]
 
 
-def _train_seam(train_objs, epochs, seed):
+def _train_seam(train_objs, epochs, seed, init_path=None):
     import torch
     import torch.nn.functional as F
     from experiments.pcfg_synapse_partitions.seam_detector import build_model
     torch.manual_seed(seed); rng = np.random.default_rng(seed)
     net = build_model(cin=int(train_objs[0]["feat"].shape[1]))
+    if init_path:                       # SSL pretrain -> fine-tune: initialize from splice weights
+        net.load_state_dict(torch.load(init_path))
     opt = torch.optim.Adam(net.parameters(), lr=2e-3, weight_decay=1e-5)
     for ep in range(epochs):
         net.train(); order = rng.permutation(len(train_objs)); opt.zero_grad(); acc = 0
@@ -171,7 +173,7 @@ def _edge_benefit(net, o):
 
 
 def run_learned_cv(sidetable, skel_cache, folds, epochs, seed, max_rounds, min_side, tau, topk,
-                   axon_tau=0.0):
+                   axon_tau=0.0, init_path=None):
     from sklearn.model_selection import GroupKFold
     from experiments.pcfg_synapse_partitions.seam_detector import build_objects
     d = np.load(sidetable)
@@ -192,7 +194,7 @@ def run_learned_cv(sidetable, skel_cache, folds, epochs, seed, max_rounds, min_s
     used, ns_auto, ns_axon, ns_assist = [], 0, 0, 0
     gkf = GroupKFold(n_splits=max(2, min(folds, len(np.unique(groups)))))
     for fold, (tr, te) in enumerate(gkf.split(objs, np.zeros(len(objs)), groups)):
-        net = _train_seam([objs[i] for i in tr], epochs, seed)
+        net = _train_seam([objs[i] for i in tr], epochs, seed, init_path=init_path)
         print(f"  fold {fold+1}: trained on {len(tr)} objs, applying to {len(te)}", flush=True)
         for ti in te:
             o = objs[ti]; rv = o["rv"]; idxs = rows_by[rv]
@@ -291,11 +293,14 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--axon-tau", type=float, default=0.4,
                     help="extra abstention tau applied as axon_tau*axon_fraction per object")
+    ap.add_argument("--init", default=None,
+                    help="path to SSL-pretrained seam weights to fine-tune from (e.g. data/seam_ssl_net.pt)")
     args = ap.parse_args()
 
     if args.cut == "learned":
         run_learned_cv(args.sidetable, args.skel_cache, args.folds, args.epochs, args.seed,
-                       args.max_rounds, 2, args.tau, args.topk, axon_tau=args.axon_tau)
+                       args.max_rounds, 2, args.tau, args.topk, axon_tau=args.axon_tau,
+                       init_path=args.init)
         return
 
     d = np.load(args.sidetable)

@@ -539,3 +539,37 @@ Pre-side recovers -63.8% -> +0.9% (to the do-nothing floor); pooled net doubles 
 **Frontier, now precise:** abstention caps axons at the do-nothing floor (~0); the oracle shows
 +92% is available if the *right* axon edge is found. Closing that is an edge-SELECTION problem
 (more Track B data / axon-specific seam features), not abstention.
+
+## Path 2: self-supervised splice pretraining (label-free) -- helps connectivity, not the axon tail
+
+Pretrain the seam GNN on synthetic merges made by SPLICING two CLEAN v1718 single neurons at a
+touching point (label-free; the seam edge is known by construction), raw inputs only (xyz, log
+radius, raw pre/post channels -- the model learns the cues, no hand features). `seam_ssl.py`.
+
+**Zero-shot fails.** The fully pretrained net applied to real v117 merges picks an oracle-optimal
+edge on only ~20% of objects and is net-NEGATIVE at every abstention tau. More pretrain epochs make
+it WORSE (overconfident). Synthetic splices are too easy / distributionally off from real merges
+(which are subtle -- that's why a human had to fix them). So zero-shot transfer is out.
+
+**Pretrain -> fine-tune (SSL as initialization)** is the real recipe. Same 6-D features, big sample,
+grouped CV, vs from-scratch:
+
+| 6-D, big | from-scratch | SSL-init |
+|---|---|---|
+| flat-tau pre/axon | -55.2% | -171.0% |
+| flat-tau pooled   | +9.8%  | +3.5%  |
+| flat-tau connectivity | 0.888 | **0.923** |
+| axon-tau pooled   | +8.4%  | **+11.4%** |
+| axon-tau connectivity | 0.873 | **0.908** |
+| assist pooled     | +54.1% | **+63.8%** |
+| assist connectivity | 0.922 | **0.943** |
+
+**Interpretation -- the metrics diverge.** SSL-init raises CONNECTIVITY (both-sides-correct, the
+prize) at every operating point and gives the best human-assist yet (+64%, 0.943). But the
+autonomous pre-side PAIR metric craters (-55% -> -171%) even though pre-side accuracy RISES
+(0.826 -> 0.851): pair-error is O(N^2) and heavy-tailed, so a few big axons over-split by the
+now-more-aggressive model dominate it. SSL improved the common case (per-synapse placement) and
+amplified the rare big-axon over-cut. Best autonomous point = SSL-init + axon-tau abstention
+(+11.4% pooled, 0.908). The +92% axon ceiling is still unclaimed -- SSL didn't teach right-edge
+SELECTION on axons, it improved placement + confidence. Raw-input + assist is the deployable story;
+autonomous axons remain the open problem.
