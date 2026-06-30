@@ -1,0 +1,23 @@
+{
+  "cache_kind": "synapse_fetch",
+  "code_version": "1d8b2bf",
+  "created_at": "2026-06-19T14:01:47.672160+00:00",
+  "datastack": "minnie65_public",
+  "key_fields": [
+    "datastack",
+    "synapse_table",
+    "version",
+    "side",
+    "limit",
+    "bbox_nm"
+  ],
+  "schema": "<sha1>.npz arrays: positions_nm, supervoxel_ids, root_ids, other_*; per-file provenance under '__provenance__'.",
+  "sort": "stable by CAVE synapse id; lexsort (z,y,x) fallback when ids absent",
+  "synapse_table": "synapses_pni_2",
+  "synapse_voxel_nm": [
+    4.0,
+    4.0,
+    40.0
+  ],
+  "v117_timestamp": 1623399000
+}

@@ -1,2 +1,4 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+cache/**/*.npz filter=lfs diff=lfs merge=lfs -text
+cache/l2_world/*.npz filter=lfs diff=lfs merge=lfs -text

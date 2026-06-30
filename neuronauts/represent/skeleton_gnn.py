@@ -218,29 +218,36 @@ def train_skeleton_gnn(
     *,
     n_epochs: int = 80,
     lr: float = 1e-3,
-    margin: float = 1.0,
+    margin: float = 1.0,   # kept for API compatibility; unused (see temperature)
+    temperature: float = 0.1,
     device: str = "cpu",
     root_label_map: dict[int, set[int]] | None = None,
     log_every: int = 10,
 ) -> dict:
-    """Contrastive training for SkeletonGNN.
+    """NT-Xent (SimCLR) contrastive training for SkeletonGNN.
 
     Same interface as train_dna_encoder — drop-in replacement.
 
-    Positives: fragment pairs with the same label_root.
-    Negatives: fragment pairs with different label roots.
-    Loss: cosine contrastive (pull positives, push negatives past margin).
+    Each step builds a batch of N positive pairs (2N unique fragment encodings).
+    Loss is NT-Xent:
+        L = -log(exp(sim(a,p)/τ) / Σ_{k≠a} exp(sim(a,k)/τ))
+    Unlike triplet losses (cosine or L2), NT-Xent has non-vanishing gradients
+    at collapse — when all cosine similarities equal 1, the softmax denominator
+    ≠ numerator (ratio = 1/(2N-1) < 1), so loss = log(2N-1) > 0 with a clear
+    gradient direction.  Temperature τ=0.1 amplifies gradient magnitude even
+    when positive/negative sims are close.
     """
     import torch
     import torch.nn.functional as F
 
+    torch.manual_seed(0)
     rng = np.random.default_rng(0)
     gnn = gnn.to(device)
     opt = torch.optim.Adam(gnn.parameters(), lr=lr)
 
     all_frags = [f for fl in fragment_lists for f in fl]
 
-    # Group fragments by label_root (same logic as train_dna_encoder)
+    # Group fragments by label_root
     group_to_frags: dict[int, list[Fragment]] = {}
     for frag in all_frags:
         rid = frag.base_root_id
@@ -257,76 +264,103 @@ def train_skeleton_gnn(
     if len(groups) < 2:
         raise ValueError("Need ≥2 neuron groups with ≥1 clean fragment each")
 
-    group_keys = [k for k, _ in groups]
     history: dict[str, list[float]] = {"loss": [], "pos_cos": [], "neg_cos": []}
 
-    # Pre-compute tensors for all fragments (skeleton graphs don't change)
-    frag_tensors = {
-        frag.base_root_id if root_label_map is None else next(iter(root_label_map.get(frag.base_root_id, {frag.base_root_id}))): None
-        for frag in all_frags
-    }
-    # Actually index by fragment object identity for simplicity
-    frag_list_flat = all_frags
-    tensor_cache = [fragment_to_tensors(f, device) for f in frag_list_flat]
-    frag_to_idx = {id(f): i for i, f in enumerate(frag_list_flat)}
+    tensor_cache_cpu = [fragment_to_tensors(f, "cpu") for f in all_frags]
+    frag_to_idx = {id(f): i for i, f in enumerate(all_frags)}
+
+    # Build fragment→neuron label map for false-negative masking in NT-Xent.
+    # When multiple fragments of the same neuron appear in one batch, they must
+    # be excluded from each other's denominator (they are same-neuron positives,
+    # not true negatives).  Without this mask, conflicting gradient signals
+    # cancel out and cause collapse regardless of loss formulation.
+    frag_to_neuron: dict[int, int] = {}
+    for frag in all_frags:
+        rid = frag.base_root_id
+        if root_label_map is not None:
+            labels = root_label_map.get(rid, set())
+            if len(labels) == 1:
+                frag_to_neuron[frag_to_idx[id(frag)]] = next(iter(labels))
+        else:
+            frag_to_neuron[frag_to_idx[id(frag)]] = rid
+
+    n_pos_pairs = 128   # N positive pairs → 2N embeddings per batch
+    pos_groups = [(k, v) for k, v in groups if len(v) >= 2]
 
     for epoch in range(1, n_epochs + 1):
         gnn.train()
         opt.zero_grad()
 
-        # Encode all fragments
-        embeddings = []
-        for tensors in tensor_cache:
-            nf, es, ed, ef = tensors
-            emb = gnn(nf, es, ed, ef)
-            embeddings.append(emb)
-        embs = torch.stack(embeddings, dim=0)          # [N, output_dim]
-        embs_norm = F.normalize(embs, p=2, dim=-1)
-
-        # Sample positive pairs
-        n_pairs = 256
-        pos_pairs, neg_pairs = [], []
-
-        pos_groups = [(k, v) for k, v in groups if len(v) >= 2]
-        for _ in range(n_pairs):
-            if not pos_groups:
+        # Sample N positive pairs; each fragment appears at most once
+        # so the batch is exactly 2N distinct embeddings.
+        pairs: list[tuple[int, int]] = []
+        used: set[int] = set()
+        for _ in range(n_pos_pairs * 4):  # oversample to fill quota
+            if len(pairs) >= n_pos_pairs or not pos_groups:
                 break
-            gk, frags = pos_groups[int(rng.integers(len(pos_groups)))]
-            ia, ib = rng.choice(len(frags), size=2, replace=False)
-            pos_pairs.append((frag_to_idx[id(frags[int(ia)])],
-                               frag_to_idx[id(frags[int(ib)])]))
+            gk, gfrags = pos_groups[int(rng.integers(len(pos_groups)))]
+            ia, ib = rng.choice(len(gfrags), size=2, replace=False)
+            ai = frag_to_idx[id(gfrags[int(ia)])]
+            bi = frag_to_idx[id(gfrags[int(ib)])]
+            if ai in used or bi in used:
+                continue
+            used.add(ai); used.add(bi)
+            pairs.append((ai, bi))
 
-        for _ in range(n_pairs):
-            ga_i, gb_i = rng.choice(len(groups), size=2, replace=False)
-            ga_k, ga_f = groups[int(ga_i)]
-            gb_k, gb_f = groups[int(gb_i)]
-            ia = int(rng.integers(len(ga_f)))
-            ib = int(rng.integers(len(gb_f)))
-            neg_pairs.append((frag_to_idx[id(ga_f[ia])],
-                               frag_to_idx[id(gb_f[ib])]))
-
-        if not pos_pairs and not neg_pairs:
+        if not pairs:
             history["loss"].append(0.0)
             history["pos_cos"].append(0.0)
             history["neg_cos"].append(0.0)
             continue
 
-        loss = torch.tensor(0.0, device=device)
-        pos_sims, neg_sims = [], []
+        N = len(pairs)
+        # Encode: anchors first, then positives (each is unique)
+        a_global = [ai for ai, _ in pairs]
+        b_global = [bi for _, bi in pairs]
+        all_global = a_global + b_global  # length 2N
 
-        if pos_pairs:
-            src = torch.tensor([p[0] for p in pos_pairs], dtype=torch.long, device=device)
-            dst = torch.tensor([p[1] for p in pos_pairs], dtype=torch.long, device=device)
-            sim = (embs_norm[src] * embs_norm[dst]).sum(dim=-1)
-            loss = loss + (1.0 - sim).mean()
-            pos_sims = sim.detach().cpu().tolist()
+        mini_embs = []
+        for g_idx in all_global:
+            nf, es, ed, ef = tensor_cache_cpu[g_idx]
+            mini_embs.append(gnn(nf.to(device), es.to(device),
+                                 ed.to(device), ef.to(device)))
+        z = torch.stack(mini_embs, dim=0)     # [2N, D]
+        z = F.normalize(z, p=2, dim=-1)       # onto unit sphere
 
-        if neg_pairs:
-            src = torch.tensor([p[0] for p in neg_pairs], dtype=torch.long, device=device)
-            dst = torch.tensor([p[1] for p in neg_pairs], dtype=torch.long, device=device)
-            sim = (embs_norm[src] * embs_norm[dst]).sum(dim=-1)
-            loss = loss + F.relu(sim - (1.0 - margin)).mean()
-            neg_sims = sim.detach().cpu().tolist()
+        # NT-Xent similarity matrix: [2N, 2N] / temperature
+        sim = (z @ z.T) / temperature
+
+        # False-negative mask: same-neuron fragments in the batch must be
+        # excluded from each other's NT-Xent denominator (they are true positives
+        # of one another, not negatives).  Self-similarity is always excluded.
+        # The actual positive pair (i, i+N) is excluded from the mask so it
+        # stays in the numerator.
+        neuron_ids = torch.tensor(
+            [frag_to_neuron.get(g, -g) for g in all_global],
+            dtype=torch.long, device=device)
+        same_neuron = neuron_ids.unsqueeze(0) == neuron_ids.unsqueeze(1)  # [2N, 2N]
+        # Mark the designated positive pair so we don't mask it out
+        pos_pair_mask = torch.zeros(2 * N, 2 * N, dtype=torch.bool, device=device)
+        for i in range(N):
+            pos_pair_mask[i, i + N] = True
+            pos_pair_mask[i + N, i] = True
+        eye = torch.eye(2 * N, dtype=torch.bool, device=device)
+        exclude = eye | (same_neuron & ~pos_pair_mask)
+        sim = sim.masked_fill(exclude, -1e9)
+
+        # For anchor i (i < N): positive at i+N; for positive i+N: anchor at i
+        targets = torch.cat([
+            torch.arange(N, 2 * N, dtype=torch.long, device=device),
+            torch.arange(0, N, dtype=torch.long, device=device),
+        ])
+        loss = F.cross_entropy(sim, targets)
+
+        # Monitor: mean cosine sim of positive pairs vs a random in-batch negative
+        sim_pos = (z[:N] * z[N:]).sum(dim=-1)
+        neg_perm = (torch.arange(N, device=device) + 1) % N
+        sim_neg = (z[:N] * z[N:][neg_perm]).sum(dim=-1)
+        pos_sims = sim_pos.detach().cpu().tolist()
+        neg_sims = sim_neg.detach().cpu().tolist()
 
         loss.backward()
         opt.step()

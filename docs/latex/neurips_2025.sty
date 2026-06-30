@@ -1,0 +1,85 @@
+%% NeurIPS 2025 style file (compatible subset for anonymous submissions)
+%% Based on the official NeurIPS style; intended for pdflatex compilation.
+
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{neurips_2025}[2025/01/01 NeurIPS 2025 submission style]
+
+%% --- Font and encoding ---
+\RequirePackage[T1]{fontenc}
+\RequirePackage[utf8]{inputenc}
+\RequirePackage{times}           % Times New Roman body font
+\RequirePackage{helvet}          % Helvetica for sans-serif
+\RequirePackage{courier}         % Courier for monospace
+
+%% --- Page geometry (NeurIPS spec) ---
+\RequirePackage[
+  letterpaper,
+  top=1in, bottom=1in,
+  left=1.5in, right=1.5in,
+  columnsep=0.25in
+]{geometry}
+
+%% --- Math and symbols ---
+\RequirePackage{amsmath,amssymb,amsfonts}
+\RequirePackage{mathtools}
+\RequirePackage{bm}
+
+%% --- Floats, tables, figures ---
+\RequirePackage{graphicx}
+\RequirePackage{booktabs}
+\RequirePackage{multirow}
+\RequirePackage{array}
+\RequirePackage{float}
+\RequirePackage[table]{xcolor}
+
+%% --- Captions ---
+\RequirePackage[font=small,labelfont=bf,justification=centering]{caption}
+\RequirePackage{subcaption}
+
+%% --- Hyperlinks ---
+\RequirePackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+\RequirePackage{url}
+
+%% --- Section headings: NeurIPS style ---
+\RequirePackage{titlesec}
+\titleformat{\section}{\large\bfseries}{\thesection}{1em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{1em}{}
+\titleformat{\subsubsection}{\normalsize\itshape}{\thesubsubsection}{1em}{}
+
+%% --- Paragraph spacing ---
+\setlength{\parskip}{0pt}
+\setlength{\parindent}{1em}
+
+%% --- Abstract environment ---
+\renewenvironment{abstract}{%
+  \centerline{\large\textbf{Abstract}}%
+  \vspace{0.5em}%
+  \begin{quote}%
+}{%
+  \end{quote}%
+  \vspace{1em}%
+}
+
+%% --- Bibliography style ---
+\RequirePackage[numbers,compress,sort]{natbib}
+
+%% --- Misc utilities ---
+\RequirePackage{microtype}
+\RequirePackage{enumitem}
+\setlist[itemize]{leftmargin=1.5em,itemsep=0pt,topsep=4pt}
+\setlist[enumerate]{leftmargin=1.5em,itemsep=0pt,topsep=4pt}
+
+%% --- Anonymous submission marker ---
+\newcommand{\neuripssubmission}[1]{}   % suppress author block in anonymous mode
+
+%% --- NeurIPS title block (anonymous) ---
+\newcommand{\maketitleblock}[2]{%
+  \begin{center}
+    {\LARGE\textbf{#1}\par}
+    \vspace{0.5em}
+    {\normalsize\textit{#2}\par}
+    \vspace{1em}
+  \end{center}
+}
+
+\endinput
