@@ -99,4 +99,50 @@ def build_observation_graph(
     return ObservationGraph.from_half_synapse_graph(hsg)
 
 
-__all__ = ["build_observation_graph"]
+def concat_observation_graphs(graphs: list[ObservationGraph]) -> ObservationGraph:
+    """Concatenate multiple ObservationGraphs into a single graph for multi-region training.
+
+    Each graph's edges remain intra-region (node indices are offset so there are no
+    spurious cross-region edges).  Labels are CAVE root IDs and are globally unique,
+    so no label offsetting is needed.  Positions are region-local normalised values;
+    the GNN only uses them for within-edge distance features, not cross-region spatial
+    reasoning.
+
+    Parameters
+    ----------
+    graphs:
+        List of ObservationGraphs, one per training region.
+
+    Returns
+    -------
+    ObservationGraph
+        Mega-graph with all nodes and region-local edges.
+    """
+    if not graphs:
+        raise ValueError("concat_observation_graphs: empty list")
+    if len(graphs) == 1:
+        return graphs[0]
+
+    offsets: list[int] = []
+    n = 0
+    for g in graphs:
+        offsets.append(n)
+        n += g.n_nodes
+
+    edge_src = np.concatenate([g.edge_src + offsets[i] for i, g in enumerate(graphs)])
+    edge_dst = np.concatenate([g.edge_dst + offsets[i] for i, g in enumerate(graphs)])
+
+    return ObservationGraph(
+        node_feat=np.concatenate([g.node_feat for g in graphs], axis=0),
+        node_pos=np.concatenate([g.node_pos for g in graphs], axis=0),
+        edge_src=edge_src,
+        edge_dst=edge_dst,
+        edge_type=np.concatenate([g.edge_type for g in graphs]),
+        edge_feat=np.concatenate([g.edge_feat for g in graphs], axis=0),
+        labels=np.concatenate([g.labels for g in graphs]),
+        fragment_id=np.concatenate([g.fragment_id for g in graphs]),
+        side=graphs[0].side,
+    )
+
+
+__all__ = ["build_observation_graph", "concat_observation_graphs"]

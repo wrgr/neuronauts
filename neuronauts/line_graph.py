@@ -1,34 +1,29 @@
-"""Line graph F1 metric for connectome evaluation."""
+"""Line graph F1 metric for connectome evaluation.
+
+Four variants, ordered from most permissive to most demanding:
+
+  pre_only   truth = same pre-neuron,                  est = same pre-cluster
+  or_metric  truth = same pre-neuron OR post-neuron,   est = same pre-cluster
+  post_only  truth = same post-neuron,                 est = same post-cluster
+  and_metric truth = same (pre-neuron, post-neuron),   est = same (pre-cluster, post-cluster)
+
+``post_only`` and ``and_metric`` require a post-side partition (``pred_post``).
+A never-merge partition gets recall=0 under ``and_metric`` (no two singletons
+share a (pre-cluster, post-cluster) pair) and recall=0 under ``pre_only``/``post_only``
+(no two singletons share a cluster label).  ``or_metric`` matches the original
+line-graph metric and is insensitive to over-fragmentation when estimated from
+the pre-side alone.
+"""
+
+from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Set, Tuple
+from typing import Optional, Set, Tuple
 
 import numpy as np
 
 from .helpers import pairwise_edges
 from .merge import ConnectivityGraph
-
-
-def _clutter_keep_indices(
-    pre_root_ids: np.ndarray,
-    post_root_ids: np.ndarray,
-    min_root_synapses: int,
-) -> np.ndarray:
-    """Indices of synapses to keep after dropping small-fragment / 0-degree roots.
-
-    Mirrors ``SynapseTable.filter_clutter``: count root occurrences across both
-    pre- and post-side columns, drop synapses where either endpoint root has
-    fewer than ``min_root_synapses`` total occurrences.
-    """
-    if min_root_synapses <= 1 or len(pre_root_ids) == 0:
-        return np.arange(len(pre_root_ids))
-
-    roots = np.concatenate([pre_root_ids, post_root_ids])
-    unique, counts = np.unique(roots, return_counts=True)
-    keep_roots = unique[counts >= min_root_synapses]
-    pre_ok = np.isin(pre_root_ids, keep_roots)
-    post_ok = np.isin(post_root_ids, keep_roots)
-    return np.where(pre_ok & post_ok)[0]
 
 
 @dataclass
@@ -48,40 +43,100 @@ class LineGraphMetrics:
             f"LineGraph F1={self.f1:.3f}  "
             f"P={self.precision:.3f}  R={self.recall:.3f}  "
             f"TP={self.tp} FP={self.fp} FN={self.fn}  "
-            f"(true edges={self.n_true_edges}, est edges={self.n_estimated_edges})"
+            f"(true={self.n_true_edges}, est={self.n_estimated_edges})"
         )
 
+
+@dataclass
+class LineGraphSuite:
+    """All four line-graph F1 variants from a single evaluation.
+
+    ``pre_only``:   truth = same pre-neuron, est = same pre-cluster.
+                    Penalises axonal over-fragmentation and false merges.
+    ``or_metric``:  truth = same pre OR post, est = same pre-cluster.
+                    Original line-graph metric (backward-compatible).
+    ``post_only``:  truth = same post-neuron, est = same post-cluster.
+                    ``None`` without a post-side partition.
+    ``and_metric``: truth = same (pre, post) circuit edge,
+                    est = same (pre-cluster, post-cluster) pair.
+                    Most demanding: penalises over-fragmentation on either side,
+                    and a never-merge partition on both sides gives recall = 0.
+                    ``None`` without a post-side partition.
+    """
+    pre_only:  LineGraphMetrics
+    or_metric: LineGraphMetrics
+    post_only: Optional[LineGraphMetrics]
+    and_metric: Optional[LineGraphMetrics]
+
+
+# ── low-level pair builders ──────────────────────────────────────────────────
+
+def _pairs_from_labels(labels: np.ndarray) -> Set[Tuple[int, int]]:
+    """Canonical (i<j) pairs for all observations sharing the same integer label."""
+    groups: dict[int, list[int]] = {}
+    for idx, lab in enumerate(labels):
+        groups.setdefault(int(lab), []).append(idx)
+    edges: Set[Tuple[int, int]] = set()
+    for g in groups.values():
+        if len(g) >= 2:
+            edges |= pairwise_edges(g)
+    return edges
+
+
+def _pairs_from_joint(a: np.ndarray, b: np.ndarray) -> Set[Tuple[int, int]]:
+    """Canonical (i<j) pairs where a[i]==a[j] AND b[i]==b[j]."""
+    groups: dict[tuple, list[int]] = {}
+    for idx in range(len(a)):
+        key = (int(a[idx]), int(b[idx]))
+        groups.setdefault(key, []).append(idx)
+    edges: Set[Tuple[int, int]] = set()
+    for g in groups.values():
+        if len(g) >= 2:
+            edges |= pairwise_edges(g)
+    return edges
+
+
+# ── public true-pair builders (also used directly in tests) ──────────────────
 
 def build_true_line_graph(
     pre_root_ids: np.ndarray,
     post_root_ids: np.ndarray,
 ) -> Set[Tuple[int, int]]:
-    n = len(pre_root_ids)
-    pre_groups: dict[int, list[int]] = {}
-    post_groups: dict[int, list[int]] = {}
+    """OR variant: pairs sharing same pre-neuron OR same post-neuron."""
+    return _pairs_from_labels(pre_root_ids) | _pairs_from_labels(post_root_ids)
 
-    for idx in range(n):
-        pre_groups.setdefault(int(pre_root_ids[idx]), []).append(idx)
-        post_groups.setdefault(int(post_root_ids[idx]), []).append(idx)
 
-    edges: Set[Tuple[int, int]] = set()
-    for group in pre_groups.values():
-        edges |= pairwise_edges(group)
-    for group in post_groups.values():
-        edges |= pairwise_edges(group)
-    return edges
+def build_true_pairs_pre(pre_root_ids: np.ndarray) -> Set[Tuple[int, int]]:
+    """Pairs sharing the same pre-neuron only."""
+    return _pairs_from_labels(pre_root_ids)
+
+
+def build_true_pairs_post(post_root_ids: np.ndarray) -> Set[Tuple[int, int]]:
+    """Pairs sharing the same post-neuron only."""
+    return _pairs_from_labels(post_root_ids)
+
+
+def build_true_pairs_and(
+    pre_root_ids: np.ndarray,
+    post_root_ids: np.ndarray,
+) -> Set[Tuple[int, int]]:
+    """AND variant: pairs sharing the same directed circuit edge (pre, post)."""
+    return _pairs_from_joint(pre_root_ids, post_root_ids)
 
 
 def build_estimated_line_graph(
     graph: ConnectivityGraph,
     n_synapses: int,
 ) -> Set[Tuple[int, int]]:
+    """Build estimated pairs from a ConnectivityGraph (legacy API)."""
     del n_synapses
     edges: Set[Tuple[int, int]] = set()
     for neuron in graph.neurons.values():
         edges |= pairwise_edges(neuron.synapse_indices)
     return edges
 
+
+# ── F1 computation ────────────────────────────────────────────────────────────
 
 def compute_line_graph_f1(
     true_edges: Set[Tuple[int, int]],
@@ -93,19 +148,72 @@ def compute_line_graph_f1(
     fn = len(true_edges - estimated_edges)
 
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+    recall    = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    f1 = (2 * precision * recall / (precision + recall)
+          if (precision + recall) > 0 else 0.0)
 
     return LineGraphMetrics(
-        tp=tp,
-        fp=fp,
-        fn=fn,
-        precision=precision,
-        recall=recall,
-        f1=f1,
+        tp=tp, fp=fp, fn=fn,
+        precision=precision, recall=recall, f1=f1,
         n_true_edges=len(true_edges),
         n_estimated_edges=len(estimated_edges),
         n_synapses=n_synapses,
+    )
+
+
+# ── high-level evaluation API ─────────────────────────────────────────────────
+
+def evaluate_suite(
+    pred_pre: np.ndarray,
+    pre_root_ids: np.ndarray,
+    post_root_ids: np.ndarray,
+    pred_post: Optional[np.ndarray] = None,
+) -> LineGraphSuite:
+    """Compute all four line-graph F1 variants in one pass.
+
+    Parameters
+    ----------
+    pred_pre:
+        [N] predicted cluster label per synapse observation (pre-side partition).
+    pre_root_ids:
+        [N] ground-truth pre-neuron id per observation.
+    post_root_ids:
+        [N] ground-truth post-neuron id per observation.
+    pred_post:
+        [N] predicted post-side cluster label, aligned to the same N observations
+        as ``pred_pre`` by synapse_id.  Required for ``post_only`` and
+        ``and_metric``; pass ``None`` for single-side evaluation.
+
+    Returns
+    -------
+    LineGraphSuite
+        All four metrics.  ``post_only`` and ``and_metric`` are ``None`` when
+        ``pred_post`` is not provided.
+    """
+    n = len(pred_pre)
+    true_pre  = _pairs_from_labels(pre_root_ids)
+    true_post = _pairs_from_labels(post_root_ids)
+    true_or   = true_pre | true_post
+    true_and  = _pairs_from_joint(pre_root_ids, post_root_ids)
+    est_pre   = _pairs_from_labels(pred_pre)
+
+    pre_only  = compute_line_graph_f1(true_pre, est_pre, n)
+    or_metric = compute_line_graph_f1(true_or,  est_pre, n)
+
+    if pred_post is not None:
+        est_post   = _pairs_from_labels(pred_post)
+        est_and    = _pairs_from_joint(pred_pre, pred_post)
+        post_only  = compute_line_graph_f1(true_post, est_post, n)
+        and_metric = compute_line_graph_f1(true_and,  est_and,  n)
+    else:
+        post_only  = None
+        and_metric = None
+
+    return LineGraphSuite(
+        pre_only=pre_only,
+        or_metric=or_metric,
+        post_only=post_only,
+        and_metric=and_metric,
     )
 
 
@@ -113,19 +221,11 @@ def evaluate(
     graph: ConnectivityGraph,
     pre_root_ids: np.ndarray,
     post_root_ids: np.ndarray,
-    *,
-    min_root_synapses: int = 0,
 ) -> LineGraphMetrics:
+    """Legacy: OR-metric from a ConnectivityGraph."""
     n = len(pre_root_ids)
     true_edges = build_true_line_graph(pre_root_ids, post_root_ids)
     est_edges = build_estimated_line_graph(graph, n)
-    if min_root_synapses > 1:
-        keep = set(
-            _clutter_keep_indices(pre_root_ids, post_root_ids, min_root_synapses).tolist()
-        )
-        true_edges = {(i, j) for (i, j) in true_edges if i in keep and j in keep}
-        est_edges = {(i, j) for (i, j) in est_edges if i in keep and j in keep}
-        n = len(keep)
     return compute_line_graph_f1(true_edges, est_edges, n)
 
 
@@ -134,23 +234,14 @@ def evaluate_from_root_ids(
     estimated_post_root_ids: np.ndarray,
     true_pre_root_ids: np.ndarray,
     true_post_root_ids: np.ndarray,
-    *,
-    min_root_synapses: int = 0,
 ) -> LineGraphMetrics:
+    """OR-metric when both sides are expressed as root-id arrays."""
     true_edges = build_true_line_graph(true_pre_root_ids, true_post_root_ids)
-    est_edges = build_true_line_graph(estimated_pre_root_ids, estimated_post_root_ids)
-    n = len(true_pre_root_ids)
-    if min_root_synapses > 1:
-        keep = set(
-            _clutter_keep_indices(
-                true_pre_root_ids, true_post_root_ids, min_root_synapses
-            ).tolist()
-        )
-        true_edges = {(i, j) for (i, j) in true_edges if i in keep and j in keep}
-        est_edges = {(i, j) for (i, j) in est_edges if i in keep and j in keep}
-        n = len(keep)
-    return compute_line_graph_f1(true_edges, est_edges, n)
+    est_edges  = build_true_line_graph(estimated_pre_root_ids, estimated_post_root_ids)
+    return compute_line_graph_f1(true_edges, est_edges, len(true_pre_root_ids))
 
+
+# ── sampled approximation (for large synapse sets) ───────────────────────────
 
 def sample_synapse_pairs(
     n_synapses: int,
@@ -192,7 +283,7 @@ def compute_sampled_line_graph_f1(
     """Approximate line-graph F1 on a sampled subset of synapse pairs."""
     sampled_pairs = sample_synapse_pairs(n_synapses, max_pairs=max_pairs, seed=seed)
     sampled_true = true_edges & sampled_pairs
-    sampled_est = estimated_edges & sampled_pairs
+    sampled_est  = estimated_edges & sampled_pairs
     return compute_line_graph_f1(sampled_true, sampled_est, n_synapses)
 
 
@@ -203,23 +294,12 @@ def evaluate_sampled(
     *,
     max_pairs: int = 10000,
     seed: int = 42,
-    min_root_synapses: int = 0,
 ) -> LineGraphMetrics:
-    """Evaluate sampled-pair line-graph F1 as a cheaper diagnostic metric."""
+    """Sampled OR-metric from a ConnectivityGraph."""
     n = len(pre_root_ids)
     true_edges = build_true_line_graph(pre_root_ids, post_root_ids)
     est_edges = build_estimated_line_graph(graph, n)
-    if min_root_synapses > 1:
-        keep_arr = np.sort(_clutter_keep_indices(pre_root_ids, post_root_ids, min_root_synapses))
-        keep_set = set(keep_arr.tolist())
-        remap = {old: new for new, old in enumerate(keep_arr.tolist())}
-        true_edges = {(remap[i], remap[j]) for (i, j) in true_edges if i in keep_set and j in keep_set}
-        est_edges = {(remap[i], remap[j]) for (i, j) in est_edges if i in keep_set and j in keep_set}
-        n = len(keep_arr)
     return compute_sampled_line_graph_f1(
-        true_edges,
-        est_edges,
-        n,
-        max_pairs=max_pairs,
-        seed=seed,
+        true_edges, est_edges, n,
+        max_pairs=max_pairs, seed=seed,
     )

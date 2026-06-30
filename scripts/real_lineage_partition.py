@@ -54,8 +54,14 @@ def main() -> int:
     p.add_argument("--partition-epochs", type=int, default=80)
     p.add_argument("--threshold", type=float, default=0.90)
     p.add_argument("--cc-bias", type=float, default=0.0)
+    p.add_argument("--abstain-threshold", type=float, default=0.0,
+                   help="uncertainty abstention threshold; 0 = disabled (default)")
+    p.add_argument("--franken-hard-frac", type=float, default=0.1,
+                   help="fraction of training negatives from frankenmerge cut pool")
     p.add_argument("--device", default="cpu")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--no-l2-skeletons", action="store_true",
+                   help="skip L2 cache skeleton fetch; use synapse cloud only")
     args = p.parse_args()
 
     from treestitch.embed import FragmentEncoder, encode_fragments, train_fragment_encoder
@@ -69,7 +75,7 @@ def main() -> int:
     fragments, region, label_map = build_lineage_world(
         n_objects=args.n_objects, version=args.version, side=args.side,
         max_syn_per_obj=args.max_syn_per_obj, min_syn_per_obj=args.min_syn_per_obj,
-        seed=args.seed, verbose=True)
+        seed=args.seed, verbose=True, l2_skeletons=not args.no_l2_skeletons)
 
     print(f"\nTraining FragmentEncoder ({args.embed_epochs} epochs) …")
     encoder = FragmentEncoder(node_input_dim=4, d_model=64, output_dim=32)
@@ -103,21 +109,29 @@ def main() -> int:
     # B: edge_cc
     print(f"\n{'='*64}\n[B] edge_cc  (learn f(117→{args.version}) per edge + correlation clustering)\n{'='*64}")
     model, _ = train_edge_partition(graph, n_epochs=args.partition_epochs, lr=1e-3,
+                                    franken_hard_frac=args.franken_hard_frac,
                                     device=args.device, seed=args.seed, log_every=20)
-    pred_cc = partition_observations_cc(model, graph, bias=args.cc_bias, device=args.device)
+    pred_cc = partition_observations_cc(model, graph, bias=args.cc_bias,
+                                        abstain_threshold=args.abstain_threshold,
+                                        device=args.device)
     r_cc = evaluate_partition(pred_cc, graph.labels)
     m_cc = merge_metrics(graph, pred_cc)
     print(f"  ARI={r_cc['ari']:.4f}  clusters={r_cc['n_clusters_pred']}/{r_cc['n_clusters_true']}  {_fmt_merge(m_cc)}")
 
     print(f"\n{'='*64}\nSUMMARY  (real v117→v{args.version}, {n_true} neurons, {n_frag} fragments)\n{'='*64}")
-    print(f"  {'method':<12} {'ARI':>7} {'clusters':>10} {'merge_P':>9} {'over':>7}")
+    print(f"  {'method':<12} {'ARI':>7} {'clusters':>10} {'merge_P':>9} {'over':>7} {'fk_split':>9} {'abstain':>8}")
     print(f"  {'union-find':<12} {r_uf['ari']:>7.4f} "
           f"{str(r_uf['n_clusters_pred'])+'/'+str(r_uf['n_clusters_true']):>10} "
-          f"{m_uf['merge_precision']:>9.3f} {m_uf['over_merge_rate']:>7.3f}")
+          f"{m_uf['merge_precision']:>9.3f} {m_uf['over_merge_rate']:>7.3f} "
+          f"{m_uf['frankenmerge_split_recall']:>9.3f} {m_uf.get('abstain_rate', 0.0):>8.3f}")
     print(f"  {'edge_cc':<12} {r_cc['ari']:>7.4f} "
           f"{str(r_cc['n_clusters_pred'])+'/'+str(r_cc['n_clusters_true']):>10} "
-          f"{m_cc['merge_precision']:>9.3f} {m_cc['over_merge_rate']:>7.3f}")
+          f"{m_cc['merge_precision']:>9.3f} {m_cc['over_merge_rate']:>7.3f} "
+          f"{m_cc['frankenmerge_split_recall']:>9.3f} {m_cc.get('abstain_rate', 0.0):>8.3f}")
     print(f"  ΔARI (edge_cc − union-find) = {r_cc['ari'] - r_uf['ari']:+.4f}")
+    print(f"  Bar1 {'PASS' if r_cc['ari'] >= r_uf['ari'] and m_cc['merge_precision'] >= m_uf['merge_precision'] else 'FAIL'}"
+          f"  Bar2 {'PASS' if m_cc['merge_precision'] > 0.95 and m_cc['merge_recall'] > 0.70 else 'FAIL'}"
+          f"  Bar3 {'PASS' if m_cc['frankenmerge_split_recall'] > 0.5 else 'FAIL (or N/A)'}")
     print(f"{'='*64}")
     return 0
 

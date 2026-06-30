@@ -105,6 +105,70 @@ def load_nucleus_table(cache_path: Optional[str] = None) -> pd.DataFrame:
     return df
 
 
+def load_nucleus_positions(
+    cache_path: Optional[str] = None,
+    voxel_nm: tuple[float, float, float] = (8.0, 8.0, 40.0),
+) -> pd.DataFrame:
+    """Download the nucleus table and parse xyz positions.
+
+    Columns 0–2 of the source CSV are integer voxel coordinates; they are
+    multiplied by *voxel_nm* to produce nm-space positions.  The default
+    ``(8, 8, 40)`` nm matches the Minnie65 EM voxel resolution.
+
+    Parameters
+    ----------
+    cache_path:
+        Optional path for a gzip'd CSV cache (columns: root_id, x_nm, y_nm,
+        z_nm).  Written on first fetch; read on subsequent calls.
+    voxel_nm:
+        (vx, vy, vz) in nm.  Applied to raw column values 0, 1, 2.
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns: root_id (int64), x_nm (float64), y_nm (float64), z_nm (float64).
+        Rows with root_id == 0 or unparseable coordinates are excluded.
+    """
+    if cache_path is not None:
+        p = Path(cache_path)
+        if p.exists():
+            df = pd.read_csv(p, compression="gzip")
+            df["root_id"] = df["root_id"].astype(np.int64)
+            return df
+
+    resp = requests.get(_NUCLEUS_URL, timeout=60)
+    resp.raise_for_status()
+
+    vx, vy, vz = voxel_nm
+    rows: list[dict] = []
+    with gzip.open(io.BytesIO(resp.content)) as fh:
+        for line in fh:
+            parts = line.decode().strip().split(",")
+            if len(parts) < 4:
+                continue
+            try:
+                x_nm    = int(parts[0]) * vx
+                y_nm    = int(parts[1]) * vy
+                z_nm    = int(parts[2]) * vz
+                root_id = int(parts[3])
+            except ValueError:
+                continue
+            if root_id != 0:
+                rows.append({"root_id": root_id,
+                             "x_nm": x_nm, "y_nm": y_nm, "z_nm": z_nm})
+
+    df = pd.DataFrame(rows)
+    if len(df) == 0:
+        return df
+    df["root_id"] = df["root_id"].astype(np.int64)
+    df[["x_nm", "y_nm", "z_nm"]] = df[["x_nm", "y_nm", "z_nm"]].astype(float)
+
+    if cache_path is not None:
+        df.to_csv(cache_path, index=False, compression="gzip")
+
+    return df
+
+
 # ---------------------------------------------------------------------------
 # Cell type annotations
 # ---------------------------------------------------------------------------
