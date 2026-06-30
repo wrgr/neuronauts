@@ -7,6 +7,8 @@ beats its permutation null in both strata.
 import numpy as np
 import pytest
 
+pytest.importorskip("sklearn", reason="scikit-learn not installed; skipping synapse-correction ML tests")
+
 from experiments.pcfg.synapse_correction import (
     build_correction_pairs,
     cell_components,
