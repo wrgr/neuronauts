@@ -135,9 +135,148 @@ def parse_args() -> argparse.Namespace:
         help="Directory to cache skeleton fetches across runs",
     )
     p.add_argument(
+        "--synapse-cache-dir",
+        default=None,
+        help="Directory to cache synapse fetches across runs (strongly recommended)",
+    )
+    p.add_argument(
+        "--synapse-source",
+        default="bulk",
+        choices=["query", "bulk", "auto"],
+        help="bulk=GET-based parquet+chunkedgraph route (default; works when the "
+             "CAVE /query POST is down); query=CAVE /query POST; auto=try query "
+             "then fall back to bulk",
+    )
+    p.add_argument(
+        "--synthetic-splits",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Self-supervised task: cut each neuron in two and learn the grammar "
+             "that merges the pieces back (default). --no-synthetic-splits uses "
+             "real v117->v1718 false-split positives instead (rare in proofread regions)",
+    )
+    p.add_argument(
+        "--min-chunk-synapses",
+        type=int,
+        default=5,
+        help="Minimum synapses per fragment (K); fragments below K are filtered "
+             "out (low-degree). Small neurons (>= K but too small to cut in two) "
+             "still enter the pool as single fragments (negatives)",
+    )
+    p.add_argument(
+        "--max-pieces",
+        type=int,
+        default=6,
+        help="Max fragments to over-segment each neuron into (gives up to "
+             "C(pieces,2) positive merge pairs per neuron)",
+    )
+    p.add_argument(
+        "--split-mode",
+        default="realistic",
+        choices=["realistic", "branch", "axis"],
+        help="How the learned grammar over-segments skeletons: realistic=cut at "
+             "thin necks + branches with a dropped-piece gap (default); branch=cut "
+             "at branch points; axis=contiguous pieces. Bigram path always uses axis.",
+    )
+    p.add_argument(
+        "--gap-nm",
+        type=float,
+        default=1500.0,
+        help="Size of the dropped-piece gap at each realistic break (nm); the lost "
+             "connector that makes closest-point distance evidence, not a giveaway",
+    )
+    p.add_argument(
+        "--thin-bias",
+        type=float,
+        default=2.0,
+        help="Exponent biasing realistic breaks toward thin (low-radius) necks: "
+             "weight = (1/radius)**thin_bias",
+    )
+    p.add_argument(
         "--use-learned",
         action="store_true",
         help="Run learned skeleton-synapse grammar (SkeletonSynapseNet; requires torch)",
+    )
+    p.add_argument(
+        "--lightweight",
+        action="store_true",
+        help="Fetch synapses via the CAVE-recommended path (dense seg-cutout root "
+             "enumeration + root-filtered synapse lookup) instead of an unfiltered "
+             "spatial scan. Slower per box but completes behind restrictive egress "
+             "proxies where the spatial query times out.",
+    )
+    p.add_argument(
+        "--seg-mip",
+        type=int,
+        default=5,
+        help="MIP level for the --lightweight segmentation cutout (higher = coarser/faster)",
+    )
+    p.add_argument(
+        "--learned-epochs",
+        type=int,
+        default=30,
+        help="Training epochs per fold for the learned grammar (lower = faster on CPU)",
+    )
+    p.add_argument(
+        "--max-neurons",
+        type=int,
+        default=0,
+        help="Cap on how many fragmentable neurons to fetch skeletons for, "
+             "bounding fetch cost independent of box size (0 = no cap). When the "
+             "cap bites, neurons are sampled RANDOMLY (representative of the real "
+             "mess of fragments), not biggest-first (which can't be done at deploy)",
+    )
+    p.add_argument(
+        "--eval-offset-um",
+        type=float,
+        default=0.0,
+        help="If > 0, run a TRUE held-out test: train ONE model (no CV) on the "
+             "main box, then evaluate on a DISJOINT box shifted this many um along "
+             "x (e.g. 150). No fragment is shared between train and eval, unlike "
+             "CV folds where pieces of one cut neuron leak across the split. "
+             "0 = standard within-box CV.",
+    )
+    p.add_argument(
+        "--val-offset-um",
+        type=float,
+        default=0.0,
+        help="If > 0 (with --eval-offset-um), fetch a THIRD disjoint region this "
+             "many um along x (use a sign/size that is disjoint from both train and "
+             "eval, e.g. -150) and use it to SELECT the training epoch. A "
+             "same-region split overfits with training and can't detect "
+             "cross-region overfit; an independent region can. 0 = select on a "
+             "train-internal split.",
+    )
+    p.add_argument(
+        "--checkpoint",
+        default=None,
+        help="Path to save the trained model checkpoint (held-out mode only). "
+             "Lets you reload and score other regions without retraining.",
+    )
+    p.add_argument(
+        "--learned-honest",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Also run the distance-matched (honest) pass for the learned grammar. "
+             "--no-learned-honest skips it (~2x faster; standard CV with distance "
+             "as a feature is still reported)",
+    )
+    p.add_argument(
+        "--learned-use-distance",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Give the learned scorer the closest-point distance feature. "
+             "--no-learned-use-distance makes the merge decision purely from the "
+             "learned morphology grammar (no engineered features)",
+    )
+    p.add_argument(
+        "--small-neuron-negatives",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Add uncuttable small WHOLE neurons (K..2K synapses) to the negative "
+             "pool. Off by default: complete small neurons differ from cut pieces "
+             "and let the model shortcut (inflated AUC). Small *pieces* from cuts "
+             "are always included regardless.",
     )
     p.add_argument(
         "--verbose",
@@ -179,20 +318,48 @@ def _fetch_one_box(
     center_nm: tuple[int, ...],
     side_um: float,
     token: str | None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict[int, int]] | None:
+    *,
+    lightweight: bool = False,
+    seg_mip: int = 5,
+    synapse_cache_dir: str | None = None,
+    synapse_source: str = "query",
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict[int, int]] | None:
     """Fetch synapses + v117->v1718 remap for one box.
 
-    Returns (pre_pt_nm, post_pt_nm, pre_root_id, post_root_id, remap)
+    Returns (pre_pt_nm, post_pt_nm, pre_root_id, post_root_id, synapse_id, remap)
     or None when the box yields no usable data.
+
+    When ``lightweight`` is set, synapses are fetched via the CAVE-recommended
+    path -- enumerate every root in the box from an agglomerated segmentation
+    cutout, then look up those roots' synapses with a root-filtered query --
+    instead of an unfiltered spatial scan of the 337M-row synapse table.  This
+    completes behind restrictive egress proxies where the spatial query stalls.
     """
-    from neuronauts.fetch import fetch_synapses, make_cube_bbox_nm
+    from neuronauts.fetch import (
+        fetch_synapses, fetch_synapses_for_roots, seg_root_ids_in_bbox,
+        make_cube_bbox_nm,
+    )
     from neuronauts.cave_root_mapping import map_roots_between_versions
 
     bbox_nm = make_cube_bbox_nm(tuple(center_nm), side_um=side_um)
-    log.info("Fetching synapses in %.0f um box around %s ...", side_um, center_nm)
 
     try:
-        syn = fetch_synapses(bbox_nm, version=117, token=token)
+        if lightweight:
+            log.info("Enumerating roots in %.0f um box around %s (seg mip %d) ...",
+                     side_um, center_nm, seg_mip)
+            roots = seg_root_ids_in_bbox(bbox_nm, version=117, token=token, mip=seg_mip)
+            log.info("  %d roots in box; fetching their synapses (root-filtered) ...",
+                     len(roots))
+            syn = fetch_synapses_for_roots(
+                roots, bbox_nm=bbox_nm, version=117, token=token,
+            )
+        else:
+            log.info("Fetching synapses in %.0f um box around %s (source=%s) ...",
+                     side_um, center_nm, synapse_source)
+            syn = fetch_synapses(
+                bbox_nm, version=117, token=token,
+                cache_dir=synapse_cache_dir, source=synapse_source,
+            )
     except Exception as exc:
         log.warning("Synapse fetch failed for center %s: %s", center_nm, exc)
         return None
@@ -227,7 +394,29 @@ def _fetch_one_box(
     n_mapped = sum(1 for v in remap.values() if v > 0)
     log.info("  %d / %d roots have a valid v%d label", n_mapped, len(all_roots), _GT_VERSION)
 
-    return pre_pt_nm, post_pt_nm, syn.pre_root_id, syn.post_root_id, remap
+    return pre_pt_nm, post_pt_nm, syn.pre_root_id, syn.post_root_id, syn.synapse_id, remap
+
+
+def _fetch_region_partitions(center_nm, args):
+    """Fetch one box and extract its half-partitions.
+
+    Shared by the held-out eval region (the main training fetch lives inline in
+    main() because it also does box-indexed positive-count logging).
+    """
+    from experiments.pcfg.pcfg_partitions import extract_partitions
+
+    result = _fetch_one_box(
+        center_nm, args.side_um, args.token,
+        synapse_cache_dir=args.synapse_cache_dir,
+        synapse_source=args.synapse_source,
+    )
+    if result is None:
+        return []
+    pre_pt_nm, post_pt_nm, pre_root_id, post_root_id, synapse_id, remap = result
+    return extract_partitions(
+        pre_pt_nm, post_pt_nm, pre_root_id, post_root_id, remap,
+        min_synapses=args.min_synapses, sides=args.side, synapse_id=synapse_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -346,14 +535,14 @@ def _cross_box_analysis(
           f"max={neg_dists_nm.max()/1e3:.1f} µm")
     print()
     _run_cv(X_xb[:, dist_idx], y_xb, n_folds, seed, "distance only (1 feat)")
-    print("-- LR --")
+    print("-- Logistic Regression --")
     _run_cv(X_xb[:, bg_idx],   y_xb, n_folds, seed, "bigram-syntax (16+16 feats)")
     _run_cv(X_xb[:, be_idx],   y_xb, n_folds, seed, "bigram + entropy (17+17 feats)")
     _run_cv(X_xb,               y_xb, n_folds, seed, "bigram + entropy + dist (35 feats)")
-    print("-- RF --")
-    _run_cv(X_xb[:, bg_idx],   y_xb, n_folds, seed, "bigram-syntax RF (16+16 feats)", classifier="rf")
-    _run_cv(X_xb[:, be_idx],   y_xb, n_folds, seed, "bigram + entropy RF (17+17 feats)", classifier="rf")
-    _run_cv(X_xb,               y_xb, n_folds, seed, "bigram + entropy + dist RF (35 feats)", classifier="rf")
+    print("-- Random Forest --")
+    _run_cv(X_xb[:, bg_idx],   y_xb, n_folds, seed, "bigram-syntax (16+16 feats)", classifier="rf")
+    _run_cv(X_xb[:, be_idx],   y_xb, n_folds, seed, "bigram + entropy (17+17 feats)", classifier="rf")
+    _run_cv(X_xb,               y_xb, n_folds, seed, "bigram + entropy + dist (35 feats)", classifier="rf")
 
 
 # ---------------------------------------------------------------------------
@@ -430,8 +619,9 @@ def _run_cv(
 ) -> float:
     """Stratified k-fold CV; returns mean ROC-AUC.
 
-    classifier: 'lr' = LogisticRegression (default), 'rf' = RandomForest
+    classifier: 'lr' = Logistic Regression (default), 'rf' = Random Forest
     """
+    clf_name = {"lr": "Logistic Regression", "rf": "Random Forest"}.get(classifier, classifier)
     try:
         from sklearn.ensemble import RandomForestClassifier
         from sklearn.linear_model import LogisticRegression
@@ -439,13 +629,13 @@ def _run_cv(
         from sklearn.model_selection import StratifiedKFold
         from sklearn.preprocessing import StandardScaler
     except ImportError:
-        print(f"  {label:47s} (sklearn not available)")
+        print(f"  {label:38s} {clf_name:20s} (sklearn not available)")
         return float("nan")
 
     n_pos = int(y.sum())
     n_neg = len(y) - n_pos
     if n_pos < n_folds or n_neg < n_folds:
-        print(f"  {label:47s} skipped (too few: {n_pos}+/{n_neg}-)")
+        print(f"  {label:38s} {clf_name:20s} skipped (too few: {n_pos}+/{n_neg}-)")
         return float("nan")
 
     skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=seed)
@@ -467,7 +657,7 @@ def _run_cv(
         probs[val_idx] = clf.predict_proba(X_va)[:, 1]
 
     auc = float(roc_auc_score(y, probs))
-    print(f"  {label:47s} CV AUC = {auc:.2f}")
+    print(f"  {label:38s} {clf_name:20s} CV AUC = {auc:.2f}")
     return auc
 
 
@@ -486,6 +676,7 @@ def main() -> None:
         FEAT_DIM,
         build_merge_pairs,
         extract_partitions,
+        make_synthetic_split_partitions,
     )
 
     # -- Fetch one or more boxes ------------------------------------------
@@ -495,10 +686,15 @@ def main() -> None:
     n_boxes_used = 0
 
     for box_idx, center_nm in enumerate(centers):
-        result = _fetch_one_box(center_nm, args.side_um, args.token)
+        result = _fetch_one_box(
+            center_nm, args.side_um, args.token,
+            lightweight=args.lightweight, seg_mip=args.seg_mip,
+            synapse_cache_dir=args.synapse_cache_dir,
+            synapse_source=args.synapse_source,
+        )
         if result is None:
             continue
-        pre_pt_nm, post_pt_nm, pre_root_id, post_root_id, remap = result
+        pre_pt_nm, post_pt_nm, pre_root_id, post_root_id, synapse_id, remap = result
 
         parts = extract_partitions(
             pre_pt_nm,
@@ -508,6 +704,7 @@ def main() -> None:
             remap,
             min_synapses=args.min_synapses,
             sides=args.side,
+            synapse_id=synapse_id,
         )
         log.info("  -> %d half-partitions extracted", len(parts))
         if args.verbose:
@@ -541,13 +738,34 @@ def main() -> None:
         n_boxes_used,
     )
 
+    # -- Synthetic split->merge task (default) ----------------------------
+    # Cut each real neuron in two and learn the grammar that recognises the two
+    # pieces belong together. Both members of every pair are half-fragments, so
+    # there is no fragment-size confound between positives and negatives.
+    if args.synthetic_splits:
+        eval_partitions = make_synthetic_split_partitions(
+            all_partitions, rng=rng,
+            min_chunk=args.min_chunk_synapses, max_pieces=args.max_pieces,
+        )
+        n_parents = len({p.v18xx_root for p in eval_partitions})
+        log.info(
+            "Synthetic split->merge task: %d neurons over-segmented into %d "
+            "fragments (>= %d synapses each, <= %d pieces/neuron)",
+            n_parents, len(eval_partitions), args.min_chunk_synapses, args.max_pieces,
+        )
+        if len(eval_partitions) < 4:
+            sys.exit(f"Too few splittable neurons (need >= {2*args.min_chunk_synapses} "
+                     "synapses each). Try a larger box or smaller --min-chunk-synapses.")
+    else:
+        eval_partitions = all_partitions
+
     # -- Build merge pair dataset -----------------------------------------
     log.info("Building merge pairs (max_neg_ratio=%.1f) ...", args.max_neg_ratio)
     X, y = build_merge_pairs(
-        all_partitions, max_neg_ratio=args.max_neg_ratio, rng=rng, match_distance=False,
+        eval_partitions, max_neg_ratio=args.max_neg_ratio, rng=rng, match_distance=False,
     )
     X_md, y_md = build_merge_pairs(
-        all_partitions, max_neg_ratio=args.max_neg_ratio,
+        eval_partitions, max_neg_ratio=args.max_neg_ratio,
         rng=np.random.default_rng(args.seed), match_distance=True,
     )
 
@@ -562,7 +780,7 @@ def main() -> None:
     # Layout: [bigram_a(16) | entropy_a(1) | bigram_b(16) | entropy_b(1) | log_dist(1)]
     bg_idx   = list(range(BIGRAM_DIM)) + list(range(FEAT_DIM, FEAT_DIM + BIGRAM_DIM))
     be_idx   = list(range(FEAT_DIM)) + list(range(FEAT_DIM, FEAT_DIM * 2))
-    dist_idx = [X.shape[1] - 1]  # last column: log1p(centroid_dist_nm)
+    dist_idx = [X.shape[1] - 1]  # last column: log1p(closest_point_dist_nm)
 
     # Permuted-label baseline: AUC should be ~0.50 — confirms CV is unbiased
     y_perm = rng.permutation(y)
@@ -584,11 +802,11 @@ def main() -> None:
     neg_dists_nm = np.expm1(X[~pos_mask, -1])
 
     print(f"Standard negatives (n={len(y):,} pairs, {pct_pos:.1f}% positive):")
-    print(f"  Positive centroid dist: "
+    print(f"  Positive closest-pt dist: "
           f"min={pos_dists_nm.min()/1e3:.1f}  "
           f"med={np.median(pos_dists_nm)/1e3:.1f}  "
           f"max={pos_dists_nm.max()/1e3:.1f} µm")
-    print(f"  Negative centroid dist: "
+    print(f"  Negative closest-pt dist: "
           f"min={neg_dists_nm.min()/1e3:.1f}  "
           f"med={np.median(neg_dists_nm)/1e3:.1f}  "
           f"max={neg_dists_nm.max()/1e3:.1f} µm")
@@ -598,15 +816,15 @@ def main() -> None:
     _run_cv(X[:, dist_idx], y,      args.cv_folds, args.seed, "distance only (1 feat)")
     _run_cv(X,              y_perm, args.cv_folds, args.seed, "permuted labels (null)")
     print()
-    print("-- Grammar (LR) --")
+    print("-- Grammar (Logistic Regression) --")
     _run_cv(X[:, bg_idx], y, args.cv_folds, args.seed, "bigram-syntax (16+16 feats)")
     _run_cv(X[:, be_idx], y, args.cv_folds, args.seed, "bigram + entropy (17+17 feats)")
     _run_cv(X,            y, args.cv_folds, args.seed, "bigram + entropy + dist (35 feats)")
-    print("-- Grammar (RF, non-linear) --")
-    _run_cv(X[:, bg_idx], y, args.cv_folds, args.seed, "bigram-syntax RF (16+16 feats)", classifier="rf")
-    _run_cv(X[:, be_idx], y, args.cv_folds, args.seed, "bigram + entropy RF (17+17 feats)", classifier="rf")
-    _run_cv(X,            y, args.cv_folds, args.seed, "bigram + entropy + dist RF (35 feats)", classifier="rf")
-    _merge_report(X, y, all_partitions, args.cv_folds, args.seed)
+    print("-- Grammar (Random Forest, non-linear) --")
+    _run_cv(X[:, bg_idx], y, args.cv_folds, args.seed, "bigram-syntax (16+16 feats)", classifier="rf")
+    _run_cv(X[:, be_idx], y, args.cv_folds, args.seed, "bigram + entropy (17+17 feats)", classifier="rf")
+    _run_cv(X,            y, args.cv_folds, args.seed, "bigram + entropy + dist (35 feats)", classifier="rf")
+    _merge_report(X, y, eval_partitions, args.cv_folds, args.seed)
 
     # -- Distance-matched negatives (honest grammar test) -----------------
     # Negatives are sampled to have the same centroid-distance distribution as
@@ -619,17 +837,17 @@ def main() -> None:
     y_perm_md = np.random.default_rng(args.seed).permutation(y_md)
     print()
     print("-- Baselines --")
-    _run_cv(X_md[:, dist_idx], y_md,      args.cv_folds, args.seed, "distance only (1 feat) [should be ~0.5]")
+    _run_cv(X_md[:, dist_idx], y_md,      args.cv_folds, args.seed, "distance only (distance-matched)")
     _run_cv(X_md,              y_perm_md, args.cv_folds, args.seed, "permuted labels (null)")
     print()
-    print("-- Grammar (honest, LR) --")
+    print("-- Grammar (honest, Logistic Regression) --")
     _run_cv(X_md[:, bg_idx], y_md, args.cv_folds, args.seed, "bigram-syntax (16+16 feats)")
     _run_cv(X_md[:, be_idx], y_md, args.cv_folds, args.seed, "bigram + entropy (17+17 feats)")
     _run_cv(X_md,            y_md, args.cv_folds, args.seed, "bigram + entropy + dist (35 feats)")
-    print("-- Grammar (honest, RF) --")
-    _run_cv(X_md[:, bg_idx], y_md, args.cv_folds, args.seed, "bigram-syntax RF (16+16 feats)", classifier="rf")
-    _run_cv(X_md[:, be_idx], y_md, args.cv_folds, args.seed, "bigram + entropy RF (17+17 feats)", classifier="rf")
-    _run_cv(X_md,            y_md, args.cv_folds, args.seed, "bigram + entropy + dist RF (35 feats)", classifier="rf")
+    print("-- Grammar (honest, Random Forest) --")
+    _run_cv(X_md[:, bg_idx], y_md, args.cv_folds, args.seed, "bigram-syntax (16+16 feats)", classifier="rf")
+    _run_cv(X_md[:, be_idx], y_md, args.cv_folds, args.seed, "bigram + entropy (17+17 feats)", classifier="rf")
+    _run_cv(X_md,            y_md, args.cv_folds, args.seed, "bigram + entropy + dist (35 feats)", classifier="rf")
 
     # -- Skeleton grammar (optional, requires CAVE skeleton fetch) -----------
     if args.use_skeleton:
@@ -769,12 +987,12 @@ def _run_skeleton_grammar(args, all_partitions, all_box_ids, n_boxes_used, rng):
     print("=" * 60)
     print(f"  Partitions with skeleton: {len(sk_partitions)}")
     print(f"  Pairs:                    {len(y_sk):,} ({pct_pos_sk:.1f}% positive)")
-    print(f"  Positive centroid dist:   ", end="")
+    print(f"  Positive closest-pt dist:   ", end="")
     if len(pos_dists_nm_sk):
         print(f"min={pos_dists_nm_sk.min()/1e3:.1f}  "              f"med={float(np.median(pos_dists_nm_sk))/1e3:.1f}  "              f"max={pos_dists_nm_sk.max()/1e3:.1f} um")
     else:
         print("(none)")
-    print(f"  Negative centroid dist:   ", end="")
+    print(f"  Negative closest-pt dist:   ", end="")
     if len(neg_dists_nm_sk):
         print(f"min={neg_dists_nm_sk.min()/1e3:.1f}  "              f"med={float(np.median(neg_dists_nm_sk))/1e3:.1f}  "              f"max={neg_dists_nm_sk.max()/1e3:.1f} um")
     else:
@@ -783,14 +1001,14 @@ def _run_skeleton_grammar(args, all_partitions, all_box_ids, n_boxes_used, rng):
     print("-- Baselines --")
     _run_cv(X_sk[:, dist_idx], y_sk,      args.cv_folds, args.seed, "distance only (1 feat)")
     _run_cv(X_sk,              y_perm_sk, args.cv_folds, args.seed, "permuted labels (null)")
-    print("-- Skeleton grammar (LR) --")
+    print("-- Skeleton grammar (Logistic Regression) --")
     _run_cv(X_sk[:, bg_idx], y_sk, args.cv_folds, args.seed, "skeleton bigram (16+16 feats)")
     _run_cv(X_sk[:, be_idx], y_sk, args.cv_folds, args.seed, "skeleton bigram+entropy (17+17)")
     _run_cv(X_sk,            y_sk, args.cv_folds, args.seed, "skeleton + dist (35 feats)")
-    print("-- Skeleton grammar (RF) --")
-    _run_cv(X_sk[:, bg_idx], y_sk, args.cv_folds, args.seed, "skeleton bigram RF (16+16)",    classifier="rf")
-    _run_cv(X_sk[:, be_idx], y_sk, args.cv_folds, args.seed, "skeleton bigram+entropy RF",    classifier="rf")
-    _run_cv(X_sk,            y_sk, args.cv_folds, args.seed, "skeleton + dist RF (35 feats)", classifier="rf")
+    print("-- Skeleton grammar (Random Forest) --")
+    _run_cv(X_sk[:, bg_idx], y_sk, args.cv_folds, args.seed, "skeleton bigram (16+16)",    classifier="rf")
+    _run_cv(X_sk[:, be_idx], y_sk, args.cv_folds, args.seed, "skeleton bigram+entropy",    classifier="rf")
+    _run_cv(X_sk,            y_sk, args.cv_folds, args.seed, "skeleton + dist (35 feats)", classifier="rf")
 
     # Cross-box honest test for skeleton grammar
     if n_boxes_used > 1:
@@ -866,36 +1084,61 @@ def _run_skeleton_grammar(args, all_partitions, all_box_ids, n_boxes_used, rng):
             be_idx_xb  = list(range(FEAT_DIM))   + list(range(FEAT_DIM, FEAT_DIM * 2))
             print()
             _run_cv(X_xb[:, dist_idx_xb], y_xb, args.cv_folds, args.seed, "distance only")
-            print("-- LR --")
+            print("-- Logistic Regression --")
             _run_cv(X_xb[:, bg_idx_xb], y_xb, args.cv_folds, args.seed, "skeleton bigram (16+16)")
             _run_cv(X_xb[:, be_idx_xb], y_xb, args.cv_folds, args.seed, "skeleton bigram+ent (17+17)")
             _run_cv(X_xb,               y_xb, args.cv_folds, args.seed, "skeleton + dist (35 feats)")
-            print("-- RF --")
-            _run_cv(X_xb[:, bg_idx_xb], y_xb, args.cv_folds, args.seed, "skeleton bigram RF",       classifier="rf")
-            _run_cv(X_xb[:, be_idx_xb], y_xb, args.cv_folds, args.seed, "skeleton bigram+ent RF",   classifier="rf")
-            _run_cv(X_xb,               y_xb, args.cv_folds, args.seed, "skeleton + dist RF",       classifier="rf")
+            print("-- Random Forest --")
+            _run_cv(X_xb[:, bg_idx_xb], y_xb, args.cv_folds, args.seed, "skeleton bigram",       classifier="rf")
+            _run_cv(X_xb[:, be_idx_xb], y_xb, args.cv_folds, args.seed, "skeleton bigram+ent",   classifier="rf")
+            _run_cv(X_xb,               y_xb, args.cv_folds, args.seed, "skeleton + dist",       classifier="rf")
 
 
 # ---------------------------------------------------------------------------
 # Learned grammar (--use-learned)
 # ---------------------------------------------------------------------------
 
-def _run_learned_grammar(args, all_partitions, all_box_ids, n_boxes_used, rng):
-    """Fetch skeletons and train SkeletonSynapseNet on inter-synapse skeleton paths."""
+def _select_and_build_sk_partitions(partitions, args, rng, *, label="train"):
+    """Pick roots with >= K synapses, fetch their v117 skeletons, combine sides.
+
+    Returns ``(sk_partitions, radii)``. When ``--max-neurons`` bites we sample
+    roots RANDOMLY rather than biggest-first: a biggest-neuron subset can't be
+    selected at deploy time ("just a mess of fragments"), so it would bias the
+    estimate and inflate held-out AUC. Random keeps the fragment-size mix real.
+    """
     from experiments.pcfg.skeleton_tokens import SkeletonPartition
-    from experiments.pcfg.learned_grammar import train_and_eval
     from neuronauts.fetch import fetch_root_skeletons
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
     import threading
 
-    unique_roots = list({p.root_id for p in all_partitions})
+    # A root needs >= min_chunk synapses (combined across sides) to be one valid
+    # fragment. Neurons with >= 2*K can be cut into >= 2 fragments (positives);
+    # smaller ones (K..2K) still enter the pool as single fragments — so we keep
+    # the small thin-axon pieces that matter, and skip only roots too small to be
+    # even one fragment.
+    from collections import Counter as _Counter
+    _syn_per_root: dict = _Counter()
+    for p in partitions:
+        _syn_per_root[p.root_id] += len(p.pts)
+    min_total = args.min_chunk_synapses
+    unique_roots = [r for r, c in _syn_per_root.items() if c >= min_total]
+    n_cuttable = sum(1 for c in _syn_per_root.values() if c >= 2 * min_total)
+    if args.max_neurons and len(unique_roots) > args.max_neurons:
+        sel = rng.choice(len(unique_roots), size=args.max_neurons, replace=False)
+        unique_roots = [unique_roots[i] for i in sel]  # representative random sample
+    log.info(
+        "  [%s] %d / %d roots have >= %d synapses (%d cuttable >= %d); "
+        "fetching %d skeletons (cap=%s, random)",
+        label, sum(1 for c in _syn_per_root.values() if c >= min_total), len(_syn_per_root),
+        min_total, n_cuttable, 2 * min_total, len(unique_roots), args.max_neurons or "none",
+    )
     n_workers = 16  # I/O-bound HTTP — 16 threads gives ~16x speedup over serial
     chunk_size = max(1, len(unique_roots) // n_workers + 1)
     chunks = [unique_roots[i: i + chunk_size] for i in range(0, len(unique_roots), chunk_size)]
     log.info(
-        "Fetching skeletons for %d unique roots (v117) with %d threads (%d chunks) ...",
-        len(unique_roots), n_workers, len(chunks),
+        "  [%s] fetching skeletons for %d unique roots (v117) with %d threads (%d chunks) ...",
+        label, len(unique_roots), n_workers, len(chunks),
     )
 
     skeletons: dict = {}
@@ -908,13 +1151,15 @@ def _run_learned_grammar(args, all_partitions, all_box_ids, n_boxes_used, rng):
             version=117,
             token=args.token,
             cache_dir=args.skeleton_cache_dir,
+            max_retries=2,  # skeleton misses are usually genuine 404s; don't retry 4x
         )
         with lock:
             skeletons.update(result)
             n_done_counter[0] += len(chunk)
             n_done = n_done_counter[0]
             n_usable = sum(1 for sk in skeletons.values() if len(sk.vertices) >= _MIN_SKEL_VERTS)
-            log.info("  skeletons: %d / %d fetched  (%d usable)", n_done, len(unique_roots), n_usable)
+            log.info("  [%s] skeletons: %d / %d fetched  (%d usable)",
+                     label, n_done, len(unique_roots), n_usable)
         return len(result)
 
     try:
@@ -923,37 +1168,156 @@ def _run_learned_grammar(args, all_partitions, all_box_ids, n_boxes_used, rng):
             for fut in as_completed(futures):
                 exc = fut.exception()
                 if exc:
-                    log.warning("Chunk fetch error (partial results kept): %s", exc)
+                    log.warning("  [%s] chunk fetch error (partial results kept): %s", label, exc)
     except Exception as exc:
-        log.warning("Skeleton fetch failed: %s", exc)
+        log.warning("  [%s] skeleton fetch failed: %s", label, exc)
         if not skeletons:
-            return
+            return [], {}
 
     n_ok = sum(1 for sk in skeletons.values() if len(sk.vertices) >= _MIN_SKEL_VERTS)
-    log.info("  %d / %d roots have a usable skeleton (>= %d vertices)",
-             n_ok, len(unique_roots), _MIN_SKEL_VERTS)
+    log.info("  [%s] %d / %d roots have a usable skeleton (>= %d vertices)",
+             label, n_ok, len(unique_roots), _MIN_SKEL_VERTS)
+
+    # Fragment whole NEURONS: combine each root's synapses across pre+post sides
+    # (a neuron = all its synapses), so there are enough synapses per neuron to
+    # over-segment into multiple >= K-synapse fragments.
+    pts_by_root: dict = {}
+    v18_by_root: dict = {}
+    for p in partitions:
+        if p.root_id not in pts_by_root:
+            pts_by_root[p.root_id] = [p.pts]
+            v18_by_root[p.root_id] = p.v18xx_root
+        else:
+            pts_by_root[p.root_id].append(p.pts)
 
     sk_partitions = []
-    for p in all_partitions:
-        sk = skeletons.get(p.root_id)
+    for rid, pts_list in pts_by_root.items():
+        sk = skeletons.get(rid)
         if sk is None or len(sk.vertices) < _MIN_SKEL_VERTS:
             continue
         sk_partitions.append(SkeletonPartition(
-            root_id=p.root_id,
-            v18xx_root=p.v18xx_root,
-            side=p.side,
-            pts=p.pts,
+            root_id=rid,
+            v18xx_root=v18_by_root[rid],
+            side="both",
+            pts=np.vstack(pts_list).astype(float),
             skel_verts=sk.vertices.astype(float),
             skel_edges=sk.edges,
         ))
+    log.info("  [%s] %d neurons (sides combined) with usable skeletons", label, len(sk_partitions))
 
     radii = {rid: sk.radius for rid, sk in skeletons.items() if sk.radius is not None}
+    return sk_partitions, radii
+
+
+def _run_learned_grammar(args, all_partitions, all_box_ids, n_boxes_used, rng):
+    """Fetch skeletons and train SkeletonSynapseNet on inter-synapse skeleton paths.
+
+    Default: within-box stratified CV. With ``--eval-offset-um > 0``: train ONE
+    model on this box and evaluate on a DISJOINT box (true held-out test — no
+    fragment shared between train and eval, unlike the leaky CV folds).
+    """
+    from experiments.pcfg.learned_grammar import (
+        train_and_eval,
+        train_and_eval_holdout,
+    )
+
+    sk_partitions, radii = _select_and_build_sk_partitions(
+        all_partitions, args, rng, label="train",
+    )
 
     if len(sk_partitions) < 10:
         print()
         print("Learned grammar: too few partitions with skeletons -- skipping.")
         return
 
+    # -- True held-out cross-region evaluation -------------------------------
+    if args.eval_offset_um and args.eval_offset_um > 0:
+        off_nm = int(args.eval_offset_um * 1000)
+        eval_center = (args.center_nm[0] + off_nm, args.center_nm[1], args.center_nm[2])
+        if args.eval_offset_um <= args.side_um:
+            log.warning(
+                "  --eval-offset-um (%.0f) <= --side-um (%.0f): eval box OVERLAPS train "
+                "box; fragments may leak. Use an offset > side for a clean held-out test.",
+                args.eval_offset_um, args.side_um,
+            )
+        log.info("Held-out eval: fetching DISJOINT region at +%.0f um along x -> %s",
+                 args.eval_offset_um, eval_center)
+        eval_parts = _fetch_region_partitions(eval_center, args)
+        if not eval_parts:
+            print()
+            print("Held-out eval region had no usable data -- falling back to within-box CV.")
+        else:
+            eval_rng = np.random.default_rng(args.seed + 1000)
+            eval_sk, eval_radii = _select_and_build_sk_partitions(
+                eval_parts, args, eval_rng, label="eval",
+            )
+            if len(eval_sk) < 10:
+                print()
+                print("Held-out eval region too sparse (<10 skeletons) -- falling back to CV.")
+            else:
+                # Optional THIRD disjoint region for epoch selection (region C).
+                val_sk, val_radii = None, None
+                if args.val_offset_um and args.val_offset_um != 0:
+                    voff = int(args.val_offset_um * 1000)
+                    val_center = (args.center_nm[0] + voff, args.center_nm[1], args.center_nm[2])
+                    if abs(args.val_offset_um) <= args.side_um or \
+                       abs(args.val_offset_um - args.eval_offset_um) <= args.side_um:
+                        log.warning(
+                            "  --val-offset-um (%.0f) is not disjoint from train (0) and/or "
+                            "eval (%.0f) for side %.0f um; selection region may leak.",
+                            args.val_offset_um, args.eval_offset_um, args.side_um,
+                        )
+                    log.info("Held-out val: fetching THIRD region at %+.0f um along x -> %s",
+                             args.val_offset_um, val_center)
+                    val_parts = _fetch_region_partitions(val_center, args)
+                    if val_parts:
+                        val_rng = np.random.default_rng(args.seed + 2000)
+                        val_sk, val_radii = _select_and_build_sk_partitions(
+                            val_parts, args, val_rng, label="val",
+                        )
+                        if len(val_sk) < 10:
+                            log.warning("  val region too sparse (<10 skeletons) -- "
+                                        "selecting on a train-internal split instead.")
+                            val_sk, val_radii = None, None
+                    else:
+                        log.warning("  val region had no usable data -- "
+                                    "selecting on a train-internal split instead.")
+
+                print()
+                print("=" * 60)
+                print("Learned grammar — TRUE HELD-OUT cross-region test")
+                print("=" * 60)
+                print(f"  Train region: {tuple(args.center_nm)}  ({len(sk_partitions)} neurons)")
+                print(f"  Eval  region: {eval_center}  (+{args.eval_offset_um:.0f}um x, "
+                      f"{len(eval_sk)} neurons)")
+                if val_sk is not None:
+                    print(f"  Val   region: {val_center}  ({args.val_offset_um:+.0f}um x, "
+                          f"{len(val_sk)} neurons)  [epoch selection]")
+                res = train_and_eval_holdout(
+                    sk_partitions, eval_sk,
+                    train_radii=radii, eval_radii=eval_radii,
+                    val_partitions=val_sk, val_radii=val_radii,
+                    seed=args.seed,
+                    n_epochs=args.learned_epochs,
+                    max_neg_ratio=args.max_neg_ratio,
+                    verbose=True,
+                    min_chunk_synapses=args.min_chunk_synapses,
+                    max_pieces=args.max_pieces,
+                    split_mode=args.split_mode,
+                    use_distance=args.learned_use_distance,
+                    gap_nm=args.gap_nm,
+                    thin_bias=args.thin_bias,
+                    singleton_negatives=args.small_neuron_negatives,
+                    checkpoint_path=args.checkpoint,
+                )
+                lo, hi = res.get("ci", (float("nan"), float("nan")))
+                print(f"  HELD-OUT AUC = {res['auc']:.3f}  95% CI [{lo:.3f}, {hi:.3f}]  "
+                      f"(epoch selected on {res.get('val_method', '?')}; "
+                      f"train {res['n_train_pairs']} -> eval {res['n_eval_pairs']} pairs)")
+                print("=" * 60)
+                return
+
+    # -- Default: within-box stratified CV -----------------------------------
     print()
     print("=" * 60)
     print("Learned skeleton-synapse grammar (SkeletonSynapseNet)")
@@ -967,6 +1331,15 @@ def _run_learned_grammar(args, all_partitions, all_box_ids, n_boxes_used, rng):
         seed=args.seed,
         max_neg_ratio=args.max_neg_ratio,
         verbose=True,
+        min_chunk_synapses=args.min_chunk_synapses,
+        max_pieces=args.max_pieces,
+        split_mode=args.split_mode,
+        n_epochs=args.learned_epochs,
+        run_honest=args.learned_honest,
+        use_distance=args.learned_use_distance,
+        gap_nm=args.gap_nm,
+        thin_bias=args.thin_bias,
+        singleton_negatives=args.small_neuron_negatives,
     )
     print(f"  CV AUC = {auc:.3f}")
     print("=" * 60)

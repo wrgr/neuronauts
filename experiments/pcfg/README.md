@@ -136,10 +136,95 @@ print('smoke test passed -- tokens:', toks[:8])
 "
 ```
 
+## Synapse-level correction (both directions): `synapse_correction.py`
+
+`pcfg_partitions.py` models only false-splits (merges) at the *half-partition* level. The
+`synapse_correction.py` module works at the **synapse level** and learns the full
+correction operator `f(v117) -> proofread partition`, capturing **both** merges and splits
+from a single label.
+
+**Construction.** Each synapse-side is joined to itself across materializations through its
+*immutable supervoxel* (`chunkedgraph.get_roots(supervoxel, timestamp=later)` — single-valued,
+unlike `get_latest_roots` on a whole root, which forks exactly when a split happened). That
+gives `(root_v117, root_later)` per side. The pairwise label is just **"same later root?"**:
+
+| v117 relation | later relation | correction | stratum |
+|---|---|---|---|
+| different root | same root | **merge** (false-split corrected) | `merge` (cross-root) |
+| same root | different root | **split** (false-merge corrected) | `split` (within-root) |
+| same/same or diff/diff | — | none (stable) | — |
+
+So the learned affinity `P(same later root | v117 features)` *is* the correction; XOR with the
+v117 relation yields the edit. CV groups are connected components of the
+(v117-root ↔ later-root) co-occurrence graph — the physical "cells" — to avoid the
+cell-identity leakage that inflated the berlin risk AUC.
+
+```bash
+# offline sanity check (no token): injects known false-merges + false-splits
+python -m experiments.pcfg_synapse_partitions.run_synapse_correction --synthetic
+
+# real data (needs a CAVE token): v117 synapses in the proofread column -> later roots
+python -m experiments.pcfg_synapse_partitions.run_synapse_correction \
+    --token $CAVE_TOKEN --later-version 1718 --n-boxes 6 --side-um 30
+```
+
+Reports grouped-CV AUC overall and per stratum (`merge` / `split`), each vs a permutation
+null. Offline checks live in `tests/test_synapse_correction.py`.
+
 ## Files
 
 | File | Purpose |
 |------|---------|
 | `pcfg_partitions.py` | Core grammar: tokenize, bigram\_features, cond\_entropy, partition\_features, extract\_partitions, build\_merge\_pairs |
-| `run_experiment.py` | CLI: loads BoxCache + remap TSV, builds dataset, runs CV, prints results |
+| `run_experiment.py` | CLI: loads BoxCache + remap TSV, builds dataset, runs CV (merge-only, half-partition level) |
+| `synapse_correction.py` | Synapse-level cross-version join + both-direction (merge **and** split) pair dataset & features |
+| `run_synapse_correction.py` | CLI: CAVE fetch (or `--synthetic`), grouped-CV eval per stratum vs permutation null |
 | `README.md` | This file |
+
+## Running on live CAVE (`scripts/v117_pcfg.py`) — setup & troubleshooting
+
+This runs **here, against live CAVE** (no laptop needed). Typical invocation:
+
+```bash
+python scripts/v117_pcfg.py --token $CAVE_TOKEN --n-boxes 1 --side-um 20 --use-learned
+```
+
+### One-time token setup
+Save your token once so every CAVE client picks it up automatically:
+
+```python
+from caveclient import CAVEclient
+CAVEclient(server_address="https://global.daf-apis.com").auth.save_token(token="<YOUR_TOKEN>", overwrite=True)
+```
+
+(You can still pass `--token`/`CAVE_TOKEN`; saving it just avoids cold-start auth flakiness.)
+
+### Intermittent `bad_auth_header` on the first CAVE call
+You may occasionally see the run fail immediately with:
+
+```
+400 Client Error: BAD REQUEST ... /info/api/v2/datastack/full/minnie65_public
+{"error": "bad_auth_header", "message": "Authorization header must begin with 'Bearer'"}
+```
+
+This is **not** a bad token and not a code bug: the header we send *is* a correct
+`Bearer <token>`, and the identical request succeeds on retry — the public
+endpoint intermittently rejects a valid request during datastack resolution.
+`neuronauts/fetch.py` now resolves the datastack info up front inside a backoff
+retry (`_build_caveclient`), so transient `bad_auth`/connection blips
+auto-recover. If a run still dies at that step, just **re-run it, or start a
+fresh session** — it clears on its own.
+
+### Slow / hanging synapse query
+The default fetch is an unfiltered spatial query over the ~337M-row
+`synapses_pni_2` table. With stable connectivity that completes; if it hangs,
+**re-run in a fresh session**. (An experimental `--lightweight` path exists —
+dense seg-cutout root enumeration + root-filtered lookup — but its synapse
+**counts are not yet validated** against the spatial query, so don't trust its
+numbers until that check is done.)
+
+### Rule of thumb
+A failed CAVE run here is almost always transient connectivity, *or* a setup
+mistake on our side — never assume the service is "down" or "throttling" without
+checking (CAVE returns no `429`/`Retry-After`; a `bad_auth` 400 is the transient
+above). A fresh session is the fastest reset.
