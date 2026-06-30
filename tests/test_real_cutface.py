@@ -5,9 +5,9 @@ import os
 import numpy as np
 import pytest
 
-from experiments.fingerprints.fingerprint_break_resolution import Volume, PATCH
-from experiments.fingerprints import v117_error_relink as v
-from experiments.fingerprints import train_real_cutface as tr
+from experiments.fingerprints.cutface.fingerprint_break_resolution import Volume, PATCH
+from experiments.fingerprints.cutface import v117_error_relink as v
+from experiments.fingerprints.cutface import train_real_cutface as tr
 
 
 def _split_volume(side=64, nz=24, seed=1):
@@ -62,7 +62,7 @@ def test_finetune_reduces_loss():
         anchors, positives, distractors, init_ckpt=None, epochs=10, batch=16, verbose=False)
     tl = hist["train_loss"]
     assert tl[-1] < tl[0]                  # InfoNCE should drop when pos shares structure
-    from experiments.fingerprints.learned_cutface_encoder import make_embed_fn
+    from experiments.fingerprints.cutface.learned_cutface_encoder import make_embed_fn
     assert make_embed_fn(enc)(anchors[:2]).shape == (2, 32)
 
 

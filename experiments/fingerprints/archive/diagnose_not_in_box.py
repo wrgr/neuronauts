@@ -19,8 +19,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from . import v117_error_relink as v
-from . import v117_reconstructed as r
+from ..cutface import v117_error_relink as v
+from ..cutface import v117_reconstructed as r
 
 
 def _sv_and_cur_at(cl, vol, pos_nm, ts, mip=1):

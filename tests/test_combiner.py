@@ -2,7 +2,7 @@
 import numpy as np
 import pytest
 
-from experiments.fingerprints import train_combiner as tc
+from experiments.fingerprints.cutface import train_combiner as tc
 
 
 def _make_site(rng, signal="art"):

@@ -4,8 +4,8 @@ import pytest
 
 
 def test_evaluate_bands_learned_assembles(monkeypatch):
-    import experiments.fingerprints.train_band_encoders as tb
-    from experiments.fingerprints import v117_error_relink as v
+    import experiments.fingerprints.cutface.train_band_encoders as tb
+    from experiments.fingerprints.cutface import v117_error_relink as v
     P = 48
     site = v.ErrorSite(root=1, pos_main_nm=(0, 0, 0), pos_frag_nm=(0, 0, 0), gap_nm=500.0, frag_l2=3)
     monkeypatch.setattr(v, "sites_from_l2_graph", lambda *a, **k: [site])

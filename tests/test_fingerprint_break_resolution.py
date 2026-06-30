@@ -8,7 +8,7 @@ re-links the two faces of an artificial cut far above chance.
 import numpy as np
 import pytest
 
-from experiments.fingerprints.fingerprint_break_resolution import (
+from experiments.fingerprints.cutface.fingerprint_break_resolution import (
     Volume,
     FEATURE_NAMES,
     N_FEATURES,

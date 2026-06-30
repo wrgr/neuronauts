@@ -21,10 +21,10 @@ import os
 
 import numpy as np
 
-from . import v117_error_relink as v
-from .v117_artifact_bands import site_faces_bands
-from .learned_cutface_encoder import load_encoder, make_embed_fn
-from .train_combiner import _z, _sims, train_mlp, _score, collect
+from ..cutface import v117_error_relink as v
+from ..cutface.v117_artifact_bands import site_faces_bands
+from ..cutface.learned_cutface_encoder import load_encoder, make_embed_fn
+from ..cutface.train_combiner import _z, _sims, train_mlp, _score, collect
 
 
 def _features(f, bio_emb, art_emb):

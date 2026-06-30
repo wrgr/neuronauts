@@ -5,6 +5,40 @@ A small, local experiment probing whether EM neurons carry an idiosyncratic
 ultrastructure — that uniquely re-links the two faces of a segmentation break,
 in the spirit of barcode-based identity methods (FISSEQ et al.).
 
+## Library structure (`cutface/`)
+
+The reusable pieces live in the **`cutface/`** package, organized by the four
+contributions plus the IO substrate. Each submodule has a docstring naming what
+to swap for a different application; the rest of this directory is the v117
+experiment that drove the design (and `archive/` holds superseded drivers +
+intermediate metrics).
+
+| module | contribution | swap for a new app |
+|---|---|---|
+| `cutface.data` | IO substrate: client, box fetch (EM + seg + `curseg`), cache | point at a different volume/segmentation |
+| `cutface.candidates` | **(1) get candidates**: find error sites + proximity-ball panel + direction cone | replace the "find error sites" source |
+| `cutface.patches` | **(2) compute the patch**: masked cut-face, bio/art bands, depth stack | change the face representation |
+| `cutface.features` | **(3) compute features**: contrastive encoder + per-candidate combiner row | retrain the encoder on your faces |
+| `cutface.evaluate` | **(4) evaluate**: panel recall, combiner top-1, abstention curve | reuse as-is (metrics are generic) |
+
+```python
+from experiments.fingerprints import cutface as cf
+cl = cf.data.client(); ts = cl.chunkedgraph.get_oldest_timestamp()
+roots, _ = cf.candidates.find_split_neurons(cl, n_scan=200)
+sites    = cf.candidates.find_error_sites(cl, roots[0], ts)   # query + panel geometry
+panel    = cf.patches.face_panel(cl, ts, sites[0])            # query + candidate faces
+# cf.features.combiner_features(...) -> cf.features.train_combiner(...)
+# -> cf.evaluate.combiner_top1 / cf.evaluate.abstention_curve
+```
+
+The three eval metrics are deliberately separate (conflating them is how a hash
+flatters itself): **panel recall** (is the partner even present?) × **correction
+top-1** (given it's present, do we pick it?) = deployed yield; **abstention**
+gives the precision/coverage trade for taking no action when unsure.
+
+Engine modules are runnable as `python -m experiments.fingerprints.cutface.<mod>`
+(e.g. `train_depth_bands`, `train_combiner_abstain`).
+
 ## The idea
 
 EM connectomics has a *self-inflicted* reconstruction problem. To image the
@@ -60,12 +94,12 @@ Three honesty controls:
 pip install numpy scipy cloud-volume matplotlib   # plus a working `cryptography`
 
 # MIP1 (16 nm) — fast smoke run
-python -m experiments.fingerprints.fingerprint_break_resolution \
+python -m experiments.fingerprints.cutface.fingerprint_break_resolution \
   --mip 1 --size 320 320 80 \
   --out experiments/fingerprints/results_mip1_smoke.json
 
 # MIP0 (8 nm) — resolves finer ultrastructure (ER, microtubule bundles)
-python -m experiments.fingerprints.fingerprint_break_resolution \
+python -m experiments.fingerprints.cutface.fingerprint_break_resolution \
   --mip 0 --size 512 512 64 \
   --figure experiments/fingerprints/cutface_montage_mip0.png \
   --out experiments/fingerprints/results_mip0_smoke.json
@@ -113,7 +147,7 @@ gap_nm norm Ncand chance | top1: spatial  scalar  PATCH  FUSED | hard(N) patch_o
    as a **tie-breaker** on ambiguous edges, not a global replacement for
    proximity.
 
-![cut-face montage](cutface_montage_mip0.png)
+![cut-face montage](archive/cutface_montage_mip0.png)
 
 *Each row: query top face · true partner · the hash's top pick. The query faces
 are visibly brighter (a per-section staining offset) yet still match — the hash
@@ -129,7 +163,7 @@ neurites it never saw.
 
 ```bash
 pip install torch        # CPU is fine
-python -m experiments.fingerprints.learned_cutface_encoder \
+python -m experiments.fingerprints.cutface.learned_cutface_encoder \
   --mip 1 --size 320 320 80 --epochs 45 --steps-per-epoch 50 \
   --out experiments/fingerprints/cutface_encoder.pt \
   --metrics experiments/fingerprints/learned_metrics.json
@@ -305,7 +339,7 @@ but only a *learned* combiner that knows when to trust shape over distance can
 spend it — blunt fusion and gating cannot. These remain a lower bound (16 nm;
 8 nm likely helps the texture band; more real pairs would help the fine-tune).
 
-### Honest recall and abstention — and the location-layer fix (`measure_panel_recall.py`, `diagnose_not_in_box.py`, `train_combiner_abstain.py`)
+### Honest recall and abstention — and the location-layer fix (`measure_panel_recall.py`, `archive/diagnose_not_in_box.py`, `train_combiner_abstain.py`)
 
 The top-1 is a **correction-given-candidates** number: `site_faces_bands` drops
 any site whose true partner isn't in the panel, so it conditions on the candidate
@@ -313,7 +347,7 @@ generator already succeeding. Measuring *panel recall* — over real false-split
 sites, how often is a matchable partner even present — first looked alarming:
 **0.491** (199/405), implying end-to-end ≈ 0.49 × 0.758 ≈ 0.37. But the misses
 were almost all `not_in_box` (189/206), not large gaps (15), so we dumped
-concrete sites (`diagnose_not_in_box.py`) instead of trusting the number.
+concrete sites (`archive/diagnose_not_in_box.py`) instead of trusting the number.
 
 **The "misses" were two location-layer bugs, not the fingerprint.** Background
 (`hist=0`) is only 8–13% (extracellular space), so the box is densely painted —
@@ -372,7 +406,7 @@ Geometry always-act is **0.644**; the combiner is **0.767**, and abstention buys
 **92% precision at 51% coverage** and 100% at 11%. That is the deployable mode —
 auto-merge the confident half at ~95% precision, route the rest to humans.
 
-### Is the patch as good as it gets? (`band_faces_depth.py`, `diagnose_residual_errors.py`)
+### Is the patch as good as it gets? (`band_faces_depth.py`, `archive/diagnose_residual_errors.py`)
 
 The headline patch is a deliberately lossy choice — a 16 nm, mean-projected,
 single-slab cross-section. Two probes asked whether that representation is the
@@ -434,7 +468,7 @@ So finer resolution adds variance the encoder must fight with limited data, not
 signal. The depth stack's raw-cosine doubling of geom-miss recovery likewise did
 *not* survive into the learned combiner — the single-slab encoder already
 extracts essentially all the recoverable local signal, and the residuals are the
-distant/degenerate partners (per `diagnose_residual_errors.py`) that no face
+distant/degenerate partners (per `archive/diagnose_residual_errors.py`) that no face
 representation can fix.
 
 **So "is the patch as good as it gets?" — yes, definitively.** The 16 nm
@@ -481,7 +515,7 @@ point. This is re-identification across the *real* error gap.
 
 ```bash
 # realistic candidate set: neurites within R of the query tip, optional cone
-python -m experiments.fingerprints.v117_error_relink \
+python -m experiments.fingerprints.cutface.v117_error_relink \
   --encoder experiments/fingerprints/cutface_encoder.pt \
   --n-scan 220 --max-neurons 45 \
   --candidate-mode proximity --radius-nm 2000 --direction-cone-deg 45 \
@@ -530,7 +564,7 @@ The encoder is wired into the boundary-edge resolver as a drop-in edge feature.
 `em_corridor` stays torch-free by taking the encoder as an injected `embed_fn`:
 
 ```python
-from experiments.fingerprints.learned_cutface_encoder import load_encoder, make_embed_fn
+from experiments.fingerprints.cutface.learned_cutface_encoder import load_encoder, make_embed_fn
 from neuronauts.em_corridor import batch_cutface_similarity
 
 enc = load_encoder("experiments/fingerprints/cutface_encoder.pt")

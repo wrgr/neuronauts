@@ -3,8 +3,8 @@
 import numpy as np
 import pytest
 
-from experiments.fingerprints.fingerprint_break_resolution import Volume, PATCH
-from experiments.fingerprints import v117_reconstructed as r
+from experiments.fingerprints.cutface.fingerprint_break_resolution import Volume, PATCH
+from experiments.fingerprints.cutface import v117_reconstructed as r
 
 
 def _frag_volume(side=64, nz=24, seed=2):
@@ -43,7 +43,7 @@ def test_best_rank_picks_smallest_true():
 def test_site_faces_v117_marks_true_partner(monkeypatch):
     vol, frag2cur = _frag_volume()
     monkeypatch.setattr(r, "fetch_v117_box", lambda *a, **k: (vol, frag2cur))
-    from experiments.fingerprints import v117_error_relink as v
+    from experiments.fingerprints.cutface import v117_error_relink as v
     site = v.ErrorSite(root=1, pos_main_nm=(16 * 16, 16 * 16, 6 * 40),
                        pos_frag_nm=(40 * 16, 40 * 16, 6 * 40), gap_nm=540.0, frag_l2=5)
     f = r.site_faces_v117(None, None, site, radius_nm=4000.0, direction_cone_deg=45.0)

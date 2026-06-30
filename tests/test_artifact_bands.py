@@ -3,9 +3,9 @@
 import numpy as np
 import pytest
 
-from experiments.fingerprints.fingerprint_break_resolution import Volume, PATCH
-from experiments.fingerprints import v117_artifact_bands as ab
-from experiments.fingerprints import v117_reconstructed as r
+from experiments.fingerprints.cutface.fingerprint_break_resolution import Volume, PATCH
+from experiments.fingerprints.cutface import v117_artifact_bands as ab
+from experiments.fingerprints.cutface import v117_reconstructed as r
 
 
 def _disk_volume(side=64, nz=4, seed=0):
@@ -42,7 +42,7 @@ def test_site_faces_bands_marks_true(monkeypatch):
     from tests.test_v117_reconstructed import _frag_volume
     vol, frag2cur = _frag_volume()
     monkeypatch.setattr(r, "fetch_v117_box", lambda *a, **k: (vol, frag2cur))
-    from experiments.fingerprints import v117_error_relink as v
+    from experiments.fingerprints.cutface import v117_error_relink as v
     # site.root is the scanned neuron's current root: 100 & 101 both resolve to 9
     site = v.ErrorSite(root=9, pos_main_nm=(16 * 16, 16 * 16, 6 * 40),
                        pos_frag_nm=(40 * 16, 40 * 16, 6 * 40), gap_nm=540.0, frag_l2=5)
@@ -66,7 +66,7 @@ def test_site_faces_bands_direct_curseg_beats_majority_vote(monkeypatch):
     vol.curseg = curseg
     frag2cur = {100: 9, 101: 5, 102: 5, 103: 7}          # 101 mislabeled by the vote
     monkeypatch.setattr(r, "fetch_v117_box", lambda *a, **k: (vol, frag2cur))
-    from experiments.fingerprints import v117_error_relink as v
+    from experiments.fingerprints.cutface import v117_error_relink as v
     site = v.ErrorSite(root=9, pos_main_nm=(16 * 16, 16 * 16, 6 * 40),
                        pos_frag_nm=(40 * 16, 40 * 16, 6 * 40), gap_nm=540.0, frag_l2=5)
     f = ab.site_faces_bands(None, None, site, radius_nm=4000.0, direction_cone_deg=45.0)
@@ -77,7 +77,7 @@ def test_site_faces_bands_depth_stack(monkeypatch):
     # 3-section depth-stack faces, identify at id_mip, sample at hi_mip (mocked same box)
     import numpy as np
     from tests.test_v117_reconstructed import _frag_volume
-    from experiments.fingerprints import band_faces_depth as bd
+    from experiments.fingerprints.cutface import band_faces_depth as bd
     vol, _ = _frag_volume()
     curseg = np.zeros_like(vol.seg)
     curseg[(vol.seg == 100) | (vol.seg == 101)] = 9
@@ -86,7 +86,7 @@ def test_site_faces_bands_depth_stack(monkeypatch):
     vol.curseg = curseg
     frag2cur = {100: 9, 101: 9, 102: 5, 103: 7}
     monkeypatch.setattr(r, "fetch_v117_box", lambda *a, **k: (vol, frag2cur))
-    from experiments.fingerprints import v117_error_relink as v
+    from experiments.fingerprints.cutface import v117_error_relink as v
     site = v.ErrorSite(root=9, pos_main_nm=(16 * 16, 16 * 16, 6 * 40),
                        pos_frag_nm=(40 * 16, 40 * 16, 6 * 40), gap_nm=540.0, frag_l2=5)
     f = bd.site_faces_bands_depth(None, None, site, id_mip=1, hi_mip=0, n_sections=3,
@@ -101,7 +101,7 @@ def test_site_faces_bands_depth_stack(monkeypatch):
 
 def test_depth_encoder_and_mining():
     import numpy as np
-    from experiments.fingerprints import train_depth_bands as td
+    from experiments.fingerprints.cutface import train_depth_bands as td
     from tests.test_v117_reconstructed import _frag_volume
     # 3-channel encoder embeds [N,3,P,P] -> [N,32], unit-norm
     enc = td.build_depth_encoder(embed_dim=32, in_ch=3)
@@ -123,7 +123,7 @@ def test_site_faces_bands_discards_not_a_split(monkeypatch):
     vol, _ = _frag_volume()
     frag2cur = {100: 9, 101: 5, 102: 5, 103: 7}     # 100 is the only one on root 9
     monkeypatch.setattr(r, "fetch_v117_box", lambda *a, **k: (vol, frag2cur))
-    from experiments.fingerprints import v117_error_relink as v
+    from experiments.fingerprints.cutface import v117_error_relink as v
     site = v.ErrorSite(root=9, pos_main_nm=(16 * 16, 16 * 16, 6 * 40),
                        pos_frag_nm=(16 * 16, 16 * 16, 6 * 40), gap_nm=0.0, frag_l2=5)
     assert ab.site_faces_bands(None, None, site, radius_nm=4000.0, require_true=False) is None

@@ -8,8 +8,8 @@ volume with a stub encoder, by monkeypatching the box fetch.
 import numpy as np
 import pytest
 
-from experiments.fingerprints.fingerprint_break_resolution import Volume
-from experiments.fingerprints import v117_error_relink as mod
+from experiments.fingerprints.cutface.fingerprint_break_resolution import Volume
+from experiments.fingerprints.cutface import v117_error_relink as mod
 
 
 def _synthetic_volume(side=64, nz=24, seed=0) -> Volume:

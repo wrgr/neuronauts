@@ -70,7 +70,7 @@ def test_batch_cutface_similarity_with_stub_embed(monkeypatch):
 
 def test_learned_encoder_roundtrip():
     torch = pytest.importorskip("torch")
-    from experiments.fingerprints.learned_cutface_encoder import (
+    from experiments.fingerprints.cutface.learned_cutface_encoder import (
         build_encoder, embed_patches, make_embed_fn,
     )
     enc = build_encoder(embed_dim=16)

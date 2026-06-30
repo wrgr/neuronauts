@@ -1,7 +1,7 @@
 """Offline test for synthetic same-fragment pair mining (no CAVE)."""
 import numpy as np
-from experiments.fingerprints.train_synthetic_skeleton import mine_box, _fragment_z_extents
-from experiments.fingerprints.fingerprint_break_resolution import Volume, PATCH
+from experiments.fingerprints.cutface.train_synthetic_skeleton import mine_box, _fragment_z_extents
+from experiments.fingerprints.cutface.fingerprint_break_resolution import Volume, PATCH
 
 
 def _multi_frag_box(side=64, nz=12, seed=0):
