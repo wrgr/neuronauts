@@ -257,6 +257,39 @@ def mine_from_cache_depth(cache_dir, exclude_keys, *, want_res=16, n_sections=3,
             "hi_a": st(hi_a), "hi_p": st(hi_p), "hi_d": st(hi_d)}
 
 
+def mine_synthetic_depth(cl, ts, roots, *, mip=0, n_sections=3, gap_sections=2, sigma=2.0,
+                         radius_nm=2000.0, max_sites=6, target_pairs=3000, verbose=True):
+    """Mine synthetic 3-section stacks by FETCHING boxes at ``mip`` (for 8 nm,
+    where the train boxes are not pre-cached).  Also warms the box cache for the
+    later fine-tune / combiner passes."""
+    lo_a, lo_p, lo_d, hi_a, hi_p, hi_d = [], [], [], [], [], []
+    for n, rt in enumerate(roots):
+        try:
+            sites = v.sites_from_l2_graph(cl, rt, ts, max_gap_nm=radius_nm, max_sites=max_sites)
+        except Exception:
+            continue
+        for s in sites:
+            try:
+                vol, _ = r.fetch_v117_box(cl, ts, s.pos_main_nm, s.pos_frag_nm, radius_nm, mip)
+                got = mine_box_depth(vol, n_sections=n_sections, gap_sections=gap_sections,
+                                     sigma=sigma, seed=int(rt) % 2**31)
+            except Exception:
+                got = []
+            for (la, lp, ld, ha, hp, hd) in got:
+                lo_a.append(la); lo_p.append(lp); lo_d.append(ld)
+                hi_a.append(ha); hi_p.append(hp); hi_d.append(hd)
+        if verbose and (n % 5 == 0 or n == len(roots) - 1):
+            print(f"  mine: {n + 1}/{len(roots)} neurons, {len(lo_a)} stacks", flush=True)
+        if len(lo_a) >= target_pairs:
+            print(f"  reached target {target_pairs}", flush=True)
+            break
+    if not lo_a:
+        raise RuntimeError("no synthetic depth stacks mined from CAVE")
+    st = lambda L: np.stack(L).astype(np.float32)
+    return {"lo_a": st(lo_a), "lo_p": st(lo_p), "lo_d": st(lo_d),
+            "hi_a": st(hi_a), "hi_p": st(hi_p), "hi_d": st(hi_d)}
+
+
 def collect_real_depth(cl, ts, roots, *, id_mip=1, hi_mip=1, n_sections=3, radius_nm=2000.0,
                        direction_cone_deg=45.0, n_distractors=8, max_sites=10, sigma=2.0,
                        seed=0, verbose=True):
@@ -304,8 +337,8 @@ def _sims_stack(q, bank, emb):
     return ce @ qe
 
 
-def collect_combiner_depth(cl, ts, roots, bio_emb, art_emb, *, n_sections=3, radius_nm=2000.0,
-                           direction_cone_deg=45.0, max_sites=10, verbose=True):
+def collect_combiner_depth(cl, ts, roots, bio_emb, art_emb, *, hi_mip=1, n_sections=3,
+                           radius_nm=2000.0, direction_cone_deg=45.0, max_sites=10, verbose=True):
     sites = []
     for n, rt in enumerate(roots):
         try:
@@ -314,7 +347,7 @@ def collect_combiner_depth(cl, ts, roots, bio_emb, art_emb, *, n_sections=3, rad
             continue
         for s in ss:
             try:
-                f = site_faces_bands_depth(cl, ts, s, id_mip=1, hi_mip=1, n_sections=n_sections,
+                f = site_faces_bands_depth(cl, ts, s, id_mip=1, hi_mip=hi_mip, n_sections=n_sections,
                                            radius_nm=radius_nm, direction_cone_deg=direction_cone_deg)
             except Exception:
                 f = None
@@ -352,8 +385,10 @@ def main():
     ap.add_argument("--test-neurons", type=int, default=20)
     ap.add_argument("--train-neurons", type=int, default=40)
     ap.add_argument("--n-sections", type=int, default=3)
+    ap.add_argument("--hi-mip", type=int, default=1, help="mip for face sampling (0 = 8 nm)")
     ap.add_argument("--radius-nm", type=float, default=2000.0)
     ap.add_argument("--max-sites", type=int, default=10)
+    ap.add_argument("--mine-max-sites", type=int, default=6, help="cap sites/neuron when mining from CAVE (8 nm)")
     ap.add_argument("--target-pairs", type=int, default=3000)
     ap.add_argument("--epochs", type=int, default=60)
     ap.add_argument("--ft-epochs", type=int, default=40)
@@ -371,20 +406,28 @@ def main():
     print(f"[split] {len(train_roots)} train / {len(test_roots)} test neurons", flush=True)
 
     box_cache = os.environ.get("V117_BOX_CACHE", "data/v117_box_cache")
-    exclude = set()
-    for rt in test_roots:
-        try:
-            for s in v.sites_from_l2_graph(cl, rt, ts, max_gap_nm=args.radius_nm, max_sites=args.max_sites):
-                pts = np.asarray([s.pos_main_nm, s.pos_frag_nm], float)
-                lo = pts.min(0) - args.radius_nm; hi = pts.max(0) + args.radius_nm
-                exclude.add(v._box_key((tuple(lo.tolist()), tuple(hi.tolist())), 1))
-        except Exception:
-            continue
-    print(f"[exclude] {len(exclude)} test box keys held out of mining", flush=True)
-
-    print(f"[mine] 3-section stacks from {box_cache} (16 nm, no CAVE) ...", flush=True)
-    data = mine_from_cache_depth(box_cache, exclude, want_res=16, n_sections=args.n_sections,
-                                 target_pairs=args.target_pairs)
+    if args.hi_mip == 0:
+        # 8 nm train boxes are not pre-cached; mine by fetching them from CAVE on
+        # the TRAIN neurons (disjoint from test by construction), which also warms
+        # the 8 nm cache for the fine-tune / combiner passes below.
+        print(f"[mine] 3-section stacks @ 8 nm by fetching train boxes from CAVE ...", flush=True)
+        data = mine_synthetic_depth(cl, ts, train_roots, mip=0, n_sections=args.n_sections,
+                                    radius_nm=args.radius_nm, max_sites=args.mine_max_sites,
+                                    target_pairs=args.target_pairs)
+    else:
+        exclude = set()
+        for rt in test_roots:
+            try:
+                for s in v.sites_from_l2_graph(cl, rt, ts, max_gap_nm=args.radius_nm, max_sites=args.max_sites):
+                    pts = np.asarray([s.pos_main_nm, s.pos_frag_nm], float)
+                    lo = pts.min(0) - args.radius_nm; hi = pts.max(0) + args.radius_nm
+                    exclude.add(v._box_key((tuple(lo.tolist()), tuple(hi.tolist())), 1))
+            except Exception:
+                continue
+        print(f"[exclude] {len(exclude)} test box keys held out of mining", flush=True)
+        print(f"[mine] 3-section stacks from {box_cache} (16 nm, no CAVE) ...", flush=True)
+        data = mine_from_cache_depth(box_cache, exclude, want_res=16, n_sections=args.n_sections,
+                                     target_pairs=args.target_pairs)
     print(f"[pretrain] bio on {len(data['lo_a'])} stacks ...", flush=True)
     bio, _ = finetune_depth(data["lo_a"], data["lo_p"], data["lo_d"],
                             epochs=args.epochs, ckpt_path=args.out_bio)
@@ -394,7 +437,7 @@ def main():
 
     if args.finetune_real:
         print(f"[finetune-real] collecting real depth pairs ...", flush=True)
-        rd = collect_real_depth(cl, ts, train_roots, n_sections=args.n_sections,
+        rd = collect_real_depth(cl, ts, train_roots, hi_mip=args.hi_mip, n_sections=args.n_sections,
                                 radius_nm=args.radius_nm, max_sites=args.max_sites)
         if rd is not None and len(rd["lo_a"]) >= 8:
             print(f"[finetune-real] {len(rd['lo_a'])} real pairs; adapting ...", flush=True)
@@ -407,24 +450,26 @@ def main():
 
     bio_emb, art_emb = make_stack_embed_fn(bio), make_stack_embed_fn(art)
     print("[collect] combiner train sites ...", flush=True)
-    train_sites = collect_combiner_depth(cl, ts, train_roots, bio_emb, art_emb,
+    train_sites = collect_combiner_depth(cl, ts, train_roots, bio_emb, art_emb, hi_mip=args.hi_mip,
                                          n_sections=args.n_sections, radius_nm=args.radius_nm,
                                          max_sites=args.max_sites)
     print("[collect] combiner test sites ...", flush=True)
-    test_sites = collect_combiner_depth(cl, ts, test_roots, bio_emb, art_emb,
+    test_sites = collect_combiner_depth(cl, ts, test_roots, bio_emb, art_emb, hi_mip=args.hi_mip,
                                         n_sections=args.n_sections, radius_nm=args.radius_nm,
                                         max_sites=args.max_sites)
     if not train_sites or not test_sites:
         print("insufficient sites"); return
     net = train_mlp(train_sites)
     res = evaluate_combiner(test_sites, net)
-    print(f"\n16nm depth-stack combiner: {res['n']} test sites")
+    nm = {0: "8 nm", 1: "16 nm"}.get(args.hi_mip, f"mip{args.hi_mip}")
+    print(f"\n{nm} depth-stack combiner: {res['n']} test sites")
     print(f"  geometry   top-1: {res['geom_top1']:.3f}")
     print(f"  art-stack  top-1: {res['art_top1']:.3f}")
     print(f"  COMBINER   top-1: {res['combiner_top1']:.3f}"
           f"{'  <-- beats geometry' if res['combiner_top1'] > res['geom_top1'] else ''}")
     with open(args.out, "w") as fh:
-        json.dump({"n_sections": args.n_sections, "n_train_sites": len(train_sites),
+        json.dump({"hi_mip": args.hi_mip, "n_sections": args.n_sections,
+                   "n_train_sites": len(train_sites),
                    "n_synth_pairs": int(len(data["lo_a"])), **res}, fh, indent=2)
     print(f"[out] wrote {args.out}")
 

@@ -1,0 +1,10 @@
+{
+  "hi_mip": 0,
+  "n_sections": 3,
+  "n_train_sites": 155,
+  "n_synth_pairs": 3111,
+  "n": 70,
+  "combiner_top1": 0.6857142857142857,
+  "geom_top1": 0.6571428571428571,
+  "art_top1": 0.22857142857142856
+}

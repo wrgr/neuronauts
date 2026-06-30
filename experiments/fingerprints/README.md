@@ -413,28 +413,36 @@ remaining lever is global/skeleton context for distant partners, not a fancier
 patch. (For contrast, `residual_errors_fixed.png` shows the 9 geometry-misses the
 hash *did* recover, including high-geom-rank and textured faces.)
 
-**Verdict — the depth retrain ties the slab (`train_depth_bands.py`).** Training
-genuinely depth-aware band encoders settles it: a 3-channel CNN trained
-contrastively on ~3,000 synthetic 3-section stacks (mined from the cached 16 nm
-boxes), fine-tuned on **154 real v117 depth pairs** (far more than the original
-13 — the fixed identification yields many more valid present sites), then run
-through the learned combiner:
+**Verdict — both richer faces fail; 16 nm/1-slab is the sweet spot
+(`train_depth_bands.py`).** Training genuinely depth-aware band encoders (a
+3-channel CNN trained contrastively on ~3,000 synthetic 3-section stacks,
+fine-tuned on **~155 real v117 depth pairs** — far more than the original 13,
+since the fixed identification yields many more valid present sites) settles it
+across the full sweep:
 
 | combiner | top-1 | geom baseline | test sites |
 |---|---|---|---|
-| single-slab (headline) | **0.767** | 0.649 | 74 |
-| **16 nm 3-section depth** | **0.757** | 0.657 | 70 |
+| single-slab 16 nm (headline) | **0.767** | 0.649 | 74 |
+| 16 nm, 3-section depth | 0.757 | 0.657 | 70 |
+| 8 nm, 3-section depth | **0.686** | 0.657 | 70 |
 
-**Statistically tied.** The depth stack's raw-cosine doubling of geom-miss
-recovery did *not* translate into a learned-combiner win — the single-slab
-encoder already extracts essentially all the recoverable local signal, and the
-residuals are the distant/degenerate partners depth can't touch. So the answer
-to "is the patch as good as it gets?" is, for the local cut-face task,
-**effectively yes**: richer faces (8 nm, depth) don't move the headline. The
-real remaining lever is *global/skeleton context* to trust a geometrically
-distant true partner over a near distractor — a different model, not a fancier
-patch. (The depth machinery is kept; it's the natural substrate for that
-context model and for the still-unrun definitive 8 nm learned test.)
+Depth **ties** the slab; 8 nm is **worse**. The 8 nm encoders never train as well
+(bio real-fine-tune val 0.47 vs 0.72 at 16 nm; art 0.23 vs 0.41) — single 8 nm
+sections are noisier, while the 16 nm mean-projected slab *denoises*, and the
+identity-bearing signal (shape, organelle layout) is already resolved at 16 nm.
+So finer resolution adds variance the encoder must fight with limited data, not
+signal. The depth stack's raw-cosine doubling of geom-miss recovery likewise did
+*not* survive into the learned combiner — the single-slab encoder already
+extracts essentially all the recoverable local signal, and the residuals are the
+distant/degenerate partners (per `diagnose_residual_errors.py`) that no face
+representation can fix.
+
+**So "is the patch as good as it gets?" — yes, definitively.** The 16 nm
+mean-projected slab is not a lazy default but the sweet spot; neither depth nor
+8 nm moves the headline, and 8 nm hurts. The real remaining lever is
+*global/skeleton context* to trust a geometrically distant true partner over a
+near distractor — a different model, not a fancier patch. (The depth machinery
+is kept as the substrate for that context model; depth encoders are gitignored.)
 
 **Location vs correction (two different models).** This experiment measures
 *correction*: given a real interface and a candidate panel, pick the partner.

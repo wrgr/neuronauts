@@ -47,3 +47,4 @@ models/*.json
 experiments/fingerprints/*_synth*.pt
 experiments/fingerprints/*_8nm.pt
 experiments/fingerprints/*_depth.pt
+experiments/fingerprints/*depth8nm.pt
