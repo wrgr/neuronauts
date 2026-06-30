@@ -289,16 +289,16 @@ signal into a top-1 win:
 
 | ranker | top-1 |
 |---|---|
-| art-band alone | 0.378 |
-| geometry alone | 0.649 |
-| **combiner (fine-tuned bio + synthetic art)** | **0.743** |
+| art-band alone | 0.384 |
+| geometry alone | 0.644 |
+| **combiner (fine-tuned bio + synthetic art)** | **0.767** |
 
-(74 held-out real sites after the location-layer fix below; pre-fix the same
+(73 held-out real sites after the location-layer fix below; pre-fix the same
 setup gave geom 0.645 / combiner 0.758 on 62 sites — the win is stable to the
 fix, confirming it was not a labeling artifact.)
 
-**This is the payoff.** Geometry alone is 0.649; the learned combiner reaches
-**0.743** (+9 pts, recovering ~27% of geometry's misses) once given the
+**This is the payoff.** Geometry alone is 0.644; the learned combiner reaches
+**0.767** (+12 pts, recovering ~35% of geometry's misses) once given the
 fine-tuned biological band. The FISSEQ-style premise holds in the achievable
 direction: the cut-face does carry re-identification signal beyond proximity,
 but only a *learned* combiner that knows when to trust shape over distance can
@@ -329,41 +329,47 @@ concrete sites (`diagnose_not_in_box.py`) instead of trusting the number.
    location, so the L2 node flagged as a different historical root is a
    sub-resolution chunk embedded in the query. There is no break to re-link.
 
-**The fix (applied).** Take the query's identity from the actual scanned root
-(`site.root`), not the box-local vote; enforce a minimum fragment size; and
-*flag-and-discard* the not-a-split sites (query continuous through `pos_frag`)
-instead of counting them as misses. Re-measuring:
+**The fix (applied).** Three changes, all in the *location* layer: (a) take the
+query's identity from the actual scanned root (`site.root`), not the box-local
+vote; (b) decide each candidate's identity by a **direct per-voxel current-root
+lookup** — `fetch_v117_box` now paints a `curseg` volume where every voxel
+carries its supervoxel's *actual* current root, read directly at the candidate's
+representative voxel, instead of the historical-root → majority-current vote;
+(c) enforce a minimum fragment size and *flag-and-discard* the not-a-split sites
+(query continuous through `pos_frag`) instead of counting them as misses.
+Re-measuring across the three stages:
 
-| | pre-fix | post-fix |
-|---|---|---|
-| partner present | 199 | **231** |
-| genuine miss (`not_in_box`) | 206 | **3** |
-| not-a-split (discarded, not a miss) | — | 171 |
-| **panel recall** | 0.491 | **0.987** (231/234) |
+| | pre-fix | + scanned-root | + direct curseg |
+|---|---|---|---|
+| partner present | 199 | 231 | **233** |
+| genuine miss (`not_in_box`) | 206 | 3 | **0** |
+| not-a-split (discarded, not a miss) | — | 171 | 172 |
+| **panel recall** | 0.491 | 0.987 | **1.000** (233/233) |
 
-So the candidate generator's recall on *real* splits is ~0.99 — only 3 genuine
-misses remain (partners at 590–1360 nm, just true absences). End-to-end is then
-recall × correction ≈ 0.99 × 0.743 ≈ **0.74**, not 0.37; the gap was entirely the
-location layer, exactly as the diagnosis predicted. The combiner top-1 itself is
-stable across the fix (0.758 on 62 sites → 0.743 on 74), so it was never a
-labeling artifact.
+So the candidate generator's recall on *real* splits is **1.000** — the direct
+per-candidate lookup recovers the last 3 misses the majority vote had mislabeled
+(they had a correctly-painted partner the vote sent to the wrong current root).
+End-to-end is then recall × correction ≈ 1.00 × 0.767 ≈ **0.77**, not 0.37; the
+gap was entirely the location layer, exactly as the diagnosis predicted. The
+combiner top-1 itself is stable across all of this (0.758 → 0.743 → 0.767), so it
+was never a labeling artifact.
 
 **Abstention, not cherry-picking (`train_combiner_abstain.py`).** Dropping sites
 by label is cheating; a proofreader that *takes no action when not confident* is
 legitimate — proofreading is precision-critical, and a wrong auto-merge is worse
-than no merge. Running the combiner over the full post-fix population (74 sites,
+than no merge. Running the combiner over the full post-fix population (73 sites,
 all real splits) with a *label-blind* accept/abstain threshold on the top score:
 
 | operating point | coverage | precision | recall |
 |---|---|---|---|
-| act on everything | 1.00 | 0.757 | 0.757 |
-| | 0.74 | 0.836 | 0.622 |
-| | 0.50 | **0.946** | 0.473 |
-| | 0.26 | 0.947 | 0.243 |
-| confident only | 0.11 | **1.000** | 0.108 |
+| act on everything | 1.00 | 0.767 | 0.767 |
+| | 0.75 | 0.800 | 0.603 |
+| | 0.51 | **0.919** | 0.466 |
+| | 0.26 | 0.947 | 0.247 |
+| confident only | 0.11 | **1.000** | 0.110 |
 
-Geometry always-act is **0.649**; the combiner is **0.757**, and abstention buys
-**95% precision at 50% coverage** and 100% at 11%. That is the deployable mode —
+Geometry always-act is **0.644**; the combiner is **0.767**, and abstention buys
+**92% precision at 51% coverage** and 100% at 11%. That is the deployable mode —
 auto-merge the confident half at ~95% precision, route the rest to humans.
 
 **Location vs correction (two different models).** This experiment measures

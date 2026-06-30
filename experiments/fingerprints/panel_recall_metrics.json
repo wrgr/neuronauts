@@ -2,41 +2,32 @@
   "mip": 1,
   "radius_nm": 2000.0,
   "counts": {
-    "present": 231,
-    "not_a_split": 171,
+    "present": 233,
+    "not_a_split": 172,
     "too_few": 58,
     "no_prox": 6,
-    "absent": 3,
     "no_query": 2
   },
-  "scoreable_sites": 234,
-  "not_a_split_discarded": 171,
-  "panel_recall": 0.9871794871794872,
-  "correction_top1": 0.758,
-  "end_to_end_top1": 0.7482820512820513,
-  "miss_reasons": {
-    "not_in_box": 3
-  },
+  "scoreable_sites": 233,
+  "not_a_split_discarded": 172,
+  "panel_recall": 1.0,
+  "correction_top1": 0.743,
+  "end_to_end_top1": 0.743,
+  "miss_reasons": {},
   "present_partner_dist_nm": {
-    "n": 231,
-    "median": 540.1185055152249,
-    "p25": 134.63270862816665,
-    "p75": 1035.8817358966307,
+    "n": 233,
+    "median": 512.6402247190518,
+    "p25": 105.90561835898981,
+    "p75": 1020.0627431682818,
     "max": 1951.8565521062249
   },
   "present_site_gap_nm": {
-    "n": 231,
+    "n": 233,
     "median": 1273.6090451940108,
-    "p25": 753.2716220868936,
-    "p75": 1614.2262276443164,
+    "p25": 755.6930593832393,
+    "p75": 1612.9277727164351,
     "max": 1996.5089531479691
   },
   "absent_partner_dist_nm": null,
-  "absent_site_gap_nm": {
-    "n": 3,
-    "median": 854.0538624700436,
-    "p25": 590.2445773398471,
-    "p75": 1106.8622054007567,
-    "max": 1359.67054833147
-  }
+  "absent_site_gap_nm": null
 }
