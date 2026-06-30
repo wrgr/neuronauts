@@ -11,6 +11,8 @@ threshold used at evaluation. Boxes = number of cached CAVE boxes trained on.
 
 | File | Thread | Headline metric | Provenance |
 |------|--------|-----------------|------------|
+| `neuronauts_l2_partition.pt` | treestitch | in-column merge_P ≥ 0.997, ARI ≥ 0.80; out-of-sample merge_P=0.951, ARI=0.752 (Phase 2.11 leak-fixed) | SkeletonGNN + PartitionGNN, 3 in-column regions (A/B/C), 50 µm seam buffer |
+| `neuronauts_l2_partition_xregion.pt` | treestitch | cross-region variant — trained on denser bboxes (Phase 2.9) | Same architecture; dense-box regime: merge_P=0.980 out-of-sample |
 | `grammar_cave_real_50.pt` | grammar | val merge acc **87.2%**, val_bce 0.308 | TorchPathEncoder grammar, 40 real CAVE boxes, 50 epochs |
 | `grammar_synthetic.pt` | grammar | merge acc ~61% (3 ep) | Synthetic-box smoke baseline; no CAVE token needed to demo |
 | `shared_grammar_real.pt` | grammar | — | Shared grammar + GAT, real boxes (full multitask model) |

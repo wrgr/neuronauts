@@ -1,75 +1,109 @@
 # neuronauts
 
-`neuronauts` reconstructs neurons from electron microscopy connectome data. Given a CAVE synapse table, it learns to assign synapses to cells and evaluates the result as synapse line-graph F1.
+`neuronauts` reconstructs neurons from electron microscopy connectome data. Given CAVE synapse tables and skeleton fragments, it learns to partition synapses by their parent neuron and assembles fragment trees into globally consistent neurons.
 
-The active pipeline requires **no EM volume** and **no agent simulation** — it runs entirely on synapse positions and CAVE root IDs.
+Two research tracks are active and have now cleared their initial viability bars on real MICrONS minnie65 data:
 
-## Conceptual pipeline (single-line view)
+| Track | What it learns | Key result |
+|---|---|---|
+| **treestitch** (global partition) | SkeletonGNN embeds fragments; PartitionGNN clusters synapses by neuron | ARI=0.752, merge_P=0.951, Bars 1+2 **pass** (out-of-sample, leak-fixed) |
+| **grammar** (merge scoring) | PathEdgeEncoder + MergeScorer scores pairwise fragment merges | Cross-region holdout AUC=**0.816** [0.754, 0.874] |
 
-**Data curation → supervision mining from proofreading lineage → path-level representation learning → cell-assignment learning → graph-level evaluation.**
+The earlier **CellGNN** baseline (synapse graph → cell assignment) is in `neuronauts/cell_graph.py` and remains the default `train-cell-gnn` CLI target; test F1=0.272.
 
-## Pipeline stages: action, inputs, outputs
+---
 
-| Stage | Action | Primary input(s) | Primary output(s) | CLI |
-|---|---|---|---|---|
-| 0. Box cache | Build/use spatially chunked synapse cache from CAVE. | CAVE synapse table (`minnie65_public`) | `data/boxes_30um/*.json` + `*.npz` | (pre-existing cache in repo) |
-| 1. Edit supervision mining | Derive false-merge / false-split pairs from proofreading lineage (`v117 -> v1412`). Preferred path is cache-based mining. | Box cache + CAVE lineage APIs + token | `data/cave_edit_pairs_*.tsv`, `data/cave_edit_chains_*.npz` | `fetch-cave-edits-from-cache` (preferred), `fetch-cave-edits` |
-| 2. Path encoder pretraining | Train transformer to discriminate coherent synapse-path continuations from spliced negatives. | Box cache + edit TSV/NPZ | `models/path_encoder*.pt` (+ best ckpt) | `train-path-encoder` |
-| 3A. Grammar merge scorer | Train pairwise merge classifier (`PathEdgeEncoder + MergeScorer`) using cached synapses/chains. | Box cache (optionally path features via shared components) | `models/grammar_*.pt` | `train` |
-| 3B. CellGNN | Train K-hop synapse graph model for cell membership; optionally fuse frozen pretrained path embeddings. | Box cache (+ optional path encoder ckpt) | `models/cell_gnn*.pt` | `train-cell-gnn` |
-| 4. Evaluation | Compute line-graph F1 (CellGNN route); report merge accuracy for grammar route. | Test split boxes + checkpoints | Metrics JSON/logs (`logs/*/evaluate_results.json`) | `evaluate` |
+## Active pipeline: treestitch
 
-## Dataflow diagram
+```
+CAVE skeleton cache  (cache/l2_skeleton/*.npz)
+  → [data/fragments.py]   skeleton_to_fragment, extract_fragments_for_region
+  → [represent/dna.py]    SkeletonGNN encodes each fragment (centroid-normalised xyz+r)
+  → [treestitch/]         global synapse graph (k-NN) → PartitionGNN → assembly
+  → [treestitch/risk.py]  risk-weighted decisions: CONFIDENT_MERGE / REVIEW / ABSTAIN
+```
+
+Entry point:
+
+```bash
+python scripts/train_l2_partition.py --help
+python scripts/multi_region_train.py --help   # multi-region with seam-buffer leak fix
+```
+
+## CellGNN baseline pipeline (box-cache route)
 
 ```
 CAVE synapse table
-  -> [Stage 0] Box cache (30 um windows)
-  -> [Stage 1] Edit supervision mining (v117->v1412 lineage)
-  -> [Stage 2] Path encoder pretraining (path discrimination)
-  -> [Stage 3A] Grammar merge scorer      \
-  -> [Stage 3B] CellGNN (optional path features)  ---> [Stage 4] evaluation
+  → [Stage 0] Box cache (data/boxes_30um/, 247 × 30 µm boxes)
+  → [Stage 1] Edit-pair mining (v117→v1412 lineage)
+  → [Stage 2] Path encoder pretraining
+  → [Stage 3] CellGNN training
+  → [Stage 4] Line-graph F1 evaluation
 ```
 
-## Current results  *(updated 2026-05-01)*
+```bash
+python scripts/train.py --help   # all stages
+```
 
-| Model | Val merge acc | Test line-graph F1 |
-|-------|--------------|-------------------|
-| Grammar (ep10/10 ✓) | **85.6%** val merge acc | N/A — see note below |
-| CellGNN baseline (ep2/10, training) | — | TBD |
-| CellGNN v3 + path encoder (ep2/10, training) | — | TBD |
+---
 
-**Metric note:**
-- `evaluate` currently reports **line-graph F1** for CellGNN checkpoints.
-- Grammar checkpoints are currently tracked by **pairwise merge accuracy** during training.
-- A grammar-only line-graph F1 in the historical beam-search sense would require the full agent/EM route, which is not part of the current no-EM pipeline.
+## Current results  *(updated 2026-06-30)*
 
-## Reproducible runbook (stage-by-stage)
+### treestitch (Phase 2.11 — leak-fixed, out-of-sample)
+
+| Metric | Value |
+|--------|-------|
+| Out-of-sample ARI | **0.752** |
+| Out-of-sample merge_P | **0.951** ✓ Bar 1+2 pass |
+| Out-of-sample merge_R | 0.865 |
+| is_tree | 1.000 (Kruskal guarantee) |
+| cable_um median | 3 579 µm (biologically plausible) |
+| Bar 3 (fk_split > 0.50) | ✗ 0.000 — frankenmerge detection not yet transferable OOC |
+
+Protocol: train on 3 in-column regions (A/B/C), test on a spatially disjoint region; 50 µm seam buffer + root dedup (no boundary leakage). See `STATUS.md` for full per-phase progression.
+
+### Grammar cross-region holdout (Phase 2 / vibrant)
+
+> Cross-region ROC-AUC = **0.816**, 95% CI [0.754, 0.874] — recovers 60% of true cross-region merges (F1=0.57 vs 0.00 for baseline). Robust across seeds (0.78–0.82).
+
+See `experiments/pcfg/HOLDOUT_RESULTS.md` for protocol and per-threshold breakdown.
+
+### CellGNN baseline
+
+| Model | Test line-graph F1 |
+|-------|--------------------|
+| `cell_gnn_seg.pt` (6-feat + seg signal) | **0.272** @ t=0.99 |
+| `cell_gnn_5feat.pt` (scalar features) | 0.269 @ t=0.99 |
+| `cell_gnn_real.pt` (first no-EM baseline) | 0.264 @ t=0.99 |
+
+---
 
 ## Prerequisites
 
 ```bash
-pip install -r requirements-dev.txt    # or: make setup  (dev + topology + cave extras)
+pip install -r requirements-dev.txt    # or: make setup
 
-# CAVE token (for fetching data; not needed to train on an existing cache)
+# CAVE token (needed for live fetches; not needed to train on an existing cache)
 mkdir -p ~/.cloudvolume/secrets
 echo '{"token": "YOUR_TOKEN"}' > ~/.cloudvolume/secrets/cave-secret.json
 ```
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md#dev-setup) for smaller installs and the
-caveclient note; [`docs/CAVE_AUTHENTICATION_SETUP.md`](docs/CAVE_AUTHENTICATION_SETUP.md)
-for token setup.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md#dev-setup) and
+[`docs/CAVE_AUTHENTICATION_SETUP.md`](docs/CAVE_AUTHENTICATION_SETUP.md).
 
-### Stage 0 — Check the box cache
+---
 
-247 boxes are already cached at `data/boxes_30um/`.
+## CellGNN runbook (stage-by-stage)
+
+### Stage 0 — Box cache
+
+247 boxes are cached at `data/boxes_30um/` (494 files: json + npz per box).
 
 ```bash
-ls data/boxes_30um/ | wc -l   # should be ~494 (json + npz per box)
+ls data/boxes_30um/ | wc -l   # expect ~494
 ```
 
-### Stage 1 — Fetch CAVE edit pairs (preferred: from cache)
-
-Preferred command (spatially stratified over local cache; avoids row-cap limitations):
+### Stage 1 — Edit-pair mining (preferred: from cache)
 
 ```bash
 python scripts/train.py fetch-cave-edits-from-cache \
@@ -79,18 +113,7 @@ python scripts/train.py fetch-cave-edits-from-cache \
   --output-chains data/cave_edit_chains_v3.npz
 ```
 
-Legacy direct-sampling command:
-
-```bash
-python scripts/train.py fetch-cave-edits \
-  --n-sample 50000 \
-  --max-false-merges 99999 \
-  --min-synapses-per-root 8 \
-  --output-tsv data/cave_edit_pairs_v3.tsv \
-  --output-chains data/cave_edit_chains_v3.npz
-```
-
-### Stage 2 — Train path encoder
+### Stage 2 — Path encoder pretraining
 
 ```bash
 python scripts/train.py train-path-encoder \
@@ -100,34 +123,21 @@ python scripts/train.py train-path-encoder \
   --edit-chains-npz data/cave_edit_chains_v3.npz \
   --max-examples-per-epoch 50000 \
   --output models/path_encoder_v3.pt \
-  --checkpoint-every 2 \
   --seed 42
 ```
 
-### Stage 3A — Train grammar
-
-```bash
-python scripts/train.py train \
-  --cache-dir data/boxes_30um \
-  --epochs 10 \
-  --grammar-output models/grammar_30um_v1.pt
-```
-
-### Stage 3B — Train CellGNN
-
-**Baseline** (no path encoder):
+### Stage 3 — CellGNN
 
 ```bash
 python scripts/train.py train-cell-gnn \
   --cache-dir data/boxes_30um \
   --epochs 10 \
   --cell-gnn-output models/cell_gnn_30um_v1.pt \
-  --checkpoint-every 2 \
   --n-layers 2 \
   --seed 42
 ```
 
-**With pretrained path encoder** (recommended):
+With pretrained path encoder (recommended):
 
 ```bash
 python scripts/train.py train-cell-gnn \
@@ -136,7 +146,6 @@ python scripts/train.py train-cell-gnn \
   --path-encoder-checkpoint models/path_encoder_v3_ep8.pt \
   --pretrained-path-emb-dim 16 \
   --cell-gnn-output models/cell_gnn_v3.pt \
-  --checkpoint-every 2 \
   --n-layers 2 \
   --seed 42
 ```
@@ -144,100 +153,101 @@ python scripts/train.py train-cell-gnn \
 ### Stage 4 — Evaluate
 
 ```bash
-# CellGNN (+ optional grammar baseline branch when provided)
 python scripts/train.py evaluate \
   --cache-dir data/boxes_30um \
   --cell-gnn-checkpoint models/cell_gnn_v3.pt \
   --split test
 ```
 
-## How this maps to literature (RoboEM / Neurd style framing)
-
-This section is a **conceptual mapping**, not a claim of architectural equivalence.
-
-- **RoboEM-style systems** generally emphasize EM-image-driven tracing / policy execution over voxel fields.
-  - `neuronauts` currently **does not** use that online tracing loop in its active pipeline.
-  - Instead, it shifts supervision to **proofreading lineage edits** plus synapse geometry, then learns merge/cell assignment in graph space.
-
-- **Neurd-style workflows** (broadly, proofreading-oriented reconstruction stacks) emphasize error discovery/correction loops and morphology-aware constraints.
-  - `neuronauts` similarly leans on **proofreading signal** (false merges/splits from version deltas).
-  - The current active path is narrower: synapse-level graph assignment + line-graph metrics, with EM/skeleton/topology modules present but not in the default training loop.
-
-### Practical takeaway for comparison studies
-
-For clean apples-to-apples experiments, treat `neuronauts` as a **synapse-graph + lineage-supervision baseline** and compare against EM-policy systems along three axes:
-1. **Input modality:** synapse table only vs dense EM volumes.
-2. **Supervision source:** proofreading lineage events vs manual traces/labels.
-3. **Output target:** synapse clustering / merge decisions vs full neurite trajectory reconstruction.
+---
 
 ## Run tests
 
 ```bash
 pytest
-pytest tests/test_cell_graph.py
+pytest -m 'not legacy'   # skip the quarantined v1 agent/membrane stack
 ```
+
+---
 
 ## Saved checkpoints
 
-Curated, representative checkpoints are tracked in `models/` and catalogued, with
-metrics and provenance, in [`models/README.md`](models/README.md). Highlights:
+Curated checkpoints are tracked in `models/` and catalogued in [`models/README.md`](models/README.md).
 
-| File | Description |
-|------|-------------|
-| `models/grammar_cave_real_50.pt` | Grammar, real boxes, **87.2% val merge acc** |
-| `models/shared_grammar_raw_skel_gat50e.pt` | Shared grammar + GAT, `raw_delta3+skeleton` |
-| `models/cell_gnn_seg.pt` | CellGNN, best **test line-graph F1 0.272** @ t=0.99 |
-| `models/cell_gnn_real.pt` | CellGNN, first real-CAVE no-EM baseline |
+| File | Thread | Headline metric |
+|------|--------|-----------------|
+| `neuronauts_l2_partition.pt` | treestitch | in-column ARI ≥ 0.80, merge_P ≥ 0.99; out-of-sample merge_P=0.951 |
+| `neuronauts_l2_partition_xregion.pt` | treestitch | cross-region variant |
+| `grammar_cave_real_50.pt` | grammar | val merge acc **87.2%** — 40 real CAVE boxes, 50 ep |
+| `shared_grammar_raw_skel_gat50e.pt` | grammar | `raw_delta3+skeleton` + GAT, 50 ep |
+| `cell_gnn_seg.pt` | cell_assignment | test line-graph F1 **0.272** @ t=0.99 |
+| `cell_gnn_real.pt` | cell_assignment | first real-CAVE no-EM baseline |
+| `shared_grammar_root_neighborhood_run001.pt` | root_neighborhood | grammar on proofread-anchor cache |
 
-Path-encoder checkpoints (`path_encoder_v3*.pt`) are produced locally and not
-tracked; write new runs under `models/scratch/` (git-ignored).
+Path-encoder and training-run checkpoints are produced locally; write new runs to `models/scratch/` (git-ignored). Add a curated keeper with `git add -f models/<name>.pt` and a row in `models/README.md`.
+
+---
 
 ## Key files
 
 | Module | Purpose |
 |--------|---------|
-| `neuronauts/path_dataset.py` | `fetch_cave_false_merge_chains`, `train_path_encoder` |
-| `neuronauts/grammar.py` | `PathEdgeEncoder`, `MergeScorer`, `ArborEncoder` |
+| `treestitch/` | Global tree stitching: embed, partition GNN, assembly, calibration, risk, NGL export |
+| `neuronauts/represent/dna.py` | `SkeletonGNN`, `TreeDNAEncoder`, `encode_fragments` |
+| `neuronauts/represent/enrich.py` | `build_synapse_dna_matrix`, `evaluate_dna_auc` |
+| `neuronauts/data/fragments.py` | `skeleton_to_fragment`, `extract_fragments_for_region` |
+| `neuronauts/data/lineage.py` | L2 skeleton cache + provenance |
+| `neuronauts/assemble/edge_partition.py` | `train_edge_partition_gnn` (hard-negative mining) |
 | `neuronauts/cell_graph.py` | `CellGNN`, `build_synapse_graph`, `train_cell_gnn` |
-| `neuronauts/shared_grammar_model.py` | `SharedGrammarModel`, multitask training |
+| `neuronauts/grammar.py` | `PathEdgeEncoder`, `MergeScorer`, `ArborEncoder` |
 | `neuronauts/dataset_builder.py` | `BoxCache`, box fetching and caching |
-| `neuronauts/line_graph.py` | Line-graph F1 evaluation metric |
-| `scripts/train.py` | All training and evaluation CLI |
+| `neuronauts/fetch.py` | CAVE synapse/skeleton fetch (query + bulk routes) |
+| `neuronauts/schemas.py` | Typed contracts: `Region`, `Fragment`, `NeuronHypothesis` |
+| `scripts/train.py` | All CellGNN/grammar training and evaluation CLI |
+| `scripts/train_l2_partition.py` | treestitch L2 partition training |
+| `scripts/multi_region_train.py` | Multi-region train with seam-buffer leak fix |
+| `scripts/spatial_variance.py` | Spatial variance + OOC shape study (7 test bboxes) |
 | `data/boxes_30um/` | 247 cached CAVE boxes |
+| `cache/l2_skeleton/` | L2 skeleton NPZ cache (PROVENANCE.json tracked; NPZs local-only) |
 
-## Package surface policy
-
-To keep the library import surface manageable, `neuronauts.__init__` now re-exports
-only the active no-EM training/evaluation pipeline APIs (CellGNN, path encoder,
-datasets, and evaluation helpers).
-
-Legacy experimental modules are still available via direct module imports
-(e.g. `from neuronauts import vectorized` is **not** supported; use
-`import neuronauts.legacy.vectorized` explicitly when needed).
+---
 
 ## Research threads
 
-The work is organized as a series of experiments (research threads) feeding this
-core pipeline. See [`experiments/README.md`](experiments/README.md) for the index
-— fingerprints (connectivity signatures), tree-DNA (morphology),
-error-correction (proofreading supervision), PCFG,
-grammar variants, cell-assignment, root-neighborhood, soma-graph, minnie-column,
-and topology — each with its status, entry point, and checkpoints. The
-longer-range direction is [`docs/roadmap_global_assembly.md`](docs/roadmap_global_assembly.md).
+The work is organized as research threads; see [`experiments/README.md`](experiments/README.md) for the full index with status, entry points, and checkpoints.
 
-## Architecture notes
+| Thread | Status | Description |
+|--------|--------|-------------|
+| **tree_dna** | active frontier | Skeleton GNN → global synapse partition (treestitch); Phase 2.11 complete |
+| **grammar** | active | Cross-region merge scoring; holdout AUC=0.816 |
+| **cell_assignment** | active (baseline) | CellGNN; test F1=0.272 |
+| **error_correction** | active | False-merge/split supervision from v117→v1412 lineage |
+| **pcfg** | active | Non-neural PCFG synapse partitions |
+| **fingerprints** | incubating | Neuron connectivity signatures |
+| **root_neighborhood** | incubating | Grammar on proofread-anchor cache |
+| **soma_graph** | incubating | Soma-seeded graph assembly |
+| **minnie_column** | active (data) | Minnie65 column data pipeline |
+| **topology** | optional | Topology validator / atomicity checks |
 
-**What is not used in the current pipeline:**
-- EM volume fetching / Sobel membrane fields
-- Agent simulation (`vectorized.py`, `fields.py`)
-- Skeleton graph source (`skeleton_graph.py`)
-- Topology validator (`topology_model.py`)
-- Neuroglancer inspector (`scripts/inspect_pipeline.py`)
+The longer-range direction (global assembly roadmap) is [`docs/roadmap_global_assembly.md`](docs/roadmap_global_assembly.md).
 
-These modules are present and tested but are not part of the active training workflow.
+---
 
 ## Data
 
-- **Box cache**: 247 × 30 µm CAVE boxes, v1412 (proofread) root IDs, ~1.68M synapses total
-- **Train/val/test split**: 148 / 30 / 49 boxes (spatial split, reproducible with seed=42)
+- **Box cache**: 247 × 30 µm CAVE boxes, v1412 root IDs, ~1.68M synapses total (148/30/49 train/val/test, spatial split, seed=42)
 - **Edit pairs v3**: 25 860 pairs from 2002 v117 roots (25 444 false-merge, 416 false-split)
+- **L2 skeleton cache**: `cache/l2_skeleton/` — per-fragment NPZ archives with provenance; fetched once via `scripts/warm_cache.py`, reused across runs
+- **Cell type table**: `aibs_metamodel_celltypes_v661_merged.csv.gz` (19 735 L2/3 pyramidals at v1412, used for within-type ablations)
+
+---
+
+## Package surface policy
+
+`neuronauts.__init__` re-exports only the active no-EM training/evaluation pipeline APIs. Legacy experimental modules are available via direct imports (`neuronauts.legacy.*`). See `CONTRIBUTING.md` for the active-vs-legacy convention.
+
+**Not used in the default training loop** (present and tested, not wired in):
+- EM volume fetching / Sobel membrane fields
+- Agent simulation (`legacy/vectorized.py`, `legacy/fields.py`)
+- Topology validator (`topology_model.py`, `topology_dataset.py`)
+- Neuroglancer inspector (`scripts/inspect_pipeline.py`)
