@@ -372,6 +372,47 @@ Geometry always-act is **0.644**; the combiner is **0.767**, and abstention buys
 **92% precision at 51% coverage** and 100% at 11%. That is the deployable mode —
 auto-merge the confident half at ~95% precision, route the rest to humans.
 
+### Is the patch as good as it gets? (`band_faces_depth.py`, `diagnose_residual_errors.py`)
+
+The headline patch is a deliberately lossy choice — a 16 nm, mean-projected,
+single-slab cross-section. Two probes asked whether that representation is the
+ceiling.
+
+**Richer face: 8 nm + 3-section depth stack.** `band_faces_depth.py` keeps the
+cheap, cached **16 nm candidate identification** (panel, geometry, curseg
+is_true) and only resamples the *face* from freshly-fetched **8 nm** EM over a
+**3-section depth stack marching away from the cut** (never crossing the gap),
+instead of one flattened 16 nm slab. On the same 20 test neurons, *training-free
+raw cosine* (no encoder retrain — a weak but unconfounded probe):
+
+| metric (raw cosine) | 16 nm / 1-slab | 16 nm / 3-sec | 8 nm / 3-sec |
+|---|---|---|---|
+| geom+bio | 0.301 | 0.329 | **0.357** |
+| geom+art | 0.329 | 0.343 | **0.357** |
+| best geom-miss recovery | 0.115 | **0.261** | 0.174 |
+
+The depth stack helps the hard subset (geom-miss recovery roughly doubles,
+0.115→0.261 at 16 nm), and 8 nm nudges the geom+band fusions up (0.357 vs 0.329);
+but bio *drops* at 8 nm under raw cosine (single 8 nm sections are noisier than a
+mean-projected slab). Raw cosine is too weak to be decisive — the bands only
+shine through the learned encoder — so this is directional, not a verdict. The
+8 nm boxes are now cached, so the definitive test (retrain the band encoders on
+the 8 nm / 3-section representation) is cheap to run next.
+
+**Why it may not matter much — the residual-error diagnostic.** Dumping the
+combiner's 17 residual errors (`residual_errors.png`: query · true partner ·
+wrong pick) shows the misses are *not* dominated by two clean, genuinely
+confusable cross-sections (which would be a hard information ceiling a richer
+patch can't beat). They are dominated by two things a richer patch *also* can't
+fix: (1) the true partner is **geometrically distant** (geom rank 14–50) and the
+combiner correctly defers to geometry — a candidate-generation / global-context
+problem, not a face problem; and (2) **degenerate faces** — the true partner's
+cross-section is a tiny, mostly-background mask with no structure to match. So
+for the *local cut-face* task the patch is close to its practical ceiling; the
+remaining lever is global/skeleton context for distant partners, not a fancier
+patch. (For contrast, `residual_errors_fixed.png` shows the 9 geometry-misses the
+hash *did* recover, including high-geom-rank and textured faces.)
+
 **Location vs correction (two different models).** This experiment measures
 *correction*: given a real interface and a candidate panel, pick the partner.
 The other half — *location* (which edges are errors / candidates at all) — is a

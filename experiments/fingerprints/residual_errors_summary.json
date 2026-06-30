@@ -1,0 +1,6 @@
+{
+  "n_test": 73,
+  "combiner_top1": 0.7671232876712328,
+  "n_misses": 17,
+  "n_geom_fixed": 9
+}

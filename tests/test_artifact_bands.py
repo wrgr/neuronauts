@@ -73,6 +73,32 @@ def test_site_faces_bands_direct_curseg_beats_majority_vote(monkeypatch):
     assert f is not None and f["is_true"].sum() == 1     # 101 recovered via curseg
 
 
+def test_site_faces_bands_depth_stack(monkeypatch):
+    # 3-section depth-stack faces, identify at id_mip, sample at hi_mip (mocked same box)
+    import numpy as np
+    from tests.test_v117_reconstructed import _frag_volume
+    from experiments.fingerprints import band_faces_depth as bd
+    vol, _ = _frag_volume()
+    curseg = np.zeros_like(vol.seg)
+    curseg[(vol.seg == 100) | (vol.seg == 101)] = 9
+    curseg[vol.seg == 102] = 5
+    curseg[vol.seg == 103] = 7
+    vol.curseg = curseg
+    frag2cur = {100: 9, 101: 9, 102: 5, 103: 7}
+    monkeypatch.setattr(r, "fetch_v117_box", lambda *a, **k: (vol, frag2cur))
+    from experiments.fingerprints import v117_error_relink as v
+    site = v.ErrorSite(root=9, pos_main_nm=(16 * 16, 16 * 16, 6 * 40),
+                       pos_frag_nm=(40 * 16, 40 * 16, 6 * 40), gap_nm=540.0, frag_l2=5)
+    f = bd.site_faces_bands_depth(None, None, site, id_mip=1, hi_mip=0, n_sections=3,
+                                  radius_nm=4000.0, direction_cone_deg=45.0)
+    assert f is not None
+    assert f["q_low"].shape == (3, PATCH, PATCH)            # 3-section stack
+    assert f["low"].shape[1:] == (3, PATCH, PATCH)
+    assert f["is_true"].sum() == 1
+    d = bd._cos_dist_stack(f["q_low"], f["low"])
+    assert d.shape[0] == f["low"].shape[0]                  # one distance per candidate
+
+
 def test_site_faces_bands_discards_not_a_split(monkeypatch):
     # No distinct same-root partner (only fragment 100 maps to root 9) AND the
     # query fragment occupies pos_frag -> not a real break -> dropped.
