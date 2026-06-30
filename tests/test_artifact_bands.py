@@ -99,6 +99,23 @@ def test_site_faces_bands_depth_stack(monkeypatch):
     assert d.shape[0] == f["low"].shape[0]                  # one distance per candidate
 
 
+def test_depth_encoder_and_mining():
+    import numpy as np
+    from experiments.fingerprints import train_depth_bands as td
+    from tests.test_v117_reconstructed import _frag_volume
+    # 3-channel encoder embeds [N,3,P,P] -> [N,32], unit-norm
+    enc = td.build_depth_encoder(embed_dim=32, in_ch=3)
+    z = td.embed_stacks(enc, np.random.RandomState(0).randn(5, 3, PATCH, PATCH).astype(np.float32))
+    assert z.shape == (5, 32)
+    assert np.allclose(np.linalg.norm(z, axis=1), 1.0, atol=1e-4)
+    # mining produces 3-section stacks from a box
+    vol, _ = _frag_volume()
+    got = td.mine_box_depth(vol, n_sections=3, gap_sections=1, min_vox_per_section=10, seed=0)
+    if got:
+        la, lp, ld, ha, hp, hd = got[0]
+        assert la.shape == (3, PATCH, PATCH) and ld.shape[1:] == (3, PATCH, PATCH)
+
+
 def test_site_faces_bands_discards_not_a_split(monkeypatch):
     # No distinct same-root partner (only fragment 100 maps to root 9) AND the
     # query fragment occupies pos_frag -> not a real break -> dropped.

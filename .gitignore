@@ -46,3 +46,4 @@ models/*.json
 # Regenerable working encoder checkpoints (training artifacts; rewritten every run)
 experiments/fingerprints/*_synth*.pt
 experiments/fingerprints/*_8nm.pt
+experiments/fingerprints/*_depth.pt

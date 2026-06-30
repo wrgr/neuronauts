@@ -413,6 +413,29 @@ remaining lever is global/skeleton context for distant partners, not a fancier
 patch. (For contrast, `residual_errors_fixed.png` shows the 9 geometry-misses the
 hash *did* recover, including high-geom-rank and textured faces.)
 
+**Verdict — the depth retrain ties the slab (`train_depth_bands.py`).** Training
+genuinely depth-aware band encoders settles it: a 3-channel CNN trained
+contrastively on ~3,000 synthetic 3-section stacks (mined from the cached 16 nm
+boxes), fine-tuned on **154 real v117 depth pairs** (far more than the original
+13 — the fixed identification yields many more valid present sites), then run
+through the learned combiner:
+
+| combiner | top-1 | geom baseline | test sites |
+|---|---|---|---|
+| single-slab (headline) | **0.767** | 0.649 | 74 |
+| **16 nm 3-section depth** | **0.757** | 0.657 | 70 |
+
+**Statistically tied.** The depth stack's raw-cosine doubling of geom-miss
+recovery did *not* translate into a learned-combiner win — the single-slab
+encoder already extracts essentially all the recoverable local signal, and the
+residuals are the distant/degenerate partners depth can't touch. So the answer
+to "is the patch as good as it gets?" is, for the local cut-face task,
+**effectively yes**: richer faces (8 nm, depth) don't move the headline. The
+real remaining lever is *global/skeleton context* to trust a geometrically
+distant true partner over a near distractor — a different model, not a fancier
+patch. (The depth machinery is kept; it's the natural substrate for that
+context model and for the still-unrun definitive 8 nm learned test.)
+
 **Location vs correction (two different models).** This experiment measures
 *correction*: given a real interface and a candidate panel, pick the partner.
 The other half — *location* (which edges are errors / candidates at all) — is a
