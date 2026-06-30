@@ -2,12 +2,15 @@
 
 import hashlib
 import json
+import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Tuple
 
 import numpy as np
+
+log = logging.getLogger(__name__)
 
 MICRONS_EM_PATH = "precomputed://https://bossdb-open-data.s3.amazonaws.com/iarpa_microns/minnie/minnie65/em"
 MICRONS_SEG_PATH = "precomputed://https://bossdb-open-data.s3.amazonaws.com/iarpa_microns/minnie/minnie65/seg"
@@ -309,17 +312,65 @@ def fetch_seg_volume(
     )
 
 
-def fetch_synapses(
+def _synapse_cache_path(
+    cache_dir: "str | Path",
     bbox_nm: Tuple[Tuple, Tuple],
-    mip: int = 2,
-    version: int | None = None,
-    datastack: str = MICRONS_DATASTACK,
-    cave_server: str = CAVE_SERVER,
-    token: Optional[str] = None,
-    max_retries: int = 4,
-    initial_backoff_s: float = 2.0,
+    version: "int | None",
+    datastack: str,
+    mip: int,
+) -> "Path":
+    # mip MUST be part of the key: pre_pt/post_pt are stored in mip-specific
+    # voxel units, so a cache built at one mip is wrong if read back at another.
+    payload = json.dumps(
+        {"bbox_nm": list(bbox_nm), "version": version, "datastack": datastack, "mip": mip},
+        sort_keys=True,
+    )
+    key = hashlib.sha256(payload.encode()).hexdigest()[:16]
+    return Path(cache_dir) / f"syn_v{version}_mip{mip}_{key}.npz"
+
+
+def _run_with_deadline(fn, timeout_s: float, what: str = "request"):
+    """Run ``fn()`` on a daemon thread and enforce a hard wall-clock deadline.
+
+    A plain ``requests`` timeout is a *per-read* timeout and does not bound total
+    time when the server accepts the connection but never sends a response body —
+    the failure mode observed against CAVE's materialize ``/query`` POST endpoint
+    (GETs to the same host return in <1s; the ``/query`` POST stalls with 0 bytes
+    received, whether proxied or direct). A daemon-thread watchdog gives a real
+    wall-clock bound; the stuck thread, if any, is a daemon and so never blocks
+    interpreter exit.
+    """
+    import threading
+
+    box: dict = {}
+
+    def _worker():
+        try:
+            box["value"] = fn()
+        except Exception as exc:  # re-raised in the calling thread below
+            box["error"] = exc
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    t.join(timeout_s)
+    if t.is_alive():
+        raise TimeoutError(
+            f"{what} exceeded {timeout_s:.0f}s wall-clock deadline. The CAVE "
+            "materialize /query POST endpoint did not respond (GETs to the host "
+            "may still work — this is typically a server-side query-service "
+            "outage, not your network or proxy). Retry later, or use a populated "
+            "--synapse-cache-dir to run against previously fetched data."
+        )
+    if "error" in box:
+        raise box["error"]
+    return box.get("value")
+
+
+def _fetch_synapses_via_query(
+    bbox_nm, mip, version, datastack, cave_server, token, max_retries,
+    initial_backoff_s, timeout_s,
 ) -> SynapseTable:
-    _install_system_trust_store()
+    """Fetch via CAVE materialize synapse_query (POST /query). May raise TimeoutError."""
     try:
         from caveclient import CAVEclient
     except ImportError as exc:
@@ -335,33 +386,37 @@ def fetch_synapses(
         (np.array([x1, y1, z1], dtype=np.float32) / syn_vox).astype(np.int64).tolist(),
     ]
 
+    def _do_query():
+        # split_positions=True returns pre/post position as separate _x/_y/_z
+        # columns (documented as faster); the parsing below handles both that and
+        # the packed-array layout. bounding_box_column defaults to ctr_pt_position
+        # (the original repo behaviour — the synapse centre point).
+        return client.materialize.synapse_query(
+            bounding_box=bbox_synapse_units,
+            bounding_box_column="ctr_pt_position",
+            split_positions=True,
+        )
+
     last_exc: Exception | None = None
     df = None
     for attempt in range(max(1, int(max_retries))):
         try:
-            df = client.materialize.synapse_query(
-                bounding_box=bbox_synapse_units,
-                bounding_box_column="ctr_pt_position",
-            )
+            df = _run_with_deadline(_do_query, timeout_s, what="synapse_query")
             break
+        except TimeoutError:
+            # A stalled connection won't un-stall on retry — fail fast rather than
+            # burning another full deadline per attempt.
+            raise
         except Exception as exc:
-            # Server-side bug: caveclient sends return_pyarrow=True but older CAVE
-            # servers don't handle the ipc_compress parameter. Fall back to a plain
-            # query_table (caveclient >=8 removed the return_pyarrow kwarg, so we
-            # must not pass it -- doing so raises TypeError and masks the real error).
-            if "ipc_compress" in str(exc):
-                try:
-                    df = client.materialize.query_table(
-                        "synapses_pni_2",
-                        filter_spatial_dict={"ctr_pt_position": bbox_synapse_units},
-                    )
-                    break
-                except Exception as fallback_exc:
-                    exc = fallback_exc
             last_exc = exc
             if attempt + 1 >= max(1, int(max_retries)):
                 raise
-            time.sleep(float(initial_backoff_s) * (2 ** attempt))
+            wait = float(initial_backoff_s) * (2 ** attempt)
+            log.warning(
+                "synapse fetch attempt %d/%d failed (%s); retrying in %.0fs",
+                attempt + 1, max(1, int(max_retries)), exc, wait,
+            )
+            time.sleep(wait)
     if df is None:
         assert last_exc is not None
         raise last_exc
@@ -402,14 +457,31 @@ def _synapse_df_to_table(
     else:
         bbox_origin_vox = np.zeros(3, dtype=np.float32)
 
-    def pts_to_voxels(col: str) -> np.ndarray:
-        pts = np.stack(df[col].values)
-        pts_vox = (pts * syn_vox) / vox
+    def pts_to_voxels(base: str) -> np.ndarray:
+        """Box-relative MIP voxel coords for a position column.
+
+        Robust to both layouts: the packed array column ``base`` (one [x,y,z]
+        array per row) and the split ``base_x``/``_y``/``_z`` columns produced by
+        ``split_positions=True``.
+        """
+        if base in df.columns:
+            pts = np.stack(df[base].values).astype(np.float32)
+        else:
+            pts = np.stack(
+                [
+                    df[f"{base}_x"].values.astype(np.float32),
+                    df[f"{base}_y"].values.astype(np.float32),
+                    df[f"{base}_z"].values.astype(np.float32),
+                ],
+                axis=1,
+            )
+        pts_nm = pts * syn_vox  # synapse voxel units -> nm
+        pts_vox = pts_nm / np.array(vox, dtype=np.float32)
         return (pts_vox - bbox_origin_vox).astype(np.float32)
 
     # Pull segment IDs if present in the materialization table.
     # Column names vary by datastack version; try common variants gracefully.
-    def _try_seg_id(col: str) -> np.ndarray | None:
+    def _try_seg_id(col: str) -> "np.ndarray | None":
         if col in df.columns:
             return df[col].values.astype(np.int64)
         return None
@@ -643,6 +715,125 @@ def _EMPTY_DF():
     )
 
 
+def _fetch_synapses_via_bulk(bbox_nm, mip, version, token) -> SynapseTable:
+    """Fetch via the GET-based bulk route (parquet + chunkedgraph), adapted to a
+    SynapseTable identical in shape/units to the query path.
+
+    Positions are returned as box-relative MIP voxel coords (same as the query
+    path). Autapses (pre_root == post_root) are dropped to match the query path's
+    ``synapse_query(remove_autapses=True)`` default. Supervoxel IDs populate the
+    seg-id scaffold fields, mirroring the query path.
+    """
+    from .bulk_synapses import fetch_synapses_bulk
+
+    ver = int(version) if version is not None else 117
+    res = fetch_synapses_bulk(bbox_nm, token, version=ver, use_version_roots=True)
+
+    vox = np.array(MIP_VOXEL_SIZES[mip], dtype=np.float64)
+    origin = np.array(bbox_nm[0], dtype=np.float64)
+
+    def to_boxvox(pts_nm: np.ndarray) -> np.ndarray:
+        return ((pts_nm - origin) / vox).astype(np.float32)
+
+    pre_root = res["pre_root_id"].astype(np.int64)
+    post_root = res["post_root_id"].astype(np.int64)
+    keep = pre_root != post_root  # drop autapses (incl. 0==0) to match the query path
+
+    return SynapseTable(
+        pre_pt=to_boxvox(res["pre_pt_nm"])[keep],
+        post_pt=to_boxvox(res["post_pt_nm"])[keep],
+        pre_root_id=pre_root[keep],
+        post_root_id=post_root[keep],
+        synapse_id=res["synapse_id"].astype(np.int64)[keep],
+        pre_seg_id=res["pre_supervoxel_id"].astype(np.int64)[keep],
+        post_seg_id=res["post_supervoxel_id"].astype(np.int64)[keep],
+    )
+
+
+def fetch_synapses(
+    bbox_nm: Tuple[Tuple, Tuple],
+    mip: int = 2,
+    version: int | None = None,
+    datastack: str = MICRONS_DATASTACK,
+    cave_server: str = CAVE_SERVER,
+    token: Optional[str] = None,
+    max_retries: int = 4,
+    initial_backoff_s: float = 2.0,
+    cache_dir: "str | Path | None" = None,
+    timeout_s: float = 120.0,
+    source: str = "query",
+) -> SynapseTable:
+    """Fetch synapses in a bounding box.
+
+    source:
+      "query" — CAVE materialize synapse_query (POST /query); original behaviour.
+      "bulk"  — GET-based route (GCS parquet + chunkedgraph); works when /query is
+                down server-side. Reconstructs true root IDs at ``version``.
+      "auto"  — try "query"; on a wall-clock TimeoutError fall back to "bulk".
+    """
+    _install_system_trust_store()
+
+    if source not in ("query", "bulk", "auto"):
+        raise ValueError(f"source must be 'query', 'bulk', or 'auto', got {source!r}")
+
+    # --- cache hit (shared across all sources) ---
+    cache_path: "Path | None" = None
+    if cache_dir is not None:
+        cache_path = _synapse_cache_path(cache_dir, bbox_nm, version, datastack, mip)
+        if cache_path.exists():
+            d = np.load(cache_path, allow_pickle=False)
+            pre_seg  = d["pre_seg_id"]  if "pre_seg_id"  in d else None
+            post_seg = d["post_seg_id"] if "post_seg_id" in d else None
+            return SynapseTable(
+                pre_pt=d["pre_pt"],
+                post_pt=d["post_pt"],
+                pre_root_id=d["pre_root_id"],
+                post_root_id=d["post_root_id"],
+                synapse_id=d["synapse_id"],
+                pre_seg_id=pre_seg,
+                post_seg_id=post_seg,
+            )
+
+    if source == "bulk":
+        result = _fetch_synapses_via_bulk(bbox_nm, mip, version, token)
+    elif source == "query":
+        result = _fetch_synapses_via_query(
+            bbox_nm, mip, version, datastack, cave_server, token,
+            max_retries, initial_backoff_s, timeout_s,
+        )
+    else:  # auto
+        try:
+            result = _fetch_synapses_via_query(
+                bbox_nm, mip, version, datastack, cave_server, token,
+                max_retries, initial_backoff_s, timeout_s,
+            )
+        except TimeoutError as exc:
+            log.warning("/query stalled (%s); falling back to GET-based bulk route", exc)
+            result = _fetch_synapses_via_bulk(bbox_nm, mip, version, token)
+
+    # --- cache write ---
+    if cache_path is not None:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        arrays: dict = {
+            "pre_pt": result.pre_pt,
+            "post_pt": result.post_pt,
+            "pre_root_id": result.pre_root_id,
+            "post_root_id": result.post_root_id,
+            "synapse_id": result.synapse_id,
+        }
+        if result.pre_seg_id is not None:
+            arrays["pre_seg_id"] = result.pre_seg_id
+        if result.post_seg_id is not None:
+            arrays["post_seg_id"] = result.post_seg_id
+        np.savez_compressed(cache_path, **arrays)
+
+    return result
+
+
+def _skeleton_cache_path(cache_dir, root_id: int, version: int, skeleton_service_version: int) -> Path:
+    return Path(cache_dir) / f"v{int(version)}_rid{int(root_id)}_skv{int(skeleton_service_version)}.npz"
+
+
 def fetch_root_skeleton(
     root_id: int,
     *,
@@ -655,11 +846,19 @@ def fetch_root_skeleton(
     max_retries: int = 4,
     initial_backoff_s: float = 1.0,
     client=None,
+    cache_missing: bool = True,
+    timeout_s: float = 30.0,
 ) -> SkeletonData:
-    """Fetch one root skeleton at a specific materialization version."""
+    """Fetch one root skeleton at a specific materialization version.
+
+    When ``cache_missing`` is True (default) and a fetch fails terminally (after
+    retries — e.g. a root that the skeleton service has no skeleton for), an empty
+    "negative cache" entry is written so the root is not re-requested on later
+    runs. Delete the empty .npz files to force a retry.
+    """
     cache_path: Path | None = None
     if cache_dir is not None:
-        cache_path = Path(cache_dir) / f"v{int(version)}_rid{int(root_id)}_skv{int(skeleton_service_version)}.npz"
+        cache_path = _skeleton_cache_path(cache_dir, root_id, version, skeleton_service_version)
         if cache_path.exists():
             cached = np.load(cache_path, allow_pickle=False)
             radius = cached["radius"] if "radius" in cached else None
@@ -684,19 +883,34 @@ def fetch_root_skeleton(
     raw = None
     for attempt in range(max(1, int(max_retries))):
         try:
-            raw = client.skeleton.get_skeleton(
-                int(root_id),
-                datastack_name=datastack,
-                skeleton_version=int(skeleton_service_version),
-                output_format="dict",
+            # Wall-clock deadline: a hung skeleton GET (no per-request timeout in
+            # caveclient) would otherwise stall the whole parallel fetch forever.
+            raw = _run_with_deadline(
+                lambda: client.skeleton.get_skeleton(
+                    int(root_id),
+                    datastack_name=datastack,
+                    skeleton_version=int(skeleton_service_version),
+                    output_format="dict",
+                ),
+                timeout_s,
+                what=f"get_skeleton({int(root_id)})",
             )
             break
         except Exception as exc:  # pragma: no cover - exercised via mocked fallback tests
             last_exc = exc
             if attempt + 1 >= max(1, int(max_retries)):
-                raise
+                break
             time.sleep(float(initial_backoff_s) * (2 ** attempt))
     if raw is None:
+        # Terminal failure. Negative-cache an empty skeleton so this root is not
+        # re-requested every run (many roots simply have no skeleton on the server).
+        if cache_path is not None and cache_missing:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            np.savez_compressed(
+                cache_path,
+                vertices=np.zeros((0, 3), dtype=np.float32),
+                edges=np.zeros((0, 2), dtype=np.int64),
+            )
         assert last_exc is not None
         raise last_exc
 
@@ -731,8 +945,14 @@ def fetch_root_skeletons(
     cache_dir: str | Path | None = None,
     allow_missing: bool = True,
     max_retries: int = 4,
+    cache_missing: bool = True,
+    timeout_s: float = 30.0,
 ) -> dict[int, SkeletonData]:
-    """Fetch skeletons keyed by root ID for one materialization version."""
+    """Fetch skeletons keyed by root ID for one materialization version.
+
+    ``cache_missing`` (default True) writes an empty negative-cache entry for roots
+    with no skeleton so they are not re-fetched on later runs.
+    """
     _install_system_trust_store()
     try:
         from caveclient import CAVEclient
@@ -758,6 +978,8 @@ def fetch_root_skeletons(
                 cache_dir=cache_dir,
                 max_retries=max_retries,
                 client=client,
+                cache_missing=cache_missing,
+                timeout_s=timeout_s,
             )
         except Exception:
             if not allow_missing:

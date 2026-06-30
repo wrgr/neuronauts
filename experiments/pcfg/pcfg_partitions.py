@@ -47,6 +47,16 @@ class HalfPartition:
     v18xx_root: int     # remapped v18xx root ID — ground-truth label
     pts: np.ndarray     # (N, 3) float64 synapse positions in nm
     side: str           # 'pre' | 'post'
+    syn_id: np.ndarray | None = None  # (N,) global synapse IDs composing this partition
+
+    @property
+    def syn_id_set(self) -> frozenset:
+        """Global synapse IDs as a set (empty if unknown). Used to detect pairs
+        that are the pre/post ends of the *same* synapse(s) — i.e. a real
+        synaptic connection between two distinct neurons, not a false split."""
+        if self.syn_id is None:
+            return frozenset()
+        return frozenset(int(s) for s in self.syn_id.tolist())
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +187,7 @@ def extract_partitions(
     *,
     min_synapses: int = 4,
     sides: str = 'both',
+    synapse_id: np.ndarray | None = None,
 ) -> list[HalfPartition]:
     """Extract half-partitions from a box synapse table.
 
@@ -218,6 +229,7 @@ def extract_partitions(
                 v18xx_root=target,
                 pts=pts[indices].astype(np.float64),
                 side=side,
+                syn_id=(synapse_id[indices] if synapse_id is not None else None),
             ))
     return partitions
 
@@ -229,12 +241,16 @@ def extract_partitions(
 def _artificial_positives(
     partitions: list[HalfPartition],
     rng: np.random.Generator,
-) -> list[tuple[np.ndarray, np.ndarray]]:
+) -> list[tuple[np.ndarray, np.ndarray, float]]:
     """PCA-midpoint split of each partition as fallback positive examples.
 
-    Returns list of (feat_left, feat_right) pairs.
+    Returns list of (feat_left, feat_right, centroid_dist_nm) triples. The two
+    halves are split along PCA1, so they are genuinely spatially separated — the
+    distance is computed from their real centroids, NOT hardcoded to 0. A 0 here
+    would make centroid distance a perfect (leaky) separator from negatives and
+    defeat the distance-matched control.
     """
-    rows: list[tuple[np.ndarray, np.ndarray]] = []
+    rows: list[tuple[np.ndarray, np.ndarray, float]] = []
     for p in partitions:
         if len(p.pts) < 6:
             continue
@@ -245,8 +261,110 @@ def _artificial_positives(
             continue
         fl = partition_features(HalfPartition(p.root_id, p.v18xx_root, left_pts, p.side))
         fr = partition_features(HalfPartition(p.root_id, p.v18xx_root, right_pts, p.side))
-        rows.append((fl, fr))
+        dist = closest_point_dist(left_pts, right_pts)
+        rows.append((fl, fr, dist))
     return rows
+
+
+def _random_piece_sizes(
+    n: int, min_chunk: int, max_pieces: int, rng: np.random.Generator,
+) -> list[int] | None:
+    """Random sizes for over-segmenting n items into pieces each >= min_chunk.
+
+    Returns a list summing to n with every element >= min_chunk (or None if n is
+    too small to make >= 2 pieces). The number of pieces is min(max_pieces,
+    n // min_chunk) — i.e. as fragmented as the min-degree floor allows, capped.
+    """
+    m = min(int(max_pieces), n // int(min_chunk))
+    if m < 2:
+        return None
+    sizes: list[int] = []
+    remaining, left = n, m
+    for _ in range(m - 1):
+        hi = remaining - min_chunk * (left - 1)  # leave >= min_chunk for each remaining piece
+        sz = int(rng.integers(min_chunk, hi + 1)) if hi > min_chunk else min_chunk
+        sizes.append(sz)
+        remaining -= sz
+        left -= 1
+    sizes.append(remaining)  # >= min_chunk by construction
+    return sizes
+
+
+def closest_point_dist(pts_a: np.ndarray, pts_b: np.ndarray) -> float:
+    """Minimum Euclidean distance between two synapse point sets (nm).
+
+    This is the physically meaningful distance for deciding whether two fragments
+    reconnect: pieces of one neuron meet at the cut, so their *closest* points are
+    adjacent (~0), whereas their centroids can be microns apart. Use this rather
+    than centroid distance for the merge distance feature.
+    """
+    a = np.asarray(pts_a, dtype=np.float64)
+    b = np.asarray(pts_b, dtype=np.float64)
+    if len(a) == 0 or len(b) == 0:
+        return float("inf")
+    try:
+        from scipy.spatial import cKDTree
+        # query the larger set against a tree built on the smaller
+        if len(a) <= len(b):
+            d, _ = cKDTree(a).query(b, k=1)
+        else:
+            d, _ = cKDTree(b).query(a, k=1)
+        return float(np.min(d))
+    except ImportError:
+        # brute force fallback
+        return float(np.sqrt(((a[:, None, :] - b[None, :, :]) ** 2).sum(-1)).min())
+
+
+def make_synthetic_split_partitions(
+    partitions: list[HalfPartition],
+    *,
+    rng: np.random.Generator,
+    min_chunk: int = 4,
+    max_pieces: int = 6,
+) -> list[HalfPartition]:
+    """Self-supervised split→merge task: over-segment each neuron into several
+    fragments and ask the grammar to recognise which fragments belong together.
+
+    Each parent partition ``k`` is PCA-ordered and cut at RANDOM points into up to
+    ``max_pieces`` contiguous fragments, each with at least ``min_chunk`` synapses
+    (real over-segmentation produces many small pieces, and low-degree pieces are
+    filtered out by the min_chunk floor). All fragments of neuron ``k`` share
+    ``v18xx_root=k`` with distinct ``root_id`` and disjoint ``syn_id``, so
+    ``build_merge_pairs`` enumerates every within-neuron fragment pair (C(m,2)) as
+    a positive — many more pairs than a single midpoint cut.
+
+    Both members of every pair (positive and negative) are fragments drawn from
+    the same random-size distribution, so there is no fragment-size confound.
+    Distance is retained as a legitimate feature downstream: a continuous neuron's
+    fragments really are nearby, so distance carrying signal is expected — the
+    distance-matched evaluation is a robustness check, not the headline.
+    """
+    out: list[HalfPartition] = []
+    for k, p in enumerate(partitions):
+        pts = np.asarray(p.pts, dtype=np.float64)
+        n = len(pts)
+        sizes = _random_piece_sizes(n, min_chunk, max_pieces, rng)
+        if sizes is None:
+            continue
+        centered = pts - pts.mean(axis=0)
+        try:
+            _, _, Vt = np.linalg.svd(centered, full_matrices=False)
+        except np.linalg.LinAlgError:
+            continue
+        order = np.argsort(centered @ Vt[0])
+        sid = p.syn_id
+        start = 0
+        for h, sz in enumerate(sizes):
+            idx = order[start:start + sz]
+            start += sz
+            out.append(HalfPartition(
+                root_id=k * (max_pieces + 1) + h,  # unique per fragment
+                v18xx_root=k,                      # shared group id => positive pairs
+                pts=pts[idx],
+                side=p.side,
+                syn_id=(sid[idx] if sid is not None else None),
+            ))
+    return out
 
 
 def build_merge_pairs(
@@ -277,7 +395,7 @@ def build_merge_pairs(
         col  16    : conditional entropy of partition A       (1)
         cols 17-32 : bigram features of partition B          (16)
         col  33    : conditional entropy of partition B       (1)
-        col  34    : log1p(centroid distance in nm)           (1)
+        col  34    : log1p(closest-point distance in nm)      (1)
 
     Falls back to same-root PCA-midpoint artificial positives when real
     positives number fewer than 2.
@@ -293,6 +411,7 @@ def build_merge_pairs(
     centroids_arr = np.array([p.pts.mean(axis=0) for p in partitions], dtype=np.float64)
     v18xx = [p.v18xx_root for p in partitions]
     root_ids = [p.root_id for p in partitions]
+    syn_sets = [p.syn_id_set for p in partitions]
 
     # -- Positive pairs: group by v18xx root, enumerate pairs within each group --
     pos_rows: list[tuple[np.ndarray, np.ndarray, float, int]] = []
@@ -300,19 +419,41 @@ def build_merge_pairs(
     for i, v in enumerate(v18xx):
         by_v18xx[v].append(i)
 
+    n_shared_syn_skipped = 0
     for group_indices in by_v18xx.values():
         if len(group_indices) < 2:
             continue
         for i, j in combinations(group_indices, 2):
             if root_ids[i] == root_ids[j]:
                 continue  # same v117 root (pre vs post side) — not a real merge
-            dist = float(np.linalg.norm(centroids_arr[i] - centroids_arr[j]))
+            # If the two partitions share a synapse, they are the pre-half and
+            # post-half of the *same* connection — i.e. the presynaptic and
+            # postsynaptic neurons of that synapse. Those are genuinely distinct
+            # neurons that must NOT be merged (merging would collapse a synapse
+            # into a self-loop); they are coincident in space, which would
+            # otherwise make centroid distance a spurious perfect predictor.
+            # A true false-split is two fragments of ONE neuron and shares no
+            # synapse. Skip the shared-synapse case.
+            if syn_sets[i] and syn_sets[j] and (syn_sets[i] & syn_sets[j]):
+                n_shared_syn_skipped += 1
+                continue
+            dist = closest_point_dist(partitions[i].pts, partitions[j].pts)
             pos_rows.append((feats[i], feats[j], dist, 1))
 
+    if n_shared_syn_skipped:
+        print(f"  [excluded {n_shared_syn_skipped} shared-synapse pairs "
+              f"(pre/post ends of one connection, not false splits)]")
+
     # Fall back to artificial positives if real ones are sparse
+    n_artificial = 0
     if len(pos_rows) < 2:
-        for fl, fr in _artificial_positives(partitions, rng):
-            pos_rows.append((fl, fr, 0.0, 1))
+        for fl, fr, d in _artificial_positives(partitions, rng):
+            pos_rows.append((fl, fr, d, 1))
+            n_artificial += 1
+        if n_artificial:
+            print(f"  [WARNING: 0 real false-split positives in this data; using "
+                  f"{n_artificial} ARTIFICIAL PCA-split positives — merge metrics "
+                  f"below measure a synthetic proxy task, not real merges]")
 
     if not pos_rows:
         return (
@@ -347,7 +488,10 @@ def build_merge_pairs(
                     if v18xx[i] == v18xx[j]:
                         continue  # positive pair, not negative
                     seen_pairs.add(pair)
-                    dist = float(dists_nn[i, j_slot])
+                    # KD-tree on centroids only SELECTS nearby candidates; the
+                    # stored feature is the closest-point distance (meaningful for
+                    # whether two fragments touch), not the centroid distance.
+                    dist = closest_point_dist(partitions[i].pts, partitions[j].pts)
                     neg_rows.append((feats[i], feats[j], dist, 0))
                     if len(neg_rows) >= n_neg_target * 5:
                         break  # enough candidates; stop early
@@ -364,7 +508,7 @@ def build_merge_pairs(
                 i, j = rng.integers(0, len(partitions), size=2)
                 if i == j or root_ids[i] == root_ids[j] or v18xx[i] == v18xx[j]:
                     continue
-                dist = float(np.linalg.norm(centroids_arr[i] - centroids_arr[j]))
+                dist = closest_point_dist(partitions[i].pts, partitions[j].pts)
                 neg_rows.append((feats[i], feats[j], dist, 0))
 
     if match_distance and pos_rows and neg_rows:
