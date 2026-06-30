@@ -46,6 +46,12 @@ models/*.json
 .v117_cache/
 models/scratch/
 
+# Local CAVE synapse fetch cache
+syn_cache/
+
+# Agent scratch prototype (contains a token; superseded by neuronauts/bulk_synapses.py)
+scratchpad_bulk_synapses.py
+
 # Curated keepers (force-add a new one with `git add -f` and add a manifest row)
 !models/README.md
 !models/grammar_cave_real_50.pt
