@@ -1,0 +1,115 @@
+{
+  "n_sites": 10,
+  "candidate_mode": "proximity",
+  "radius_nm": 2000.0,
+  "direction_cone_deg": 45.0,
+  "mean_candidates": 75.3,
+  "mean_gap_nm": 1224.5025773052328,
+  "chance_top1": 0.015422096723649536,
+  "top1_raw": 0.0,
+  "top1_learned": 0.0,
+  "mrr_raw": 0.11576707469155982,
+  "mrr_learned": 0.07857091738670686,
+  "sites": [
+    {
+      "root": 864691134966306591,
+      "gap_nm": 1191.8389152901495,
+      "n_candidates": 58,
+      "rank_learned": 32,
+      "rank_raw": 45,
+      "top1_learned": false,
+      "top1_raw": false,
+      "sim_learned_true": 0.2879723310470581
+    },
+    {
+      "root": 864691134966710559,
+      "gap_nm": 1802.061042251344,
+      "n_candidates": 81,
+      "rank_learned": 12,
+      "rank_raw": 37,
+      "top1_learned": false,
+      "top1_raw": false,
+      "sim_learned_true": 0.502183735370636
+    },
+    {
+      "root": 864691135119679197,
+      "gap_nm": 776.7007145612781,
+      "n_candidates": 42,
+      "rank_learned": 17,
+      "rank_raw": 4,
+      "top1_learned": false,
+      "top1_raw": false,
+      "sim_learned_true": 0.2584494352340698
+    },
+    {
+      "root": 864691135270080421,
+      "gap_nm": 1271.8490476467716,
+      "n_candidates": 61,
+      "rank_learned": 37,
+      "rank_raw": 2,
+      "top1_learned": false,
+      "top1_raw": false,
+      "sim_learned_true": 0.22384953498840332
+    },
+    {
+      "root": 864691135355803087,
+      "gap_nm": 1395.6503860207972,
+      "n_candidates": 86,
+      "rank_learned": 5,
+      "rank_raw": 22,
+      "top1_learned": false,
+      "top1_raw": false,
+      "sim_learned_true": 0.5603107810020447
+    },
+    {
+      "root": 864691135359939160,
+      "gap_nm": 807.8415686259281,
+      "n_candidates": 89,
+      "rank_learned": 19,
+      "rank_raw": 4,
+      "top1_learned": false,
+      "top1_raw": false,
+      "sim_learned_true": 0.5568788051605225
+    },
+    {
+      "root": 864691135359939160,
+      "gap_nm": 899.3508770218663,
+      "n_candidates": 130,
+      "rank_learned": 4,
+      "rank_raw": 9,
+      "top1_learned": false,
+      "top1_raw": false,
+      "sim_learned_true": 0.6803119778633118
+    },
+    {
+      "root": 864691135359939160,
+      "gap_nm": 1832.646174251866,
+      "n_candidates": 109,
+      "rank_learned": 27,
+      "rank_raw": 69,
+      "top1_learned": false,
+      "top1_raw": false,
+      "sim_learned_true": 0.19625264406204224
+    },
+    {
+      "root": 864691135474942016,
+      "gap_nm": 662.214466770396,
+      "n_candidates": 35,
+      "rank_learned": 7,
+      "rank_raw": 4,
+      "top1_learned": false,
+      "top1_raw": false,
+      "sim_learned_true": 0.302585244178772
+    },
+    {
+      "root": 864691135499987219,
+      "gap_nm": 1604.8725806119314,
+      "n_candidates": 62,
+      "rank_learned": 51,
+      "rank_raw": 53,
+      "top1_learned": false,
+      "top1_raw": false,
+      "sim_learned_true": 0.10696399211883545
+    }
+  ]
+}

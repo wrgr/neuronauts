@@ -36,7 +36,15 @@ __all__ = [
     "batch_score_seg_connectivity",
     "fetch_seg_ids_at_points",
     "batch_score_seg_connectivity_fast",
+    "cross_section_patch",
+    "cutface_similarity",
+    "batch_cutface_similarity",
 ]
+
+# Default cross-section patch geometry -- must match the trained cut-face encoder
+# (see experiments/fingerprints/learned_cutface_encoder.py, PATCH = 48).
+CUTFACE_PATCH = 48
+CUTFACE_SLAB = 3
 
 
 # ---------------------------------------------------------------------------
@@ -765,4 +773,155 @@ def batch_score_seg_connectivity_fast(
         else:
             scores[(i, j)] = 0.0
 
+    return scores
+
+
+# ---------------------------------------------------------------------------
+# Cut-face fingerprint scoring (learned hash edge feature)
+# ---------------------------------------------------------------------------
+#
+# These helpers turn the contrastive cut-face encoder from
+# ``experiments/fingerprints/learned_cutface_encoder.py`` into a boundary-edge
+# feature.  The premise (see that experiment): slicing is self-inflicted to make
+# imaging possible, so every true split is a cut through one continuous process;
+# the local ultrastructure on the two faces was continuous, so a learned hash of
+# the cross-section can re-link them.
+#
+# To keep this module free of a torch dependency, the encoder is injected as a
+# generic ``embed_fn``: a callable mapping a float32 array ``[N, P, P]`` of
+# cross-section patches to an ``[N, D]`` embedding matrix.  The experiment module
+# provides one backed by the trained network.
+
+def cross_section_patch(
+    em_vol: VolumeChunk,
+    seg_vol: VolumeChunk,
+    pos_nm,
+    *,
+    patch: int = CUTFACE_PATCH,
+    slab: int = CUTFACE_SLAB,
+) -> np.ndarray:
+    """Extract the translation-normalised cross-section patch at ``pos_nm``.
+
+    Finds the neurite seg id at the point, masks it in a thin z-slab, projects
+    the mean EM intensity over that slab, and crops a ``patch x patch`` window
+    centred on the masked footprint.  Returns zeros if the point is background.
+
+    ``em_vol`` and ``seg_vol`` must share a voxel grid (true for MICrONS MIP 0-2,
+    where EM and seg resolutions match).
+    """
+    vox = np.asarray(seg_vol.voxel_size_nm, dtype=np.float64)
+    origin = np.asarray(seg_vol.bbox_voxels[0], dtype=np.float64)
+    shape = seg_vol.data.shape
+    idx = np.round(np.asarray(pos_nm, dtype=np.float64) / vox - origin - 0.5).astype(int)
+    idx = np.clip(idx, 0, [shape[0] - 1, shape[1] - 1, shape[2] - 1])
+
+    sid = int(seg_vol.data[idx[0], idx[1], idx[2]])
+    out = np.zeros((patch, patch), dtype=np.float32)
+    if sid == 0:
+        return out
+
+    z = idx[2]
+    z0 = max(z - slab // 2, 0)
+    z1 = min(z0 + slab, shape[2])
+    mask = seg_vol.data[:, :, z0:z1] == sid
+    em_sub = em_vol.data[:, :, z0:z1].astype(np.float32)
+    count2d = mask.sum(axis=2)
+    if not count2d.any():
+        return out
+    with np.errstate(invalid="ignore", divide="ignore"):
+        proj = np.where(count2d > 0, (em_sub * mask).sum(axis=2) / count2d, 0.0)
+
+    xs, ys = np.nonzero(count2d > 0)
+    ci, cj = int(round(xs.mean())), int(round(ys.mean()))
+    h = patch // 2
+    xi0, xi1 = max(ci - h, 0), min(ci + h, proj.shape[0])
+    yi0, yi1 = max(cj - h, 0), min(cj + h, proj.shape[1])
+    px0, py0 = xi0 - (ci - h), yi0 - (cj - h)
+    out[px0:px0 + (xi1 - xi0), py0:py0 + (yi1 - yi0)] = proj[xi0:xi1, yi0:yi1]
+    return out
+
+
+def cutface_similarity(
+    pos_a_nm,
+    pos_b_nm,
+    embed_fn,
+    *,
+    mip: int = 1,
+    patch: int = CUTFACE_PATCH,
+    slab: int = CUTFACE_SLAB,
+    margin_nm: float = 1000.0,
+    em_path: str = MICRONS_EM_PATH,
+    seg_path: str = MICRONS_SEG_PATH,
+) -> float:
+    """Cut-face hash similarity (cosine in embedding space) between two points.
+
+    Fetches one EM + seg volume covering both points, extracts each point's
+    cross-section patch, embeds both via ``embed_fn`` and returns their cosine
+    similarity in ``[-1, 1]`` -- higher means the two faces look like the same
+    continuous process, i.e. the boundary edge is more likely a true merge.
+    """
+    from .fetch import fetch_volume, fetch_seg_volume  # noqa: PLC0415
+
+    pts = np.asarray([pos_a_nm, pos_b_nm], dtype=np.float64)
+    lo = pts.min(axis=0) - margin_nm
+    hi = pts.max(axis=0) + margin_nm
+    bbox = ((float(lo[0]), float(lo[1]), float(lo[2])),
+            (float(hi[0]), float(hi[1]), float(hi[2])))
+
+    em_vol = fetch_volume(bbox, mip=mip, em_path=em_path)
+    seg_vol = fetch_seg_volume(bbox, mip=mip, seg_path=seg_path)
+
+    pa = cross_section_patch(em_vol, seg_vol, pos_a_nm, patch=patch, slab=slab)
+    pb = cross_section_patch(em_vol, seg_vol, pos_b_nm, patch=patch, slab=slab)
+    emb = np.asarray(embed_fn(np.stack([pa, pb]).astype(np.float32)))
+    a, b = emb[0], emb[1]
+    return float(a @ b / ((np.linalg.norm(a) + 1e-9) * (np.linalg.norm(b) + 1e-9)))
+
+
+def batch_cutface_similarity(
+    syn_positions_nm: np.ndarray,
+    edges: list,
+    embed_fn,
+    *,
+    mip: int = 1,
+    patch: int = CUTFACE_PATCH,
+    slab: int = CUTFACE_SLAB,
+    margin_nm: float = 1000.0,
+    em_path: str = MICRONS_EM_PATH,
+    seg_path: str = MICRONS_SEG_PATH,
+    verbose: bool = False,
+) -> dict:
+    """Score boundary ``edges`` by cut-face hash similarity with one bulk fetch.
+
+    Fetches a single EM + seg volume covering all referenced synapse positions,
+    extracts every needed cross-section patch once, embeds them in a single
+    ``embed_fn`` call, then returns ``{(i, j): cosine_similarity}``.  Suitable as
+    an edge feature in :func:`~neuronauts.cell_graph.build_synapse_graph`.
+    """
+    from .fetch import fetch_volume, fetch_seg_volume  # noqa: PLC0415
+
+    positions = np.asarray(syn_positions_nm, dtype=np.float64)
+    used = sorted({k for e in edges for k in e})
+    if not used:
+        return {}
+    pts = positions[used]
+    lo = pts.min(axis=0) - margin_nm
+    hi = pts.max(axis=0) + margin_nm
+    bbox = ((float(lo[0]), float(lo[1]), float(lo[2])),
+            (float(hi[0]), float(hi[1]), float(hi[2])))
+
+    if verbose:
+        print(f"[cutface] fetching MIP{mip} EM+seg for {len(used)} points ...")
+    em_vol = fetch_volume(bbox, mip=mip, em_path=em_path)
+    seg_vol = fetch_seg_volume(bbox, mip=mip, seg_path=seg_path)
+
+    patches = {k: cross_section_patch(em_vol, seg_vol, positions[k], patch=patch, slab=slab)
+               for k in used}
+    emb = np.asarray(embed_fn(np.stack([patches[k] for k in used]).astype(np.float32)))
+    emb = emb / (np.linalg.norm(emb, axis=1, keepdims=True) + 1e-9)
+    row = {k: emb[c] for c, k in enumerate(used)}
+
+    scores = {}
+    for i, j in edges:
+        scores[(i, j)] = float(row[i] @ row[j])
     return scores

@@ -1,0 +1,33 @@
+{
+  "mip": 1,
+  "radius_nm": 2000.0,
+  "counts": {
+    "present": 233,
+    "not_a_split": 172,
+    "too_few": 58,
+    "no_prox": 6,
+    "no_query": 2
+  },
+  "scoreable_sites": 233,
+  "not_a_split_discarded": 172,
+  "panel_recall": 1.0,
+  "correction_top1": 0.743,
+  "end_to_end_top1": 0.743,
+  "miss_reasons": {},
+  "present_partner_dist_nm": {
+    "n": 233,
+    "median": 512.6402247190518,
+    "p25": 105.90561835898981,
+    "p75": 1020.0627431682818,
+    "max": 1951.8565521062249
+  },
+  "present_site_gap_nm": {
+    "n": 233,
+    "median": 1273.6090451940108,
+    "p25": 755.6930593832393,
+    "p75": 1612.9277727164351,
+    "max": 1996.5089531479691
+  },
+  "absent_partner_dist_nm": null,
+  "absent_site_gap_nm": null
+}

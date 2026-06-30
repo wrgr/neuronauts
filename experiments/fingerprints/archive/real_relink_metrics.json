@@ -1,0 +1,27 @@
+{
+  "radius_nm": 2000.0,
+  "direction_cone_deg": 45.0,
+  "n_train_pairs": 5,
+  "train_neurons": 30,
+  "test_neurons": 25,
+  "final_loss": 0.19751426577568054,
+  "summary": {
+    "real": {
+      "top1": 0.125,
+      "mrr": 0.20601910600563617,
+      "n": 8
+    },
+    "planar": {
+      "top1": 0.25,
+      "mrr": 0.27253860084149456,
+      "n": 8
+    },
+    "raw": {
+      "top1": 0.0,
+      "mrr": 0.02079570069354128,
+      "n": 8
+    },
+    "mean_candidates": 119.0,
+    "chance_top1": 0.013735357507331344
+  }
+}

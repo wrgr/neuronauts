@@ -43,6 +43,12 @@ run_logs_*.txt
 models/*.pt
 models/*.npz
 models/*.json
+
+# Regenerable working encoder checkpoints (training artifacts; rewritten every run)
+experiments/fingerprints/*_synth*.pt
+experiments/fingerprints/*_8nm.pt
+experiments/fingerprints/*_depth.pt
+experiments/fingerprints/*depth8nm.pt
 .v117_cache/
 models/scratch/
 

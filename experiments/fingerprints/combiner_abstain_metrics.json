@@ -1,0 +1,47 @@
+{
+  "mip": 1,
+  "radius_nm": 2000.0,
+  "n_train_sites": 160,
+  "n_sites": 73,
+  "n_partner_present": 73,
+  "panel_recall_ceiling": 1.0,
+  "combiner_alwaysact_top1": 0.7671232876712328,
+  "geom_alwaysact_top1": 0.6438356164383562,
+  "curve": [
+    {
+      "thr": 1.3171091079711914,
+      "coverage": 1.0,
+      "precision": 0.7671232876712328,
+      "recall": 0.7671232876712328,
+      "n_acted": 73
+    },
+    {
+      "thr": 4.609767436981201,
+      "coverage": 0.7534246575342466,
+      "precision": 0.8,
+      "recall": 0.6027397260273972,
+      "n_acted": 55
+    },
+    {
+      "thr": 5.567843437194824,
+      "coverage": 0.5068493150684932,
+      "precision": 0.918918918918919,
+      "recall": 0.4657534246575342,
+      "n_acted": 37
+    },
+    {
+      "thr": 6.311140060424805,
+      "coverage": 0.2602739726027397,
+      "precision": 0.9473684210526315,
+      "recall": 0.2465753424657534,
+      "n_acted": 19
+    },
+    {
+      "thr": 7.067414093017578,
+      "coverage": 0.1095890410958904,
+      "precision": 1.0,
+      "recall": 0.1095890410958904,
+      "n_acted": 8
+    }
+  ]
+}
