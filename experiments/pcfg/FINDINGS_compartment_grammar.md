@@ -120,12 +120,38 @@ real AUC — so ~0.49 is a floor, and part of the synthetic↔real gap is method
 only biology. Both effects point the same way: SegCLR-alone does not localize real
 seams.
 
+## M1 — compartment labeling on real neurons (PASS)
+
+Built `neuronauts/soma_clusters.py` (verified soma routine extracted to core) and
+`experiments/pcfg/compartments.py` (`label_compartments`): synapse polarity
+(pre→axon, post→dend) snapped to vertices and diffused along the tree, soma from
+large-radius clusters (+ optional nucleus table). Run:
+
+```
+python -m experiments.pcfg.run_compartment_grammar --m1 --n-neurons 4
+```
+
+Result on 4 proofread neurons (5k–12k verts, 2k–8k synapses each):
+
+| root | n_soma | PRE→AXON | POST→DEND | is_tree |
+|---|---|---|---|---|
+| …686494647 | 1 | 0.99 | 1.00 | ✓ |
+| …812081779 | 1 | 0.99 | 1.00 | ✓ |
+| …195284556 | 1 | 1.00 | 1.00 | ✓ |
+| …975539779 | 1 | 0.98 | 1.00 | ✓ |
+
+Polarity concordance is essentially perfect and each neuron yields exactly one
+soma. Useful data fact: the CAVE skeleton service represents the **soma as a
+single large-radius vertex** (~5300 nm; all cable ≤ ~425 nm at p99), so the
+radius>3000 nm threshold is cleanly separated and multi-soma detection (2 merged
+cells → 2 big-radius vertices) is robust. The compartment alphabet is ready to
+drive the grammar.
+
 ## Next
-1. De-noise the real-merge ground truth (supervoxel→current-root labels via the
-   seg volume instead of nearest-skeleton) to separate biology from label noise —
-   confirm whether real AUC is truly ~0.5 or somewhat higher.
-2. Skeleton-based grammar (M1+ in the plan): compartment labels from synapse
-   polarity + soma table, A↔D and multi-soma productions, geodesic-window pooling,
-   split via `skeleton_cut_op` — **now the clear priority, since SegCLR alone is
-   weak on real merges**. The structural rules must carry detection; SegCLR is at
-   best a weak corroborator.
+1. **Grammar productions (M3)**: A↔D-crossing (geodesic windows, soma-mediation
+   guard) + multi-soma, locating the offending edge; combine with the PCFG signals.
+   SegCLR enters only as a weak corroborator (Exp 1).
+2. Split proposal via `skeleton_cut_op`; evaluate on real merges (m343→current)
+   and vs the `atomicity_detector` / `skeleton_topology_merge` baselines.
+3. Optionally de-noise the Exp 1 ground truth (supervoxel→current-root labels) to
+   pin down the real-merge SegCLR AUC precisely.

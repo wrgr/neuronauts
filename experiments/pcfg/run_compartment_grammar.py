@@ -473,12 +473,111 @@ def run_exp1(args) -> None:
     print(f"median #sites/merge: {int(np.median([r.n_sites for r in results]))}")
 
 
+# --------------------------------------------------------------------------- #
+# M1: compartment labeling sanity on real clean neurons
+# --------------------------------------------------------------------------- #
+
+def _nucleus_pos_nm_for_root(client, root_id: int) -> np.ndarray | None:
+    """Return the nucleus centroid(s) in nm for a root, or None."""
+    try:
+        df = client.materialize.query_table(
+            "nucleus_detection_v0", filter_equal_dict={"pt_root_id": int(root_id)})
+    except Exception:
+        return None
+    if df is None or len(df) == 0 or "pt_position" not in df.columns:
+        return None
+    vox = np.array([4.0, 4.0, 40.0])  # nucleus table pt_position is (4,4,40) voxels
+    pts = np.array([np.asarray(p, float) for p in df["pt_position"].values])
+    return pts * vox
+
+
+def run_m1(args) -> None:
+    import os as _os
+    from caveclient import CAVEclient
+    from neuronauts.fetch import fetch_root_skeleton, fetch_synapses_for_roots
+    from experiments.pcfg.compartments import label_compartments, AXON, DEND, SOMA
+
+    tok = _os.environ.get("token") or _os.environ.get("CAVE_TOKEN")
+    if not tok:
+        print("[m1] no CAVE token in env."); return
+    client = CAVEclient("minnie65_public", auth_token=tok)
+    version = int(args.version) if args.version else int(client.materialize.version)
+    client.version = version
+    print(f"[m1] datastack version {version}", flush=True)
+
+    # prefer proofread neurons (clean, complete cells with real skeletons); the
+    # nucleus table alone yields many degenerate/non-neuronal 1-vertex roots.
+    roots = args.roots
+    if not roots:
+        try:
+            df = client.materialize.query_table("proofreading_status_and_strategy", limit=3000)
+            rid = df["pt_root_id"].values
+            roots = [int(x) for x in rid if int(x) != 0][: args.n_neurons * 6]
+        except Exception:
+            df = client.materialize.query_table("nucleus_detection_v0", limit=6000)
+            rid = df["pt_root_id"].values
+            rid = rid[rid != 0]
+            u, c = np.unique(rid, return_counts=True)
+            roots = [int(x) for x in u[c == 1][: args.n_neurons * 6]]
+
+    done = 0
+    for r in roots:
+        if done >= args.n_neurons:
+            break
+        try:
+            sk = fetch_root_skeleton(int(r), version=version, token=tok,
+                                     cache_dir=args.skel_cache, client=client)
+        except Exception as e:
+            continue
+        if len(sk.vertices) < 200 or sk.radius is None:
+            continue
+        syn = fetch_synapses_for_roots([int(r)], version=version, token=tok, mip=2)
+        if syn.n_synapses < 20:
+            continue
+        nuc = _nucleus_pos_nm_for_root(client, int(r))
+        labels = label_compartments(sk, syn, root_id=int(r), mip=2, nucleus_pos_nm=nuc)
+
+        # concordance: do PRE synapses land on AXON vertices and POST on DEND?
+        from scipy.spatial import cKDTree
+        vox = np.array([32.0, 32.0, 40.0])
+        tree = cKDTree(labels.vertices_nm)
+        pre = np.asarray(syn.pre_pt, float)[np.asarray(syn.pre_root_id) == r] * vox
+        post = np.asarray(syn.post_pt, float)[np.asarray(syn.post_root_id) == r] * vox
+        def frac_on(pts, comp):
+            if len(pts) == 0:
+                return float("nan")
+            d, i = tree.query(pts, k=1)
+            lab = labels.label[i][d <= 1500.0]
+            return float(np.mean(lab == comp)) if len(lab) else float("nan")
+        pre_axon = frac_on(pre, AXON)
+        post_dend = frac_on(post, DEND)
+
+        s = labels.summary()
+        # is_tree: connected & acyclic (E == V-1 within each component)
+        n_edges = len(labels.edges)
+        is_tree = (n_edges == len(labels.vertices_nm) - 1)
+        print(f"\nroot {r} (v{version}): {s['n_vertices']} verts, {syn.n_synapses} syn, "
+              f"n_soma_clusters={s['n_soma_clusters']}", flush=True)
+        print(f"  label verts: soma={s['n_soma_verts']} axon={s['n_axon_verts']} "
+              f"dend={s['n_dend_verts']} unknown={s['n_unknown_verts']}")
+        print(f"  #pre(axonal)={len(pre)} #post(dendritic)={len(post)}")
+        print(f"  PRE→AXON frac={pre_axon:.2f}  POST→DEND frac={post_dend:.2f}  "
+              f"(edges==V-1: {is_tree})")
+        done += 1
+    if done == 0:
+        print("[m1] no suitable neurons found; try --roots or raise --n-neurons.")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--exp0", action="store_true",
                     help="SegCLR-only value probe on synthetic merges (m343-native)")
     ap.add_argument("--exp1", action="store_true",
                     help="SegCLR-only probe on REAL proofread merges (m343 -> current split)")
+    ap.add_argument("--m1", action="store_true",
+                    help="compartment-labeling sanity on clean neurons")
+    ap.add_argument("--roots", type=int, nargs="*", default=None,
+                    help="explicit root ids for --m1")
     ap.add_argument("--variant", default="nm_coord", choices=sorted(VARIANTS))
     ap.add_argument("--cache-dir", default="cache/segclr")
     ap.add_argument("--skel-cache", default="cache/skel_current")
@@ -500,7 +599,9 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
-    if args.exp1:
+    if args.m1:
+        run_m1(args)
+    elif args.exp1:
         run_exp1(args)
     elif args.exp0 or True:
         run_exp0(args)
