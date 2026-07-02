@@ -27,6 +27,7 @@ dev = [
 ]
 cave = [
     "caveclient",
+    "cloud-volume",
     "pandas",
 ]
 topology = [

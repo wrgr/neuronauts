@@ -151,18 +151,34 @@ def evaluate_merge(
     contact_nm: float = 1500.0, hit_ks=(10, 50, 100, 500), site_ks=(1, 3, 5, 10),
     site_link_nm: float = 5000.0, n_top_for_sites: int = 200,
 ) -> PairResult | None:
-    """Build a spatial kNN graph over the union of two neurons' embedding points
-    and score every edge by SegCLR discontinuity.  Seam edges = cross-cell kNN
-    edges within ``contact_nm`` (realistic false-merge contacts)."""
-    from scipy.spatial import cKDTree
-
+    """Synthetic merge: union two neurons' point clouds (labels 0/1) and score."""
     P = np.vstack([a.points, b.points])
     E = np.vstack([a.emb, b.emb]).astype(np.float32)
     lab = np.concatenate([np.zeros(len(a.points), int), np.ones(len(b.points), int)])
+    return _seam_metrics(
+        P, E, lab, seg_a=a.seg_id, seg_b=b.seg_id, k=k, pool_radius_nm=pool_radius_nm,
+        contact_nm=contact_nm, hit_ks=hit_ks, site_ks=site_ks,
+        site_link_nm=site_link_nm, n_top_for_sites=n_top_for_sites,
+    )
+
+
+def _seam_metrics(
+    P: np.ndarray, E: np.ndarray, lab: np.ndarray, *, seg_a: int, seg_b: int,
+    k: int = 8, pool_radius_nm: float = 3000.0, contact_nm: float = 1500.0,
+    hit_ks=(10, 50, 100, 500), site_ks=(1, 3, 5, 10),
+    site_link_nm: float = 5000.0, n_top_for_sites: int = 200,
+) -> PairResult | None:
+    """Core scoring: spatial kNN graph over labeled points, score each edge by
+    SegCLR discontinuity, and measure how well it localizes the seam.
+
+    ``lab`` is an integer label per point (which physical cell the point belongs
+    to).  A *seam* edge joins points with different labels within ``contact_nm``
+    -- a real cross-cell contact (the merge boundary).
+    """
+    from scipy.spatial import cKDTree
 
     tree = cKDTree(P)
     dist, idx = tree.query(P, k=k + 1)  # includes self
-    # collect undirected edges (i<j)
     ei, ej = [], []
     for i in range(len(P)):
         for col in range(1, k + 1):
@@ -174,10 +190,9 @@ def evaluate_merge(
         return None
     edge_len = np.linalg.norm(P[ei] - P[ej], axis=1)
     cross = lab[ei] != lab[ej]
-    # a seam edge must be a genuine spatial contact between the two cells
     seam = cross & (edge_len <= contact_nm)
     if seam.sum() == 0:
-        return None  # these two neurons never come within contact => not a merge candidate
+        return None  # cells never come within contact => not a merge candidate
 
     Ep = _local_pool(P, E, pool_radius_nm)
     dissim_raw = _cosine_dissim(E[ei], E[ej])
@@ -227,7 +242,7 @@ def evaluate_merge(
     site_is_seam = [any(t_is_seam[m] for m in idxs) for idxs in sites]
     site_hit = {K: int(any(site_is_seam[:K])) for K in site_ks}
 
-    return PairResult(a.seg_id, b.seg_id, int((~cross).sum()), n_seam, n_edges,
+    return PairResult(int(seg_a), int(seg_b), int((~cross).sum()), n_seam, n_edges,
                       auc_raw, auc_pool, best_seam_pct, hit, site_hit, len(sites))
 
 
@@ -311,13 +326,158 @@ def run_exp0(args) -> None:
               f"  site_hit@{K:<2d}={np.mean([r.site_hit_at[K] for r in results]):.2f}")
 
 
+# --------------------------------------------------------------------------- #
+# Exp 1: REAL proofread merges (m343 root -> multiple current roots)
+# --------------------------------------------------------------------------- #
+
+def label_by_nearest_skeleton(
+    points: np.ndarray, skels: list[tuple[int, np.ndarray]], *, cap_nm: float = 2500.0,
+) -> np.ndarray:
+    """Label each point by the nearest current-descendant skeleton (index into
+    ``skels``); points farther than ``cap_nm`` from every skeleton get -1."""
+    from scipy.spatial import cKDTree
+
+    if not skels:
+        return np.full(len(points), -1, int)
+    dists = np.full((len(skels), len(points)), np.inf)
+    for si, (_rid, verts) in enumerate(skels):
+        if len(verts):
+            dists[si] = cKDTree(verts).query(points, k=1)[0]
+    lab = np.argmin(dists, axis=0)
+    best = dists[lab, np.arange(len(points))]
+    lab[best > cap_nm] = -1
+    return lab
+
+
+def evaluate_real_merge(
+    reader: SegCLRReader, m343_root: int, current_roots: list[int], *,
+    version: int, token: str, skel_cache: str, subsample: int = 40_000,
+    min_share: float = 0.15, cap_nm: float = 2500.0, k: int = 8,
+    contact_nm: float = 1500.0, min_skel_verts: int = 150,
+    rng: np.random.Generator | None = None, client=None,
+) -> PairResult | None:
+    """Evaluate SegCLR seam localization on a REAL proofread merge: the m343 root
+    was later split into ``current_roots``; label its SegCLR points by nearest
+    current skeleton (= ground-truth cell), then score the seam."""
+    from neuronauts.fetch import fetch_root_skeleton
+
+    cloud = load_cloud(reader, m343_root, subsample=subsample, rng=rng)
+    if cloud is None:
+        return None
+
+    skels: list[tuple[int, np.ndarray]] = []
+    for rid in current_roots:
+        try:
+            sk = fetch_root_skeleton(int(rid), version=version, token=token,
+                                     cache_dir=skel_cache, client=client)
+        except Exception:
+            continue
+        if len(sk.vertices) >= min_skel_verts:   # substantial cell, not a shed fragment
+            skels.append((int(rid), sk.vertices.astype(np.float64)))
+    if len(skels) < 2:
+        return None  # not a merge of >=2 substantial cells
+
+    lab = label_by_nearest_skeleton(cloud.points, skels, cap_nm=cap_nm)
+    keep = lab >= 0
+    if keep.sum() < 100:
+        return None
+    P, E, lab = cloud.points[keep], cloud.emb[keep], lab[keep]
+
+    # keep only substantial cells (>= min_share of labeled points); need >=2
+    uniq, counts = np.unique(lab, return_counts=True)
+    frac = counts / counts.sum()
+    big = uniq[frac >= min_share]
+    if len(big) < 2:
+        return None
+    m = np.isin(lab, big)
+    P, E, lab = P[m], E[m], lab[m]
+    # compact labels to 0..m-1
+    remap = {v: i for i, v in enumerate(sorted(big.tolist()))}
+    lab = np.array([remap[v] for v in lab], int)
+
+    return _seam_metrics(P, E, lab, seg_a=m343_root, seg_b=len(big), k=k,
+                         contact_nm=contact_nm)
+
+
+def run_exp1(args) -> None:
+    import os as _os
+    from caveclient import CAVEclient
+
+    rng = np.random.default_rng(args.seed)
+    reader = SegCLRReader(variant=args.variant, cache_dir=args.cache_dir)
+    tok = _os.environ.get("token") or _os.environ.get("CAVE_TOKEN")
+    if not tok:
+        print("[exp1] no CAVE token in env (token / CAVE_TOKEN); cannot fetch skeletons.")
+        return
+    client = CAVEclient("minnie65_public", auth_token=tok)
+    version = args.version or client.materialize.version
+    client.version = int(version)
+    cg = client.chunkedgraph
+    print(f"[exp1] datastack version {version}", flush=True)
+
+    print(f"[exp1] discovering large m343 roots in shards {args.shards} ...", flush=True)
+    ids: list[int] = []
+    for sh in args.shards:
+        ids += [s for s, _ in discover_large_segments(sh, variant=args.variant,
+                                                       top=args.n_neurons, min_bytes=args.min_bytes)]
+
+    print("[exp1] finding real merges (m343 root -> 2..N current roots) ...", flush=True)
+    cands: list[tuple[int, list[int]]] = []
+    for r in ids:
+        try:
+            lat = [int(x) for x in np.atleast_1d(cg.get_latest_roots(r))]
+        except Exception:
+            continue
+        if 2 <= len(lat) <= args.max_desc:
+            cands.append((r, lat))
+    print(f"[exp1] {len(cands)} merge candidates (<= {args.max_desc} descendants)", flush=True)
+
+    results: list[PairResult] = []
+    for r, lat in cands:
+        try:
+            res = evaluate_real_merge(
+                reader, r, lat, version=version, token=tok, skel_cache=args.skel_cache,
+                subsample=args.subsample, min_share=args.min_share, cap_nm=args.cap_nm,
+                k=args.k, contact_nm=args.contact_nm, min_skel_verts=args.min_skel_verts,
+                rng=rng, client=client)
+        except Exception as e:
+            print(f"  m343 {r}: ERROR {type(e).__name__} {str(e)[:80]}", flush=True)
+            continue
+        if res is not None:
+            results.append(res)
+            print(f"  REAL merge m343 {res.seg_a} ({res.seg_b} cells): "
+                  f"seam={res.n_seam}/{res.n_edges} AUC={res.auc_raw:.3f} "
+                  f"best_seam_pct={res.best_seam_pct*100:.2f}% hit@100={res.hit_at[100]} "
+                  f"site_hit@3={res.site_hit_at[3]} (of {res.n_sites} sites)", flush=True)
+
+    if not results:
+        print("[exp1] no evaluable real merges; loosen --min-share / raise --n-neurons.")
+        return
+
+    aucs = np.array([r.auc_raw for r in results])
+    bsp = np.array([r.best_seam_pct for r in results]) * 100
+    print("\n=== Exp 1 summary: SegCLR-alone on REAL proofread merges ===")
+    print(f"real merges evaluated: {len(results)}")
+    print(f"AUC (raw per-point)   mean={aucs.mean():.3f}  median={np.median(aucs):.3f}")
+    print(f"best-seam-edge percentile  median={np.median(bsp):.2f}%  mean={bsp.mean():.2f}%")
+    print("edge-level hit@K:")
+    for K in (10, 50, 100, 500):
+        print(f"  hit@{K:<4d}={np.mean([r.hit_at[K] for r in results]):.2f}")
+    print("SITE-level hit@K (top-K high-discontinuity spatial clusters):")
+    for K in (1, 3, 5, 10):
+        print(f"  site_hit@{K:<2d}={np.mean([r.site_hit_at[K] for r in results]):.2f}")
+    print(f"median #sites/merge: {int(np.median([r.n_sites for r in results]))}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    sub = ap.add_subparsers(dest="cmd")
-    # keep a flat --exp0 flag as the primary entry for now
-    ap.add_argument("--exp0", action="store_true", help="run the SegCLR-only value probe")
+    ap.add_argument("--exp0", action="store_true",
+                    help="SegCLR-only value probe on synthetic merges (m343-native)")
+    ap.add_argument("--exp1", action="store_true",
+                    help="SegCLR-only probe on REAL proofread merges (m343 -> current split)")
     ap.add_argument("--variant", default="nm_coord", choices=sorted(VARIANTS))
     ap.add_argument("--cache-dir", default="cache/segclr")
+    ap.add_argument("--skel-cache", default="cache/skel_current")
     ap.add_argument("--shards", type=int, nargs="+", default=[0, 1, 2])
     ap.add_argument("--n-neurons", type=int, default=12)
     ap.add_argument("--min-bytes", type=int, default=1_000_000)
@@ -325,13 +485,21 @@ def main() -> None:
     ap.add_argument("--k", type=int, default=8)
     ap.add_argument("--pool-radius", type=float, default=3000.0)
     ap.add_argument("--contact-nm", type=float, default=1500.0)
+    ap.add_argument("--version", type=int, default=0, help="materialization version (0=latest)")
+    ap.add_argument("--max-desc", type=int, default=8, help="max current descendants for a merge")
+    ap.add_argument("--min-share", type=float, default=0.15,
+                    help="min fraction of labeled points for a cell to count")
+    ap.add_argument("--cap-nm", type=float, default=2500.0,
+                    help="max point->skeleton distance to accept a label")
+    ap.add_argument("--min-skel-verts", type=int, default=150,
+                    help="min skeleton vertices for a descendant to count as a real cell")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
-    if args.exp0 or args.cmd is None:
+    if args.exp1:
+        run_exp1(args)
+    elif args.exp0 or True:
         run_exp0(args)
-    else:
-        ap.print_help()
 
 
 if __name__ == "__main__":
