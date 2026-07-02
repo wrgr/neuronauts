@@ -66,10 +66,60 @@ real contacts, but geometric ground truth rather than a proofread seam); small n
 proofread-merge validation yet (blocked on the m343→current bridge). The
 numbers are indicative of value, not conclusive.
 
-### Next
-1. m343→current bridge (`seg_m343` via cloudvolume, or chunkedgraph `get_latest_roots`
-   on m343 roots to find real split-corrected merges) → replace synthetic seams
-   with real proofread ground truth.
-2. Skeleton-based grammar (M1+ in the plan): compartment labels from synapse
+## Exp 1 — SegCLR-only on REAL proofread merges (the number that matters)
+
+Exp 0 used *synthetic* merges. Exp 1 replaces them with **real** false merges via
+the m343→current bridge: an m343 SegCLR root whose supervoxels now belong to ≥2
+substantial current cells (`chunkedgraph.get_latest_roots`) was a real
+false merge that proofreaders split. Label each SegCLR point by its nearest
+current-descendant skeleton (= the ground-truth cell it was assigned to), then
+run the same seam-localization scoring. Command:
+
+```
+python -m experiments.pcfg.run_compartment_grammar --exp1 \
+    --shards 0 1 2 3 4 5 6 7 --n-neurons 20 --min-share 0.15
+```
+
+Verified along the way: m343 SegCLR coords and current (v1822) skeleton coords
+share the same nm frame (point→skeleton median ≈ 970 nm, coverage ≈ 0.92); the
+CAVE skeleton service needs `cloud-volume` (without it every skeleton fetch
+silently negative-caches to empty — a real footgun).
+
+**Result (preliminary, 3 real merges; broader scan running):**
+
+| metric | **synthetic (Exp 0)** | **REAL (Exp 1)** |
+|---|---|---|
+| AUC (SegCLR discontinuity) | **0.95** | **0.52** (≈ chance) |
+| best-seam-edge percentile | ~2.8% | 0.74% median / 4.98% mean |
+| site hit@3 | 0.00 | 0.33 |
+
+**The synthetic test massively overestimated SegCLR's value.** On real false
+merges, SegCLR discontinuity across the true seam is **near chance (AUC ≈ 0.52)**.
+This makes biological sense: synthetic merges join two *unrelated* neurons
+(different type/location → different embeddings, trivially separable), whereas a
+*real* false merge occurs exactly where two cells are locally similar and
+touching — that is *why* the segmentation merged them — so their SegCLR
+embeddings are barely distinguishable at the join.
+
+**Revised verdict.** SegCLR alone is **not** a reliable stand-alone split-error
+detector on realistic merges. Its value as the "fuser" term is real but
+secondary; the compartment/structural grammar (A↔D-not-via-soma, multi-soma,
+topology) must carry the detection, with SegCLR as a weak corroborator. This
+strengthens — not weakens — the case for the compartment-augmented PCFG over a
+pure-embedding detector.
+
+**Caveats (per CLAUDE.md):** n = 3 real merges (only ~8% of large-m343 candidates
+are genuine ≥2-substantial-cell merges — most just shed small fragments), so the
+number is directional, not settled; a broader scan is running to firm up n.
+Nearest-skeleton labeling adds noise in the seam region of intertwined merges,
+which also depresses the real AUC — so 0.52 is a floor, and part of the
+synthetic↔real gap is method, not just biology. Both effects point the same way.
+
+## Next
+1. Finish the broader Exp 1 scan (more shards) for a firmer real-merge n; consider
+   sourcing merges from the pcfg v117 sidetable for volume.
+2. De-noise the real-merge ground truth (supervoxel→current-root labels via the
+   seg volume instead of nearest-skeleton) to separate biology from label noise.
+3. Skeleton-based grammar (M1+ in the plan): compartment labels from synapse
    polarity + soma table, A↔D and multi-soma productions, geodesic-window pooling,
-   split via `skeleton_cut_op`.
+   split via `skeleton_cut_op` — now the clear priority, since SegCLR alone is weak.
