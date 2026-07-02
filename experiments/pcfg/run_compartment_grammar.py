@@ -361,10 +361,9 @@ def evaluate_real_merge(
     current skeleton (= ground-truth cell), then score the seam."""
     from neuronauts.fetch import fetch_root_skeleton
 
-    cloud = load_cloud(reader, m343_root, subsample=subsample, rng=rng)
-    if cloud is None:
-        return None
-
+    # Check descendant skeletons FIRST (cheap, cached) -- most large m343 roots
+    # just shed small fragments and have only one substantial descendant.  Only
+    # download the (large) SegCLR cloud once we know it's a real >=2-cell merge.
     skels: list[tuple[int, np.ndarray]] = []
     for rid in current_roots:
         try:
@@ -376,6 +375,10 @@ def evaluate_real_merge(
             skels.append((int(rid), sk.vertices.astype(np.float64)))
     if len(skels) < 2:
         return None  # not a merge of >=2 substantial cells
+
+    cloud = load_cloud(reader, m343_root, subsample=subsample, rng=rng)
+    if cloud is None:
+        return None
 
     lab = label_by_nearest_skeleton(cloud.points, skels, cap_nm=cap_nm)
     keep = lab >= 0
@@ -433,7 +436,8 @@ def run_exp1(args) -> None:
     print(f"[exp1] {len(cands)} merge candidates (<= {args.max_desc} descendants)", flush=True)
 
     results: list[PairResult] = []
-    for r, lat in cands:
+    for ci, (r, lat) in enumerate(cands):
+        print(f"  [{ci+1}/{len(cands)}] m343 {r} ({len(lat)} descendants) ...", flush=True)
         try:
             res = evaluate_real_merge(
                 reader, r, lat, version=version, token=tok, skel_cache=args.skel_cache,
