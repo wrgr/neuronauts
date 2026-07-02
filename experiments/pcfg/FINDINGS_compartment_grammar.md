@@ -85,13 +85,16 @@ share the same nm frame (point→skeleton median ≈ 970 nm, coverage ≈ 0.92);
 CAVE skeleton service needs `cloud-volume` (without it every skeleton fetch
 silently negative-caches to empty — a real footgun).
 
-**Result (preliminary, 3 real merges; broader scan running):**
+**Result (7 real merges, from a scan of ~180 large-m343 candidates):**
 
-| metric | **synthetic (Exp 0)** | **REAL (Exp 1)** |
+| metric | **synthetic (Exp 0, n=7)** | **REAL (Exp 1, n=7)** |
 |---|---|---|
-| AUC (SegCLR discontinuity) | **0.95** | **0.52** (≈ chance) |
-| best-seam-edge percentile | ~2.8% | 0.74% median / 4.98% mean |
-| site hit@3 | 0.00 | 0.33 |
+| AUC (SegCLR discontinuity) | **0.95** | **0.49 mean / 0.56 median** (≈ chance) |
+| AUC spread | 0.78–1.00 | 0.27–0.63 (0/7 > 0.7; **3/7 < 0.5**) |
+| best-seam-edge percentile | ~2.8% | 1.35% median / 10.0% mean |
+| site hit@3 | 0.00 | 0.14 (1/7) |
+
+Per-merge real AUCs: 0.59, 0.56, 0.42, 0.27, 0.34, 0.59, 0.63 (2–3 cells each).
 
 **The synthetic test massively overestimated SegCLR's value.** On real false
 merges, SegCLR discontinuity across the true seam is **near chance (AUC ≈ 0.52)**.
@@ -108,18 +111,21 @@ topology) must carry the detection, with SegCLR as a weak corroborator. This
 strengthens — not weakens — the case for the compartment-augmented PCFG over a
 pure-embedding detector.
 
-**Caveats (per CLAUDE.md):** n = 3 real merges (only ~8% of large-m343 candidates
-are genuine ≥2-substantial-cell merges — most just shed small fragments), so the
-number is directional, not settled; a broader scan is running to firm up n.
-Nearest-skeleton labeling adds noise in the seam region of intertwined merges,
-which also depresses the real AUC — so 0.52 is a floor, and part of the
-synthetic↔real gap is method, not just biology. Both effects point the same way.
+**Caveats (per CLAUDE.md):** n = 7 real merges — only ~8% of large-m343
+candidates are genuine ≥2-substantial-cell merges (most just shed small
+fragments), so real 2-cell merges are the minority and n is modest, but the
+pattern is consistent (0/7 above 0.7, mean at chance). Nearest-skeleton labeling
+adds noise in the seam region of intertwined merges, which further depresses the
+real AUC — so ~0.49 is a floor, and part of the synthetic↔real gap is method, not
+only biology. Both effects point the same way: SegCLR-alone does not localize real
+seams.
 
 ## Next
-1. Finish the broader Exp 1 scan (more shards) for a firmer real-merge n; consider
-   sourcing merges from the pcfg v117 sidetable for volume.
-2. De-noise the real-merge ground truth (supervoxel→current-root labels via the
-   seg volume instead of nearest-skeleton) to separate biology from label noise.
-3. Skeleton-based grammar (M1+ in the plan): compartment labels from synapse
+1. De-noise the real-merge ground truth (supervoxel→current-root labels via the
+   seg volume instead of nearest-skeleton) to separate biology from label noise —
+   confirm whether real AUC is truly ~0.5 or somewhat higher.
+2. Skeleton-based grammar (M1+ in the plan): compartment labels from synapse
    polarity + soma table, A↔D and multi-soma productions, geodesic-window pooling,
-   split via `skeleton_cut_op` — now the clear priority, since SegCLR alone is weak.
+   split via `skeleton_cut_op` — **now the clear priority, since SegCLR alone is
+   weak on real merges**. The structural rules must carry detection; SegCLR is at
+   best a weak corroborator.
