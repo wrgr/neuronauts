@@ -120,6 +120,47 @@ real AUC — so ~0.49 is a floor, and part of the synthetic↔real gap is method
 only biology. Both effects point the same way: SegCLR-alone does not localize real
 seams.
 
+## Exp 2 — SegCLR top-1 retrieval (the RIGHT framing; corrects Exp 1)
+
+Exp 1 asked "is the single most-discontinuous *edge* in the whole neuron exactly
+at the seam?" — a harsh framing dominated by within-cell embedding variation, and
+it made SegCLR look useless (AUC ≈ 0.52). The **retrieval framing** — for a node,
+is its top-1 nearest node *in embedding space* the same cell, and among local
+candidates does the same-cell one win — is the right question and tells a very
+different, positive story.
+
+```
+python -m experiments.pcfg.run_compartment_grammar --exp2 --shards 0 1 2 3 --n-neurons 12
+```
+
+Data fact that reshapes the test: SegCLR **nodes are ~1.2 µm apart** (median NN
+spacing ~1174 nm), so a 200 nm radius is *tighter than the node spacing* and finds
+no candidates. The local test needs ~2–4 µm to have neighbours.
+
+**Metric A — embedding top-1 retrieval (is the nearest-embedding node same-cell?):**
+
+| set | top-1 same-cell | chance |
+|---|---|---|
+| 12 clean cells pooled | **0.866** | ~0.20 |
+| real merges (per-object) | **0.83–0.98** (mean ~0.93) | — |
+
+**Metric B — local top-1 same-cell at contacts (does SegCLR pick the correct
+same-cell candidate over the false-merge partner?), on real merges:**
+
+| radius | mean acc | note |
+|---|---|---|
+| 2 µm | ~0.71 | small n (8–860 discriminative nodes/merge) |
+| **4 µm** | **~0.90** (0.76–0.95) | larger n (37–3295), stable |
+
+**Corrected verdict.** SegCLR is a **strong local cell-identity signal**: its top-1
+match is same-cell ~87–98% (retrieval), and at a real false-merge seam its top-1
+local candidate is the correct same-cell one **~90%** of the time (at the
+node-appropriate ~4 µm radius). It genuinely could drive merge/split decisions.
+The Exp-1 "near chance" result was an artifact of the edge-discontinuity-ranking
+framing, **not** a property of SegCLR. The compartment grammar and SegCLR are
+complementary — SegCLR discriminates identity locally, the grammar supplies the
+structural rules (A↔D, multi-soma) and the split geometry.
+
 ## M1 — compartment labeling on real neurons (PASS)
 
 Built `neuronauts/soma_clusters.py` (verified soma routine extracted to core) and

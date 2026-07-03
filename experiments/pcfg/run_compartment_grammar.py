@@ -474,6 +474,114 @@ def run_exp1(args) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Exp 2: SegCLR top-1 retrieval + local same-vs-different discrimination
+# --------------------------------------------------------------------------- #
+
+def _embedding_top1_same_cell(E: np.ndarray, lab: np.ndarray) -> tuple[float, np.ndarray]:
+    """Global retrieval: for each node, is its nearest node in EMBEDDING space the
+    same cell? (the classic SegCLR 'top-1 same-cell' metric). Returns (acc, correct)."""
+    from scipy.spatial import cKDTree
+
+    En = E / (np.linalg.norm(E, axis=1, keepdims=True) + 1e-9)
+    tree = cKDTree(En)
+    _, idx = tree.query(En, k=2)          # k=1 is self
+    nn = idx[:, 1]
+    correct = lab[nn] == lab
+    return float(correct.mean()), correct
+
+
+def _local_top1_same_cell(P, E, lab, *, radius_nm: float) -> dict:
+    """Local discrimination: among nodes within ``radius_nm`` of a query node, is the
+    top-1 by embedding cosine the same cell?  Restricted to *discriminative* query
+    nodes (those that actually have a different-cell node within the radius) — the
+    merge-relevant contacts."""
+    from scipy.spatial import cKDTree
+
+    En = E / (np.linalg.norm(E, axis=1, keepdims=True) + 1e-9)
+    tree = cKDTree(P)
+    neigh = tree.query_ball_point(P, r=radius_nm)
+    n_disc = 0
+    n_correct = 0
+    for i, ns in enumerate(neigh):
+        cand = [j for j in ns if j != i]
+        if not cand:
+            continue
+        labs = lab[cand]
+        if (labs == lab[i]).all():
+            continue  # no different-cell candidate -> not discriminative
+        n_disc += 1
+        sims = En[cand] @ En[i]
+        top = cand[int(np.argmax(sims))]
+        if lab[top] == lab[i]:
+            n_correct += 1
+    acc = n_correct / n_disc if n_disc else float("nan")
+    return {"radius_nm": radius_nm, "n_discriminative": n_disc, "top1_same_cell_acc": acc}
+
+
+def run_exp2(args) -> None:
+    import os as _os
+    from caveclient import CAVEclient
+
+    reader = SegCLRReader(variant=args.variant, cache_dir=args.cache_dir)
+    tok = _os.environ.get("token") or _os.environ.get("CAVE_TOKEN")
+    client = CAVEclient("minnie65_public", auth_token=tok) if tok else None
+    cg = client.chunkedgraph if client else None
+
+    # --- source: clean cells (unchanged since m343 = stable identity) ------
+    print(f"[exp2] discovering clean unchanged m343 cells in shards {args.shards} ...",
+          flush=True)
+    ids = []
+    for sh in args.shards:
+        ids += [s for s, _ in discover_large_segments(sh, variant=args.variant,
+                                                       top=args.n_neurons, min_bytes=args.min_bytes)]
+    clean = []
+    for m in ids:
+        if cg is None:
+            clean.append(m); continue
+        try:
+            if bool(np.atleast_1d(cg.is_latest_roots([m]))[0]):
+                clean.append(m)
+        except Exception:
+            pass
+        if len(clean) >= args.n_neurons:
+            break
+
+    clouds = []
+    for m in clean:
+        pts, emb = reader.read_segment(m)
+        if len(pts) >= 500:
+            clouds.append((m, pts, emb))
+        if len(clouds) >= args.n_neurons:
+            break
+    if len(clouds) < 2:
+        print("[exp2] need >=2 clean cells; loosen filters."); return
+
+    P = np.vstack([p for _, p, _ in clouds])
+    E = np.vstack([e for _, _, e in clouds]).astype(np.float32)
+    lab = np.concatenate([[i] * len(p) for i, (_, p, _) in enumerate(clouds)])
+    from scipy.spatial import cKDTree
+    nn_sp = np.median(cKDTree(P).query(P[: min(4000, len(P))], k=2)[0][:, 1])
+    print(f"[exp2] pooled {len(clouds)} clean cells, {len(P)} SegCLR nodes; "
+          f"median node spacing {nn_sp:.0f} nm", flush=True)
+
+    # --- Metric A: global embedding top-1 same-cell (retrieval) -----------
+    accA, correct = _embedding_top1_same_cell(E, lab)
+    print("\n=== Exp 2A: SegCLR embedding top-1 retrieval (clean cells) ===")
+    print(f"top-1 nearest-embedding node is SAME cell: {accA:.3f}  "
+          f"(over {len(P)} nodes, {len(clouds)} cells)")
+    print(f"  chance if random among {len(clouds)} cells ≈ "
+          f"{max(len(p) for _,p,_ in clouds)/len(P):.3f} (largest-cell share)")
+
+    # --- Metric B: local top-1 same-cell at contacts ----------------------
+    print("\n=== Exp 2B: local top-1 same-cell at contacts (does SegCLR keep touching cells apart?) ===")
+    print("(node spacing ~1um, so radii below that yield few/no cross-cell candidates)")
+    for R in args.radii:
+        res = _local_top1_same_cell(P, E, lab, radius_nm=R)
+        print(f"  within {int(R):>5d} nm: discriminative_nodes={res['n_discriminative']:>6d}  "
+              f"top1_same_cell_acc={res['top1_same_cell_acc']:.3f}")
+
+
+# --------------------------------------------------------------------------- #
 # M1: compartment labeling sanity on real clean neurons
 # --------------------------------------------------------------------------- #
 
@@ -574,6 +682,10 @@ def main() -> None:
                     help="SegCLR-only value probe on synthetic merges (m343-native)")
     ap.add_argument("--exp1", action="store_true",
                     help="SegCLR-only probe on REAL proofread merges (m343 -> current split)")
+    ap.add_argument("--exp2", action="store_true",
+                    help="SegCLR top-1 retrieval + local same-vs-different discrimination")
+    ap.add_argument("--radii", type=float, nargs="+", default=[200, 500, 1000, 2000],
+                    help="radii (nm) for the exp2 local top-1 test")
     ap.add_argument("--m1", action="store_true",
                     help="compartment-labeling sanity on clean neurons")
     ap.add_argument("--roots", type=int, nargs="*", default=None,
@@ -601,6 +713,8 @@ def main() -> None:
 
     if args.m1:
         run_m1(args)
+    elif args.exp2:
+        run_exp2(args)
     elif args.exp1:
         run_exp1(args)
     elif args.exp0 or True:
