@@ -50,6 +50,62 @@ def _edge_lengths(V, edges):
     return np.linalg.norm(V[edges[:, 0]] - V[edges[:, 1]], axis=1)
 
 
+def extract_axon_piece(skB, synB, rB, *, min_vertices=80):
+    """Extract cell B's largest connected AXON subtree (+ its pre-synapses) as a
+    standalone piece — for grafting onto another cell's dendrite to synthesize a
+    realistic 1-soma false merge (an axon fragment on the wrong cell)."""
+    from types import SimpleNamespace
+    from scipy.sparse import csr_matrix
+    from scipy.sparse.csgraph import connected_components
+    from experiments.pcfg.compartments import label_compartments, AXON
+
+    lab = label_compartments(skB, synB, root_id=rB, mip=2)
+    axon = lab.label == AXON
+    if axon.sum() < min_vertices:
+        return None
+    V = np.asarray(skB.vertices, float)
+    E = np.asarray(skB.edges, np.int64).reshape(-1, 2)
+    keep = axon[E[:, 0]] & axon[E[:, 1]]
+    sub = E[keep]
+    if len(sub) < min_vertices:
+        return None
+    nv = len(V)
+    g = csr_matrix((np.ones(len(sub) * 2),
+                    (np.concatenate([sub[:, 0], sub[:, 1]]),
+                     np.concatenate([sub[:, 1], sub[:, 0]]))), shape=(nv, nv))
+    ncc, comp = connected_components(g, directed=False)
+    # largest axon component
+    axon_idx = np.where(axon)[0]
+    vals, cnts = np.unique(comp[axon_idx], return_counts=True)
+    big = vals[np.argmax(cnts)]
+    sel = np.where(comp == big)[0]
+    if len(sel) < min_vertices:
+        return None
+    remap = -np.ones(nv, int); remap[sel] = np.arange(len(sel))
+    subedges = np.array([[remap[a], remap[b]] for a, b in sub
+                         if comp[a] == big and comp[b] == big], int)
+    subV = V[sel]
+    subR = (skB.radius[sel] if skB.radius is not None else np.full(len(sel), np.nan))
+    subsk = SimpleNamespace(root_id=rB, vertices=subV, edges=subedges, radius=subR)
+
+    # pre-synapses of B that snap to the axon piece
+    from scipy.spatial import cKDTree
+    vox = np.array([32.0, 32.0, 40.0])
+    pre_mask = np.asarray(synB.pre_root_id) == rB
+    pre_nm = np.asarray(synB.pre_pt, float)[pre_mask] * vox
+    if len(pre_nm):
+        d, _ = cKDTree(subV).query(pre_nm, k=1)
+        pre_nm = pre_nm[d <= 1500.0]
+    subsyn = SimpleNamespace(
+        n_synapses=len(pre_nm),
+        pre_pt=pre_nm / vox if len(pre_nm) else np.zeros((0, 3)),
+        post_pt=np.zeros((len(pre_nm), 3)),
+        pre_root_id=np.array([rB] * len(pre_nm)),
+        post_root_id=np.array([0] * len(pre_nm)),
+    )
+    return subsk, subsyn
+
+
 def build_merged_object(skA, synA, rA, skB, synB, rB):
     """Bridge two neurons into one synthetic merged object (a false merge).
 
