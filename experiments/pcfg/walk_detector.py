@@ -34,9 +34,12 @@ from neuronauts.segclr import assign_points_to_vertices, SegCLRAssignment
 # --------------------------------------------------------------------------- #
 
 def neuron_fragment_ids(root_id, vertices_nm, cv, *, cache_dir="cache/m343_frags",
-                        n_probe=80, min_hits=2, rng=None) -> np.ndarray:
+                        n_probe=400, min_hits=1, rng=None) -> np.ndarray:
     """Enumerate the m343 segment ids covering a neuron by sampling ``n_probe``
-    skeleton vertices in the ``seg_m343`` volume.  Cached per root."""
+    skeleton vertices in the ``seg_m343`` volume.  Cached per root.
+
+    A current neuron spans ~40-90 m343 fragments, so dense probing is needed for
+    good SegCLR coverage of the skeleton."""
     os.makedirs(cache_dir, exist_ok=True)
     cp = os.path.join(cache_dir, f"{int(root_id)}.npy")
     if os.path.exists(cp):
@@ -168,3 +171,50 @@ def walk_merge_score(labels, seg_asg, *, W=6, min_soma_dist_nm=15000.0) -> WalkR
     best = int(np.argmax(score)) if nv else 0
     return WalkResult(step_score=score, best_vertex=best,
                       best_score=float(score[best]) if nv else 0.0, soma_dist_nm=dsoma)
+
+
+# --------------------------------------------------------------------------- #
+# Split fixing: stitch fragments by SegCLR continuation (top-1, comparative)
+# --------------------------------------------------------------------------- #
+
+def fragment_contact_score(pa, ea, pb, eb, *, contact_nm=3000.0, k=5):
+    """Join score for two fragment point clouds: mean cosine of the ``k`` nearest
+    cross-fragment point pairs' (L2-normalised) embeddings.  ``None`` if the
+    fragments never come within ``contact_nm``.
+
+    Use this **comparatively** (each fragment's *highest*-scoring neighbour is its
+    continuation) — the absolute value barely separates same- vs different-cell
+    contacts (both ~0.92), but the top-1 ranking is ~0.9 correct.
+    """
+    from scipy.spatial import cKDTree
+
+    d, idx = cKDTree(pb).query(pa, k=1)
+    near = d <= contact_nm
+    if near.sum() == 0:
+        return None
+    order = np.argsort(d[near])
+    ai = np.where(near)[0][order][:k]
+    bi = idx[near][order][:k]
+    ean = ea / (np.linalg.norm(ea, axis=1, keepdims=True) + 1e-9)
+    ebn = eb / (np.linalg.norm(eb, axis=1, keepdims=True) + 1e-9)
+    return float(np.einsum("ij,ij->i", ean[ai], ebn[bi]).mean())
+
+
+def stitch_fragments(fragments, *, contact_nm=3000.0, min_score=None):
+    """Greedy top-1 fragment stitching.  ``fragments`` = list of ``(id, points_nm,
+    embeddings)``.  Returns a list of proposed join edges ``(id_a, id_b, score)``:
+    each fragment is joined to its single highest-scoring contacting neighbour
+    (optionally thresholded by ``min_score``).  Comparative, so it does not rely on
+    an absolute similarity cutoff."""
+    joins = []
+    for i, (ida, pa, ea) in enumerate(fragments):
+        best = None
+        for j, (idb, pb, eb) in enumerate(fragments):
+            if i == j:
+                continue
+            s = fragment_contact_score(pa, ea, pb, eb, contact_nm=contact_nm)
+            if s is not None and (best is None or s > best[1]):
+                best = (idb, s)
+        if best is not None and (min_score is None or best[1] >= min_score):
+            joins.append((ida, best[0], best[1]))
+    return joins

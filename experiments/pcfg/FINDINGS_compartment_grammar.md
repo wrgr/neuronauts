@@ -161,6 +161,33 @@ framing, **not** a property of SegCLR. The compartment grammar and SegCLR are
 complementary — SegCLR discriminates identity locally, the grammar supplies the
 structural rules (A↔D, multi-soma) and the split geometry.
 
+## Walk detector — the merge/split asymmetry (key design finding)
+
+Idea: lay SegCLR embeddings along the skeleton, rolling-average them, and detect
+where local identity changes (merge) or should continue (split).
+
+- **Merges (absolute step magnitude): weak.** Walking a synthetic merge, the
+  bridge seam scores only **0.036–0.053** while within-cell variation peaks at
+  **0.25–0.30** — the seam does not stand out (its max was 246 µm from the true
+  bridge). Same lesson as Exp 1: absolute embedding change is not merge-specific.
+- **Splits (comparative top-1): strong.** Stitching a neuron's m343 fragments,
+  each fragment's *highest*-SegCLR-similarity contacting neighbour is the correct
+  **same-neuron** continuation **85/92 = 92%** of the time. But the *absolute*
+  join-score barely separates same- vs different-neuron contacts (0.942 vs 0.917,
+  AUC **0.659**).
+
+**Conclusion — SegCLR is a comparative signal, not an absolute one.** It excels at
+*choosing among candidates* (splits: which fragment continues this cable — top-1
+~0.9) and is weak at *flagging a seam by magnitude* (merges). Therefore:
+
+- **Merge detection → the structural grammar** (multi-soma + A↔D crossing) is the
+  primary detector; SegCLR only corroborates the *few* candidates the grammar
+  localizes (not a standalone scan).
+- **Split fixing → SegCLR top-1 continuation matching** (`walk_detector.stitch_fragments`)
+  is the primary tool — a comparative decision, which is SegCLR's strength.
+
+This asymmetry is the load-bearing result for the whole design.
+
 ## M1 — compartment labeling on real neurons (PASS)
 
 Built `neuronauts/soma_clusters.py` (verified soma routine extracted to core) and
