@@ -200,6 +200,58 @@ def fragment_contact_score(pa, ea, pb, eb, *, contact_nm=3000.0, k=5):
     return float(np.einsum("ij,ij->i", ean[ai], ebn[bi]).mean())
 
 
+@dataclass
+class Endpoint:
+    frag_idx: int
+    pos: np.ndarray        # [3]
+    out_dir: np.ndarray    # [3] unit outgoing (continuation) direction
+    emb: np.ndarray        # [64] endpoint-region mean embedding (L2-normalised)
+
+
+def fragment_endpoints(points, emb, *, knn=12) -> list:
+    """Endpoints of a fragment point cloud (PC1 extremes) with an outgoing tangent
+    (continuation direction, away from the fragment) and a local mean embedding."""
+    from scipy.spatial import cKDTree
+
+    if len(points) < knn:
+        return []
+    c = points - points.mean(0)
+    _, _, vt = np.linalg.svd(c, full_matrices=False)
+    proj = c @ vt[0]
+    tree = cKDTree(points)
+    ctr = points.mean(0)
+    eps = []
+    for ei in (int(np.argmin(proj)), int(np.argmax(proj))):
+        _, idx = tree.query(points[ei], k=knn)
+        loc = points[idx] - points[idx].mean(0)
+        _, _, v = np.linalg.svd(loc, full_matrices=False)
+        t = v[0]
+        if t @ (ctr - points[ei]) < 0:   # orient into the fragment
+            t = -t
+        e = emb[idx].mean(0)
+        e = e / (np.linalg.norm(e) + 1e-9)
+        eps.append(Endpoint(-1, points[ei], -t, e))   # out_dir = away from fragment
+    return eps
+
+
+def endpoint_join_score(a: "Endpoint", b: "Endpoint", *, lam_nm=4000.0,
+                        max_gap_nm=6000.0, w_emb=0.5):
+    """Geometry-primary continuation score between two endpoints, SegCLR as
+    tie-breaker.  Returns (geo, emb_cos, combined) or None if too far apart.
+
+    A real continuation: the gap is small AND the two cables are colinear (A's
+    outgoing tangent points at B, B's points back at A).  SegCLR modulates."""
+    gap = float(np.linalg.norm(a.pos - b.pos))
+    if gap > max_gap_nm:
+        return None
+    dir_ab = (b.pos - a.pos) / (gap + 1e-9)
+    align = 0.5 * (float(a.out_dir @ dir_ab) + float(b.out_dir @ (-dir_ab)))
+    geo = np.exp(-gap / lam_nm) * max(align, 0.0)
+    emb = float(a.emb @ b.emb)
+    combined = geo * (1.0 + w_emb * emb)
+    return geo, emb, combined
+
+
 def stitch_fragments(fragments, *, contact_nm=3000.0, min_score=None):
     """Greedy top-1 fragment stitching.  ``fragments`` = list of ``(id, points_nm,
     embeddings)``.  Returns a list of proposed join edges ``(id_a, id_b, score)``:
