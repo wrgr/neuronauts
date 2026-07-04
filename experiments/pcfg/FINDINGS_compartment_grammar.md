@@ -176,10 +176,24 @@ axon-graft). Logistic combiner fit on TRAIN region, reported on EVAL region.
 | **axon-graft** (1-soma) recall | **0.00**  (A↔D score AUC = 0.66) |
 
 **Read:** multi-soma merges are trivially solved; the hard **single-compartment**
-merge (an axon grafted onto a dendrite, no 2nd soma) is **not** caught by the A↔D
-rule as-is — the known-hard residual. Caveat: the synthetic axon-graft may be
-underpowered (the extracted axon piece carries few pre-synapses → weak axon-mass),
-so this needs a real-merge check before concluding A↔D is fundamentally weak.
+merge (no 2nd soma) is **not** reliably caught by the A↔D rule.
+
+**Real-merge A↔D check** (7 real merges from the m343→current bridge, built from
+the *real* descendant cells + their real synapses, bridged at contact):
+- 2-soma merges (4/7): multi-soma catches all (ad irrelevant).
+- 1-soma merges (3/7): A↔D fired on only **1/3** (scores 0.789, 0.0, 0.0). The
+  hit was a genuine axon-fragment-onto-dendrite; the misses are **same-compartment**
+  merges.
+- clean neurons: ad_score max **0.617** (19% > 0.1) — false positives overlap the
+  real merges.
+
+**Conclusion (real data, not synthetic):** A↔D's weakness is fundamental, not a
+tuning artifact — **not every merge crosses a compartment boundary.** Axon-to-axon
+and dendrite-to-dendrite merges have no A↔D transition and are invisible to the
+grammar (and to SegCLR-absolute). **Same-compartment single-soma merges are the
+genuine open residual** for every method here. Multi-soma and cross-compartment
+merges are handled; the rest need a different signal (e.g. SegCLR used
+comparatively against a *reference* continuation, not an absolute scan).
 
 ### Split stitch (SegCLR top-1), dense 8-neuron column cluster (322 fragments)
 
