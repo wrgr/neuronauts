@@ -161,6 +161,29 @@ framing, **not** a property of SegCLR. The compartment grammar and SegCLR are
 complementary — SegCLR discriminates identity locally, the grammar supplies the
 structural rules (A↔D, multi-soma) and the split geometry.
 
+## M3 — leakage-safe column eval (train/eval by tangential PCA split)
+
+### Merge grammar (multi-soma + A↔D), eval region, synthetic merges
+
+negatives = clean proofread neurons; positives = synthetic merges (soma+soma and
+axon-graft). Logistic combiner fit on TRAIN region, reported on EVAL region.
+
+| | result |
+|---|---|
+| overall EVAL AUC | **0.840** |
+| clean false-positive @0.5 | **0.05** |
+| **multi-soma** (soma+soma) recall | **1.00**  (n_soma alone AUC = **1.000**) |
+| **axon-graft** (1-soma) recall | **0.00**  (A↔D score AUC = 0.66) |
+
+**Read:** multi-soma merges are trivially solved; the hard **single-compartment**
+merge (an axon grafted onto a dendrite, no 2nd soma) is **not** caught by the A↔D
+rule as-is — the known-hard residual. Caveat: the synthetic axon-graft may be
+underpowered (the extracted axon piece carries few pre-synapses → weak axon-mass),
+so this needs a real-merge check before concluding A↔D is fundamentally weak.
+
+### Split stitch (SegCLR top-1), column cluster
+(pending larger batch — see below; the 2-neuron probe gave top-1 = 0.92)
+
 ## Walk detector — the merge/split asymmetry (key design finding)
 
 Idea: lay SegCLR embeddings along the skeleton, rolling-average them, and detect
