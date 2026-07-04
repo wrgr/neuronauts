@@ -113,6 +113,37 @@ def soma_to_tip_paths(vertices_nm, edges, root_vertex) -> list[np.ndarray]:
     return paths
 
 
+def _mean_pairwise_cos(Xn):
+    """Mean off-diagonal cosine among L2-normalised rows (within-set cohesion)."""
+    n = len(Xn)
+    if n < 2:
+        return 1.0
+    g = Xn @ Xn.T
+    return float((g.sum() - n) / (n * (n - 1)))
+
+
+def comparative_split_score(embn, W=8):
+    """Split-vs-joined separation at each position: within-side cohesion minus
+    across-side similarity.
+
+    At position i, L = prev W embeddings, R = next W.  ``within`` = average
+    cohesion inside L and inside R; ``across`` = average L–R similarity.  A true
+    identity switch (merge) makes within ≫ across; gradual within-cell drift keeps
+    within ≈ across (both sides still resemble the middle), so it stays low.  This
+    is the *comparative* statistic the absolute mean-step lacks.
+    """
+    n = len(embn)
+    out = np.zeros(n)
+    for i in range(n):
+        L = embn[max(0, i - W):i]; R = embn[i:i + W]
+        if len(L) < 2 or len(R) < 2:
+            continue
+        within = 0.5 * (_mean_pairwise_cos(L) + _mean_pairwise_cos(R))
+        across = float((L @ R.T).mean())
+        out[i] = within - across
+    return out
+
+
 def _rolling_step(embn, W):
     """cosine distance between mean(prev W) and mean(next W) at each path index."""
     n = len(embn); out = np.zeros(n)

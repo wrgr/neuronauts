@@ -238,6 +238,31 @@ The architecture is symmetric — **structure proposes, SegCLR decides**:
   geometry alone misses.  This is SegCLR's comparative strength, realised.
 
 
+## Comparative merge detector — attacking the same-compartment residual
+
+The same-compartment merge (axon-axon / dendrite-dendrite, one soma) beats the
+grammar (no A↔D transition) and the *absolute* SegCLR step (within-cell drift
+competes).  Fix: make SegCLR **comparative** — at a candidate cut, ask "are the two
+sides better modelled as *one* identity or *two*?"  Statistic =
+``within-side cohesion − across-side similarity`` (`comparative_split_score`): a
+true identity switch makes within ≫ across; gradual within-cell drift keeps
+within ≈ across, so it stays low.
+
+Real merges (2-cell, walk across the seam), seam/away contrast:
+
+| merge | absolute step | **comparative** |
+|---|---|---|
+| …589909259 | 2.81× | **3.41×** |
+| …847908702 | 6.60× | **8.72×** |
+| …467909772 | 1.94× (peak **319** nodes off) | 2.33× (peak **36** nodes off) |
+| **mean** | **3.78×** | **4.82×** |
+
+The comparative statistic is uniformly higher-contrast and, on the merge where the
+absolute step's peak was 319 nodes from the seam, pulls it to 36 — it is robust to
+the within-cell drift that defeats the absolute step.  Not a full solve (n=3; peak
+still ~36–45 nodes off in 2/3), but the right direction: **grammar localizes
+candidate cuts, comparative-SegCLR scores split-vs-joined at each.**
+
 ## Walk detector — the merge/split asymmetry (key design finding)
 
 Idea: lay SegCLR embeddings along the skeleton, rolling-average them, and detect
