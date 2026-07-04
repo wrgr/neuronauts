@@ -238,6 +238,35 @@ The architecture is symmetric — **structure proposes, SegCLR decides**:
   geometry alone misses.  This is SegCLR's comparative strength, realised.
 
 
+## Split fixer 2×2 ablation (geometry × SegCLR) + merge detector
+
+**Split — contested endpoints** (a same- AND a different-neuron endpoint both
+within 15 µm; n=12), top-1 same-neuron continuation:
+
+| | SegCLR off | SegCLR on |
+|---|---|---|
+| geometry off (distance only) | **0.50** | **1.00** |
+| geometry on (colinear tangent) | **0.75** | **1.00** |
+
+(all-with-continuation, n=150: neither 0.96 / geom 0.98 / segclr 1.00 / both 1.00.)
+On contested splits **SegCLR is the discriminator** (0.50/0.75 → 1.00), not just a
+tie-breaker; geometry's job is to keep candidate sets small (≤6 µm is unambiguous).
+
+**Merge — standalone detector** (max split-score over a graph-diameter walk,
+clean cells vs real merges):
+
+| statistic | clean med | merged med | AUC |
+|---|---|---|---|
+| absolute step | 0.068 | 0.088 | 0.671 |
+| comparative | 0.059 | 0.079 | 0.657 |
+
+Both ~0.66; comparative is **not** better *as a detector*. Clean cells have real
+internal identity structure (axon vs dendrite, proximal vs distal) whose
+comparative peaks rival a merge seam, so **no SegCLR statistic scans for merges
+alone**. (Comparative *is* better at *localizing* a known/proposed candidate cut —
+4.82× vs 3.78× — detection ≠ localization.) **The same-compartment residual needs
+a candidate-cut *proposer*, not a better scorer.**
+
 ## Comparative merge detector — attacking the same-compartment residual
 
 The same-compartment merge (axon-axon / dendrite-dendrite, one soma) beats the
