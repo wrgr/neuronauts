@@ -195,14 +195,33 @@ candidate mix). Real signal, not a clean solve — the stitcher uses only embedd
 contact distance, no directional/tangent continuity, which real fragment stitchers
 rely on. Adding geometry should lift this substantially, with SegCLR as tie-breaker.
 
+### Split stitch — endpoint-based (the fix), dense 8-neuron cluster (558 endpoints)
+
+Point-cloud contact stitching (above) was 0.73 because it counts crossing cables.
+Switching to **fragment endpoints** (a true split joins two *ends*; crossings do
+not co-locate endpoints) transforms the problem:
+
+| gap | endpoints w/ continuation | contested | SegCLR-select | geometry-only |
+|---|---|---|---|---|
+| ≤4–10 µm | 44–93 | 0–1 | **1.00** | 1.00 |
+| ≤15 µm | 150 | 12 | **1.00** (12/12 contested) | 0.98 (**0.75** contested) |
+
+**Roles, now validated:** endpoint *proximity* generates candidates and already
+disambiguates almost everything (crossings don't put endpoints together); **SegCLR
+is the selector** — on the hard *contested* endpoints (a genuine competitor within
+15 µm) SegCLR is **12/12** while colinearity-geometry is **9/12**.  Overall
+**150/150**.  So for splits: geometry proposes, SegCLR decides.
+
 ### Synthesis (both error types)
 
-Structure/geometry is the **primary** detector; SegCLR is a **comparative
-corroborator**, never a standalone scanner:
-- **Merge**: multi-soma solved (AUC 1.0); single-compartment (axon-graft) merges
-  are the open residual (A↔D recall 0, SegCLR-absolute weak).
-- **Split**: geometry should lead; SegCLR-alone top-1 = 0.73, best used to break
-  ties among geometrically-plausible continuations.
+The architecture is symmetric — **structure proposes, SegCLR decides**:
+- **Merge**: the grammar proposes candidate seams (multi-soma solved AUC 1.0;
+  A↔D localizes) and SegCLR corroborates.  Multi-soma merges are solved;
+  single-compartment (axon-graft) merges are the open residual (both A↔D and
+  SegCLR-absolute are weak — SegCLR has no *comparison* to make on a single walk).
+- **Split**: endpoint proximity proposes candidate continuations and SegCLR
+  selects — **1.00** on the column cluster, resolving the contested cases that
+  geometry alone misses.  This is SegCLR's comparative strength, realised.
 
 
 ## Walk detector — the merge/split asymmetry (key design finding)
