@@ -181,8 +181,29 @@ rule as-is — the known-hard residual. Caveat: the synthetic axon-graft may be
 underpowered (the extracted axon piece carries few pre-synapses → weak axon-mass),
 so this needs a real-merge check before concluding A↔D is fundamentally weak.
 
-### Split stitch (SegCLR top-1), column cluster
-(pending larger batch — see below; the 2-neuron probe gave top-1 = 0.92)
+### Split stitch (SegCLR top-1), dense 8-neuron column cluster (322 fragments)
+
+| | result |
+|---|---|
+| top-1 SegCLR stitch (best-join neighbour = same neuron) | **0.73** (179/245) |
+| absolute join-score AUC (same vs diff contacts) | 0.66 (same 0.923 / diff 0.890) |
+| contacts | 255 same-neuron vs 405 diff-neuron |
+
+The 2-neuron probe's 0.92 was **base-rate inflated** (mostly same-neuron contacts);
+in a realistic dense patch SegCLR-alone top-1 is **0.73** (vs ~0.39 chance from the
+candidate mix). Real signal, not a clean solve — the stitcher uses only embedding +
+contact distance, no directional/tangent continuity, which real fragment stitchers
+rely on. Adding geometry should lift this substantially, with SegCLR as tie-breaker.
+
+### Synthesis (both error types)
+
+Structure/geometry is the **primary** detector; SegCLR is a **comparative
+corroborator**, never a standalone scanner:
+- **Merge**: multi-soma solved (AUC 1.0); single-compartment (axon-graft) merges
+  are the open residual (A↔D recall 0, SegCLR-absolute weak).
+- **Split**: geometry should lead; SegCLR-alone top-1 = 0.73, best used to break
+  ties among geometrically-plausible continuations.
+
 
 ## Walk detector — the merge/split asymmetry (key design finding)
 
