@@ -58,6 +58,10 @@ syn_cache/
 # L2 skeleton / synapse / world cache NPZ files (git-lfs intended but not required;
 # cache/README.md is tracked; the NPZ data files are local-only)
 cache/**/*.npz
+cache/**/*.npy
+cache/m343_frags/
+cache/segclr/
+cache/skel_current/
 
 # Agent scratch prototype (contains a token; superseded by neuronauts/bulk_synapses.py)
 scratchpad_bulk_synapses.py
