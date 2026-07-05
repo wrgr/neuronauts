@@ -72,10 +72,16 @@ follow function itself. The follow signal is learnable end-to-end.
 
 **On local EM (correction).** The seam test's negative was overstated: it shows a
 *re-ID-pretrained appearance cosine* is type-confounded on n=3 seams — not that local
-ultrastructure is useless. Humans use local EM, so signal exists; the right move is to
-**learn** the local cue from raw EM (membrane continuity/topology, not appearance
-cosine), supervised by the edit log — the same "learn, don't engineer" principle, with
-raw EM as a first-class input to the tracer.
+ultrastructure is useless. A blind straight-corridor EM feature also failed (and hurt).
+
+**The right local cue is the real CUT FACES on the following slices** (`cutface_slices.py`)
+— not a blind projection. Cutting a real seg object at a z-slice and re-linking its cut
+face to the true continuation by **footprint geometry only** (IoU/centroid/area, no seg
+id, no appearance): **IoU top-1 0.995 @ 40 nm, 0.77 @ 120 nm** (chance 0.04, ~34
+candidates), robust on confusable cuts. It decays over big gaps (0.43 @ 240 nm) —
+exactly where the *trajectory* model carries you. Follow contiguously by cut-face
+overlap where slices are close; extrapolate by trajectory across the gap. That is the
+honest, working local cue, and it was in the segmentation all along.
 
 ## Metric
 Synapse-pair line-graph F1 (`neuronauts.line_graph.evaluate_suite`) before/after

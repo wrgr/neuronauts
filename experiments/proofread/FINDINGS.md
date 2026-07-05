@@ -248,6 +248,36 @@ neurite** (RoboEM-style), a substantial 3D-CNN build, not a corridor feature. Th
 geometry follow model remains the solid, cheap, positive result; local EM is a real
 but *harder* second cue that this first cheap attempt does not unlock.
 
+### The right local cue: real CUT FACES on the following slices (`cutface_slices.py`)
+
+The corridor was a **blind projection** — the mistake was ignoring that we *have the
+segmentation objects*: a fragment ends in a real 2-D **cut face** (its segmented
+cross-section on its terminal slice) and the continuation is a real object
+cross-section on the *following* slices.  Following = linking those real footprints
+slice-to-slice, which the straight line threw away.
+
+Honest, non-circular test: cut a real seg object at a z-slice and re-link its cut face
+to the true continuation on slice ``z0+gap`` against every other object's footprint
+there — matching by **footprint geometry only** (IoU / centroid / area); the seg id
+defines truth and segments footprints but is never a matching feature. One mip-2 seg
+box (250×250×200 vox, ~34 candidates per cut, chance 0.04):
+
+| z-gap | IoU top-1 | centroid top-1 | IoU top-1 (confusable) |
+|---|---|---|---|
+| 40 nm  | **0.995** | 0.90 | 0.994 |
+| 120 nm | **0.769** | 0.62 | 0.759 |
+| 240 nm | 0.430 | 0.37 | 0.411 |
+
+**The real cut face links the process almost perfectly slice-to-slice (0.995 @ 40 nm),
+holds up on confusable cuts (a distractor footprint near the cut face), and beats
+centroid — pure footprint geometry, no appearance, no type-confounding.** It decays
+over big gaps (240 nm) as the cross-section drifts/thins — exactly where the
+*trajectory* model carries you. The two cues are complementary in the obvious way:
+**follow contiguously by cut-face overlap where slices are close; extrapolate by
+trajectory across the gap where they aren't.** This is the working local cue the
+appearance-cosine and blind-corridor attempts were groping for — and it was in the
+segmentation the whole time.
+
 Honest caveats: 189 scattered clean neurons are far sparser than real neuropil, so
 the confusable fraction (13%) and the numbers on it are **optimistic** — dense tissue
 has more parallel distractors. Clean skeletons, not messy fragments. The models are

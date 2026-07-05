@@ -1,0 +1,38 @@
+{
+  "1": {
+    "n": 6611,
+    "mean_candidates": 33.711995159582514,
+    "chance": 0.04072000276320428,
+    "iou_top1": 0.9947057933746786,
+    "centroid_top1": 0.9009227045832703,
+    "iou_area_top1": 0.9128724852518529,
+    "n_confusable": 6295,
+    "iou_top1_confusable": 0.9944400317712471,
+    "centroid_top1_confusable": 0.8969023034154091,
+    "iou_area_top1_confusable": 0.9116759332803812
+  },
+  "3": {
+    "n": 6005,
+    "mean_candidates": 33.89691923397169,
+    "chance": 0.04028868919676723,
+    "iou_top1": 0.7690258118234804,
+    "centroid_top1": 0.6174854288093256,
+    "iou_area_top1": 0.5287260616153205,
+    "n_confusable": 5704,
+    "iou_top1_confusable": 0.7592917251051894,
+    "centroid_top1_confusable": 0.6001051893408135,
+    "iou_area_top1_confusable": 0.5157784011220197
+  },
+  "6": {
+    "n": 5255,
+    "mean_candidates": 34.064700285442434,
+    "chance": 0.04057123936080931,
+    "iou_top1": 0.42987630827783063,
+    "centroid_top1": 0.3657469077069458,
+    "iou_area_top1": 0.2702188392007612,
+    "n_confusable": 4963,
+    "iou_top1_confusable": 0.41084021761031636,
+    "centroid_top1_confusable": 0.33709449929478136,
+    "iou_area_top1_confusable": 0.24863993552286923
+  }
+}
