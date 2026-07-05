@@ -179,6 +179,42 @@ The still-open residual (~16% of confusable) is where same-caliber, mutually-col
 processes genuinely need *global* consequence (does rejecting this strand a fragment /
 orphan synapses / fail to reach a soma?) and look-ahead — the next layer.
 
+### Learned, not engineered (`follow_learned.py`) — hand features aren't the point
+
+Hand-crafted align/reciprocal/caliber were only a *proof of signal*; humans don't
+compute them, they learn. So we gave a small MLP **only raw coordinates** — the
+candidate point, four of its own neighbour offsets (its local cable, unlabelled), and
+the two radii, in a canonical frame (cut at origin, incoming trajectory → +x) — **17
+raw numbers, no hand-derived feature** — under a *weaker* 5-fold GroupKFold protocol.
+
+| model | overall | hard | confusable |
+|---|---|---|---|
+| hand features (align+caliber+reciprocal), LOO | 0.977 | 0.970 | 0.841 |
+| **MLP on 17 raw coords, no hand features, 5-fold** | **0.975** | **0.969** | **0.875** |
+
+It **matches, and beats on the hard case** (0.875 vs 0.841; robust across seeds
+0.84–0.91) — with less training data and nothing engineered. The net *discovers*
+"continue straight", "the far end must point back", and "caliber matches" from raw
+geometry, and finds nonlinear structure (candidate-cable curvature) the six linear
+features missed. **The follow function is learnable end-to-end; hand features were
+scaffolding.** Next step is the natural one: a learned tracer over raw geometry **and
+raw EM**, supervised by the edit log — see the correction below.
+
+### Correction: "local EM is useless" was overstated
+
+The seam test (Update 1) showed a *specific* pretrained appearance-cosine — the
+contrastive cut-face encoder, trained for z-gap **re-ID** — is type-confounded at
+merge seams, on **n=3** seams. That does **not** establish that local ultrastructure
+carries no identity signal; three seams prove little, and that encoder was optimised
+for the wrong objective (whatever separates faces across a z-gap: type, staining,
+context), not the fine membrane/ultrastructure a proofreader reads to tell two apposed
+processes apart. Humans demonstrably use local EM, so the signal exists. The honest
+statement is **"the re-ID appearance cosine is the wrong local model," not "local EM
+does not help."** The right test mirrors the geometry result: **learn the local cue
+from raw EM, supervised by human edits** (and read *membrane continuity / topology*,
+not cross-section appearance) — not a hand-picked pretrained cosine. That is an open,
+promising direction, not a closed door.
+
 Honest caveats: 189 scattered clean neurons are far sparser than real neuropil, so
 the confusable fraction (13%) and the numbers on it are **optimistic** — dense tissue
 has more parallel distractors. Clean skeletons, not messy fragments. The models are

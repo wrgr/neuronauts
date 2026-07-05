@@ -1,0 +1,12 @@
+{
+  "model": "MLP(raw canonical coords, no hand features)",
+  "n_raw_coords_per_candidate": 17,
+  "protocol": "5-fold GroupKFold by neuron (leakage-safe)",
+  "note": "raw = candidate position(3) + 4 neighbour offsets(12) + r_candidate + r_endpoint, in a canonical frame (cut at origin, incoming trajectory = +x); no align/reciprocal/caliber computed by hand",
+  "seeds": {
+    "0": {"top1": 0.975, "hard_top1": 0.969, "confusable_top1": 0.875, "hard_n": 1175, "confusable_n": 295},
+    "1": {"top1": 0.979, "hard_top1": 0.972, "confusable_top1": 0.914, "hard_n": 1184, "confusable_n": 313},
+    "2": {"top1": 0.965, "hard_top1": 0.955, "confusable_top1": 0.844, "hard_n": 1209, "confusable_n": 308}
+  },
+  "hand_feature_baseline_seed0": {"top1": 0.977, "hard_top1": 0.970, "confusable_top1": 0.841}
+}

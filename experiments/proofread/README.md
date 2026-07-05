@@ -64,6 +64,19 @@ not cross-section appearance, and each layer of *logical* consistency closes mor
 the residual — the learnable backbone of "follow like a human," trainable on the edit
 log, no EM.
 
+**Learned, not engineered (`follow_learned.py`).** Hand features were only a proof of
+signal. An MLP given **17 raw canonical coordinates** (candidate point + neighbour
+offsets + radii, no hand-derived align/reciprocal/caliber) *matches and beats* the
+engineered model (confusable 0.875 vs 0.841) under a weaker CV — it discovers the
+follow function itself. The follow signal is learnable end-to-end.
+
+**On local EM (correction).** The seam test's negative was overstated: it shows a
+*re-ID-pretrained appearance cosine* is type-confounded on n=3 seams — not that local
+ultrastructure is useless. Humans use local EM, so signal exists; the right move is to
+**learn** the local cue from raw EM (membrane continuity/topology, not appearance
+cosine), supervised by the edit log — the same "learn, don't engineer" principle, with
+raw EM as a first-class input to the tracer.
+
 ## Metric
 Synapse-pair line-graph F1 (`neuronauts.line_graph.evaluate_suite`) before/after
 auto-correction, leakage-safe on the proofread column; precision reported *with*

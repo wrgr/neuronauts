@@ -157,7 +157,7 @@ def build_instances(neurons, *, gap_nm=1500.0, search_radius=3500.0,
             inst.append({
                 "v": N.v[v_i], "d": d, "r_v": float(N.r[v_i]),
                 "c_pos": c_pos, "c_rad": c_rad, "c_tan": c_tan, "is_true": is_true,
-                "neuron": ni,
+                "neuron": ni, "c_owner": c_owner, "c_local": c_local,
             })
     return inst
 
