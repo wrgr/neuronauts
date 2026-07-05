@@ -267,6 +267,32 @@ alone**. (Comparative *is* better at *localizing* a known/proposed candidate cut
 4.82× vs 3.78× — detection ≠ localization.) **The same-compartment residual needs
 a candidate-cut *proposer*, not a better scorer.**
 
+## Candidate-cut proposer (branch points + comparative-SegCLR) — NEGATIVE
+
+Attack on the same-compartment residual: propose a cut at every branch point
+(degree≥3), score each by comparative split-vs-joined over geodesic windows, rank.
+Validated on real merges (reconstructed merged skeleton, bridge = true seam):
+
+| merge | true-seam rank | seam score | top score |
+|---|---|---|---|
+| …589909259 | **149/149** | −0.001 | 0.058 |
+| …847908702 | 28/301 | 0.056 | 0.255 |
+| …467909772 | 105/134 | 0.005 | 0.056 |
+
+TOP-1 = **0/3**; clean neurons' max cut score (0.10–0.13) *exceeds* the real seam
+scores → **fails, worse than useless as a detector**. Two fundamental reasons:
+1. **A same-compartment seam is locally *similar*** — cells merge where they touch
+   and look alike, so across-similarity at the contact is high → comparative ≈ 0.
+2. **Branch points are intrinsically high-comparative** — a branch is where one
+   cell's cable diverges into locally different morphology, so the seam competes
+   against the hardest candidate set and loses.
+
+This also explains the earlier walk's 4.82× (its baseline was *random* path points,
+not branch points). **Cells are not tight embedding clusters** (identity is a
+manifold: axon-region, dendrite-region…), so cluster-separation cannot isolate a
+same-compartment seam. **The residual is genuinely hard; SegCLR's power is local
+comparison (splits: top-1), not global identity clustering (merges).**
+
 ## Comparative merge detector — attacking the same-compartment residual
 
 The same-compartment merge (axon-axon / dendrite-dendrite, one soma) beats the

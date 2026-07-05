@@ -231,6 +231,83 @@ def fragment_contact_score(pa, ea, pb, eb, *, contact_nm=3000.0, k=5):
     return float(np.einsum("ij,ij->i", ean[ai], ebn[bi]).mean())
 
 
+def _adj_list(nv, edges):
+    adj = [[] for _ in range(nv)]
+    for a, b in edges:
+        adj[a].append(int(b)); adj[b].append(int(a))
+    return adj
+
+
+def _geodesic_side(V, adj, u, v, W_nm):
+    """Vertices within geodesic distance ``W_nm`` of ``u``, not crossing edge (u,v)."""
+    import heapq
+    dist = {int(u): 0.0}; pq = [(0.0, int(u))]; out = [int(u)]
+    while pq:
+        d, x = heapq.heappop(pq)
+        if d > dist.get(x, 1e18):
+            continue
+        for y in adj[x]:
+            if (x == u and y == v) or (x == v and y == u):
+                continue
+            nd = d + float(np.linalg.norm(V[x] - V[y]))
+            if nd <= W_nm and nd < dist.get(y, 1e18):
+                dist[y] = nd; heapq.heappush(pq, (nd, y)); out.append(y)
+    return out
+
+
+def propose_cut_edges(vertices_nm, edges, *, include_all_at_branch=True):
+    """Candidate cut sites = edges incident to a branch point (degree>=3).  A false
+    merge grafts one cable onto another, creating a branch — so the seam is a
+    branch-incident edge.  (The caller may add specific edges, e.g. a known bridge.)"""
+    nv = len(vertices_nm)
+    deg = np.bincount(np.asarray(edges).ravel(), minlength=nv) if len(edges) else np.zeros(nv, int)
+    out = []
+    for a, b in edges:
+        if deg[a] >= 3 or deg[b] >= 3:
+            out.append((int(a), int(b)))
+    return out
+
+
+def comparative_cut_score(seg_asg, side_a_idx, side_b_idx, *, min_cov=3):
+    """Split-vs-joined score for a candidate cut: within-side cohesion minus across
+    similarity, using the SegCLR embeddings covered on each side.  ``None`` if
+    coverage on either side is too low."""
+    cov = seg_asg.covered; emb = seg_asg.embedding
+    A = [i for i in side_a_idx if cov[i]]
+    B = [i for i in side_b_idx if cov[i]]
+    if len(A) < min_cov or len(B) < min_cov:
+        return None
+    EA = emb[A] / (np.linalg.norm(emb[A], axis=1, keepdims=True) + 1e-9)
+    EB = emb[B] / (np.linalg.norm(emb[B], axis=1, keepdims=True) + 1e-9)
+    within = 0.5 * (_mean_pairwise_cos(EA) + _mean_pairwise_cos(EB))
+    across = float((EA @ EB.T).mean())
+    return within - across
+
+
+def rank_cut_candidates(vertices_nm, edges, seg_asg, *, window_nm=8000.0,
+                        extra_edges=()):
+    """Score every branch-incident candidate cut (plus ``extra_edges``) by the
+    comparative split-vs-joined statistic over geodesic windows on each side.
+    Returns ``[((u,v), score), ...]`` sorted by score desc."""
+    V = np.asarray(vertices_nm, float)
+    edges = np.asarray(edges, np.int64).reshape(-1, 2)
+    adj = _adj_list(len(V), edges)
+    cands = list(propose_cut_edges(V, edges)) + [tuple(map(int, e)) for e in extra_edges]
+    seen = set(); scored = []
+    for u, v in cands:
+        key = (min(u, v), max(u, v))
+        if key in seen:
+            continue
+        seen.add(key)
+        a = _geodesic_side(V, adj, u, v, window_nm)
+        b = _geodesic_side(V, adj, v, u, window_nm)
+        s = comparative_cut_score(seg_asg, a, b)
+        if s is not None:
+            scored.append(((u, v), s))
+    scored.sort(key=lambda t: t[1], reverse=True)
+    return scored
+
+
 @dataclass
 class Endpoint:
     frag_idx: int
