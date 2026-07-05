@@ -5,6 +5,33 @@ embeddings and (b) compartment production rules (axon↔dendrite crossing,
 multi-soma) to detect false merges and propose splits. See the approved plan for
 the full design.
 
+---
+## ★ HEADLINE FINDING — SegCLR encodes cell *type/compartment*, not cell *identity*
+
+The single fact that explains every result below.  Proven directly:
+
+- Spectral-2 clustering of one clean neuron's SegCLR nodes aligns with **axon/
+  dendrite compartment** at ARI **0.69–0.86**.
+- Pool two different cells and cluster: it splits by **compartment (ARI 0.68–0.84)**
+  and by **cell identity ARI ≈ 0.00–0.03** (10/10 cell pairs).  It literally cannot
+  tell the two cells apart; it splits axon-from-dendrite *across* both.
+
+Why: SegCLR is trained contrastively with a **~4 µm receptive field and local
+positives**, so it learns *local morphology* — which is dominated by compartment/
+type, not by which individual cell you're on.
+
+**Consequences (each validated below):**
+- **Multi-soma merges → solved** (that's *topology*, not SegCLR).
+- **Splits → mostly geometry; SegCLR helps only as a type/compartment
+  disambiguator** (it can pick the right continuation when the wrong candidate is a
+  *different type/compartment*; not when it's the same type).
+- **Same-type / same-compartment merges → not solvable by SegCLR** (no identity
+  signal to separate two same-type cables). Every SegCLR merge attempt (absolute
+  step, comparative walk, branch proposer, global spectral) fails for this one
+  reason.
+
+---
+
 ## Exp 0 — SegCLR-only value probe (the "is this worth building?" test)
 
 **Question (user's framing):** retrieve the MICrONS SegCLR embeddings and, *using
@@ -249,8 +276,34 @@ within 15 µm; n=12), top-1 same-neuron continuation:
 | geometry on (colinear tangent) | **0.75** | **1.00** |
 
 (all-with-continuation, n=150: neither 0.96 / geom 0.98 / segclr 1.00 / both 1.00.)
-On contested splits **SegCLR is the discriminator** (0.50/0.75 → 1.00), not just a
-tie-breaker; geometry's job is to keep candidate sets small (≤6 µm is unambiguous).
+
+### ⚠ Critical review — do NOT over-read the split "1.00"
+
+Honest caveats (the headline number is real but narrow):
+1. **n = 12 contested.** "1.00" is 12/12; the 95% CI is roughly [0.76, 1.0]. Not
+   "solved" — directional only.
+2. **Lenient metric.** We score "top-1 candidate is *same-neuron*", not "top-1 is
+   the *true adjacent continuation*". A neuron's arbor folds back on itself, so a
+   *different* branch of the same cell often sits within 15 µm; joining it counts
+   as "correct" here but would build wrong topology. The numbers are an **upper
+   bound on same-cell selection**, not correct-reconstruction accuracy.
+3. **Type-not-identity confound (the big one).** Per the headline finding, SegCLR
+   resolves a contested split **only when the wrong candidate is a different
+   type/compartment**. The 12 contested wins were almost certainly
+   type-distinguishable; a *same-type* confusor (another same-type axon passing by)
+   would not be resolved by SegCLR. So "SegCLR decides splits" really means
+   "SegCLR decides splits *when the distractor is a different type*."
+4. **Task is mostly trivial.** At ≤6 µm even distance-only scores 1.00 — the true
+   continuation is usually the only thing nearby. The interesting residual
+   (contested) is ~8% of endpoints.
+5. **Endpoint/enumeration incompleteness.** Only 2 PC1-extreme endpoints per
+   fragment; sparse seg-lookup (150 probes) may miss small fragments — so some true
+   continuations are absent from the candidate set and uncounted.
+
+**Honest split verdict:** *geometry* does the heavy lifting (proximity resolves the
+large majority); *SegCLR adds value as a type/compartment disambiguator on a small
+contested slice*, validated only at n=12 with a lenient metric. Not "SegCLR solves
+splitting."
 
 **Merge — standalone detector** (max split-score over a graph-diameter walk,
 clean cells vs real merges):
