@@ -32,12 +32,24 @@ does it resolve the residual ambiguous edits shape/grammar alone cannot?
   MICrONS mip-1 EM:* same-neurite z-gap pairs mean cut-face sim **+0.58** vs
   cross-neurite **+0.30** (separable), barrier ≈0 on continuous cytoplasm. Barrier
   is a labelled *first-cut* intensity approximation, not the RoboEM flight method.
-- **Pillar 3 — `combiner.py`** (todo): calibrated abstaining combiner over
-  [grammar ΔEnergy, local evidence], trained on real edits
-  (`edit_history` / `synapse_correction`), applied via **matching** (not
-  agglomeration), residual → `treestitch.risk` queue + `ngl_export` links.
+- **Pillar 3 — `complementarity.py` / `queue.py` / `pipeline.py`** (built + tested):
+  leakage-safe GroupKFold combiner over [shape/grammar, local evidence] on real
+  column edits (`synapse_correction`), and a ranked abstaining CUT/JOIN/ABSTAIN
+  queue with Neuroglancer site links (`treestitch.ngl_export`). Driver:
+  `run_complementarity.py`.
+
+## Result so far — see `FINDINGS.md` (honest: not yet a win)
+Pillars 1 and 2 are **validated** as cues on real data (grammar rejects soma-merges
+ΔE<0; local cut-face separates same/different process +0.58 vs +0.30 at proper
+cross-section sites). But the **end-to-end complementarity does not yet clear the
+bar**: on one 24 µm column box (24 local cut-errors, 0 join candidates) shape≈chance
+(AUC 0.487), local best-single (0.601), joint 0.536, and confident auto-edits run
+**below base rate** (0.125 vs 0.30). Diagnosed cause: candidates are sampled at
+**synapse-cleft positions, not on the neurite at the edit seam** (26/80 sites have no
+cross-section) — a mechanical fix (geometric seam localization), not a dead end.
 
 ## Metric
 Synapse-pair line-graph F1 (`neuronauts.line_graph.evaluate_suite`) before/after
 auto-correction, leakage-safe on the proofread column; precision reported *with*
 coverage (abstention). Anchors: greedy-agglo failure F1 0.14; oracle F1 0.928.
+*(F1 before/after is gated on placing the cues at the real edit site — FINDINGS step 1.)*
