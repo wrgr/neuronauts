@@ -304,6 +304,48 @@ either alone across the whole range, using only geometry — no appearance, no
 type-confounding.** That is "follow like a human," and every ingredient (cut faces,
 trajectory, the fusion) is real and learnable.
 
+### Ultrastructure channel + the connect/abstain decision (`evaluate_follow_ultra`)
+
+Two things we were *not* doing: (1) reading the **ultrastructure inside** the cross-section
+(only the silhouette); (2) deciding **whether to connect at all** (forced top-1 → a real
+tip becomes a false merge).  Added both.
+
+**Ultrastructure** — interior EM content correlation (motion-compensated over the
+footprint overlap) + a myelin/membrane ring feature, appended to the geometry fusion,
+at **mip-1** (16 nm, organelles resolved), 20 662 candidates:
+
+| z-gap | fused (geometry) | + ultrastructure |
+|---|---|---|
+| 120 nm | 0.957 | 0.957 |
+| 240 nm | 0.767 | 0.774 |
+| 400 nm | 0.472 | 0.480 |
+
+**No measurable lift** (±0.01).  Honest reading — and *not* "ultrastructure is useless"
+(third time a content cue hasn't beaten geometry, so state the caveats precisely): (a)
+geometry already *saturates* at small gaps (0.957 @ 120 nm) — no headroom, and that is
+where footprints overlap; (b) my interior-correlation is computed **over the footprint
+overlap**, so it is redundant with IoU and, worse, **cannot be computed at large gaps
+where there is no overlap** — exactly where ultrastructure *should* matter; (c) cortical
+neuropil is largely unmyelinated, so the ring feature is mostly uninformative.  The real
+test of ultrastructure is a **learned organelle/texture matcher at large gaps** (track a
+specific mitochondrion across the break, no overlap required) — not a hand-correlation
+where geometry already wins.  That remains open; this cheap version does not move it.
+
+**Connect vs. abstain (the cost of failing to connect).** Terminal cut faces (the object
+does *not* continue) are included as all-negative instances; the follower's top-candidate
+fused score separates "has a true continuation" from "is a tip" at **AUC 0.836**.  So the
+follower *knows when not to connect* — the basis for the asymmetric-cost decision
+(`treestitch.risk`, merge cost ≫ split cost): set a high connect threshold, auto-fix only
+confident continuations, **abstain** on the rest (accept the cheap split, never the
+expensive merge).  This is the honest deployable posture — precision via abstention — now
+grounded in a real connect-confidence signal, not a forced top-1.
+
+**Grammar consistency (still a gap).** The follower ranks by geometry; it does **not** yet
+veto *ungrammatical* connections (axon↔dendrite, caliber jump, would-create-two-soma).
+Wiring Pillar-1 `grammar_energy` as a **hard veto** on the chosen candidate (reject if the
+join raises the grammar energy) is the missing consistency filter — cheap to add on top of
+the ranker, and the natural next step alongside the abstention threshold.
+
 Honest caveats: 189 scattered clean neurons are far sparser than real neuropil, so
 the confusable fraction (13%) and the numbers on it are **optimistic** — dense tissue
 has more parallel distractors. Clean skeletons, not messy fragments. The models are

@@ -1,0 +1,22 @@
+{
+  "gaps": [
+    3,
+    6,
+    10
+  ],
+  "n_rows": 20662,
+  "connect_auc_geom": 0.8358471670055537,
+  "connect_auc_ultra": 0.8066826499954478,
+  "gap3": {
+    "fused_geom": 0.9568345323741008,
+    "fused_ultra": 0.9568345323741008
+  },
+  "gap6": {
+    "fused_geom": 0.7669172932330827,
+    "fused_ultra": 0.7744360902255639
+  },
+  "gap10": {
+    "fused_geom": 0.472,
+    "fused_ultra": 0.48
+  }
+}

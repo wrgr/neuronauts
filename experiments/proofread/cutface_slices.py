@@ -143,6 +143,184 @@ def evaluate_combined(seg, *, gaps=(3, 6, 10, 15), traj_k=5, min_area=15,
     return results
 
 
+def _interior_corr(em, z0, ays, axs, zc, bys, bxs, shift, shape):
+    """Pearson corr of interior EM content over the motion-compensated overlap.
+
+    Compares the *same physical location's* ultrastructure across the gap: shift the
+    cut face by the extrapolated drift, intersect with the candidate footprint, and
+    correlate A's interior intensities (at their original A position) with B's.  This
+    is interior CONTENT (mitochondria, texture), not silhouette — and it is a
+    *continuation* match (same process across a small gap), not a type classifier.
+    """
+    dy, dx = int(round(shift[0])), int(round(shift[1]))
+    a_lin = (ays + dy) * shape[1] + (axs + dx)          # A shifted into z0+gap frame
+    b_lin = bys * shape[1] + bxs
+    _, ai, bi = np.intersect1d(a_lin, b_lin, assume_unique=False, return_indices=True)
+    if len(ai) < 12:
+        return 0.0
+    av = em[ays[ai], axs[ai], z0].astype(np.float32)    # A interior at its own slice
+    bv = em[bys[bi], bxs[bi], zc].astype(np.float32)    # B interior at z0+gap
+    if av.std() < 1e-3 or bv.std() < 1e-3:
+        return 0.0
+    return float(np.corrcoef(av, bv)[0, 1])
+
+
+def _ring_brightness(em, zc, ys, xs, shape, grow=2):
+    """Mean EM in a thin ring just outside the footprint (myelin/membrane character)."""
+    from scipy.ndimage import binary_dilation
+    y0, y1 = ys.min(), ys.max() + 1; x0, x1 = xs.min(), xs.max() + 1
+    pad = grow + 1
+    y0 = max(0, y0 - pad); x0 = max(0, x0 - pad)
+    y1 = min(shape[0], y1 + pad); x1 = min(shape[1], x1 + pad)
+    m = np.zeros((y1 - y0, x1 - x0), bool); m[ys - y0, xs - x0] = True
+    ring = binary_dilation(m, iterations=grow) & ~m
+    if not ring.any():
+        return 128.0
+    crop = em[y0:y1, x0:x1, zc]
+    return float(crop[ring].mean())
+
+
+def evaluate_follow_ultra(seg, em, *, gaps=(3, 6, 10), traj_k=5, min_area=25,
+                          search_nm=2500.0, max_per_gap=180, seed=0, verbose=True):
+    """Add the ULTRASTRUCTURE channel (interior content + myelin-ring) to the fused
+    follower, and measure the connect-vs-abstain signal (cost of failing to connect).
+
+    Two comparisons:
+    * geometry fusion vs geometry+ultrastructure — does interior content lift the hard
+      *confusable* cuts (similar silhouettes, different insides)?
+    * abstention: terminal cut faces (object does NOT continue) are included as
+      all-negative instances; the fused score's top-candidate margin should be LOW
+      there — so the follower knows when *not* to connect (a real neurite tip), which
+      under the merge≫split cost asymmetry is what prevents false merges.
+    """
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.pipeline import make_pipeline
+    from sklearn.model_selection import GroupKFold
+    from sklearn.metrics import roc_auc_score
+
+    d = seg.data; E = em.data; vox = np.asarray(seg.voxel_size_nm, float)
+    nz = d.shape[2]; shape2d = d.shape[:2]
+    assert E.shape[:3] == d.shape[:3], "seg and EM must share the grid (same mip/box)"
+    rng = np.random.default_rng(seed)
+    fp = {}
+    def foot(z):
+        if z not in fp:
+            fp[z] = _footprints(d[:, :, z], min_area)
+        return fp[z]
+
+    cut_slices = list(range(traj_k + 1, nz - max(gaps) - 1, 2))
+    rows = []          # per-candidate feature row
+    inst_meta = []     # (iid, gap, z0, has_true)
+    iid = 0
+    for gap in gaps:
+        cand_insts = []
+        for z0 in cut_slices:
+            face = foot(z0); nextf = foot(z0 + gap)
+            if not nextf:
+                continue
+            nx_ids = list(nextf)
+            nx_cent = np.array([nextf[j][2] for j in nx_ids]); nx_cent_nm = nx_cent * vox[:2]
+            for oid, (ays, axs, acent, aarea) in face.items():
+                acent_nm = acent * vox[:2]
+                dcent = np.linalg.norm(nx_cent_nm - acent_nm, axis=1)
+                pool = np.where(dcent <= search_nm)[0]
+                if len(pool) < 2:
+                    continue
+                has_true = oid in nextf
+                true_local = np.array([nx_ids[p] == oid for p in pool])
+                confusable = has_true and bool(((dcent[pool] <= 600.0) & (~true_local)).any())
+                cand_insts.append((z0, oid, ays, axs, acent, aarea, pool, nx_ids,
+                                   nextf, has_true, confusable, dcent))
+        # enrich: keep all confusable + terminal, sample the rest, cap per gap
+        conf_t = [c for c in cand_insts if c[10] or not c[9]]
+        rest = [c for c in cand_insts if not (c[10] or not c[9])]
+        keep = conf_t + [rest[i] for i in rng.choice(len(rest),
+                         min(len(rest), max(0, max_per_gap - len(conf_t))), replace=False)] \
+               if rest else conf_t
+        keep = keep[:max_per_gap]
+        for (z0, oid, ays, axs, acent, aarea, pool, nx_ids, nextf, has_true, conf, dcent) in keep:
+            c_prev = _centroid_on(d, oid, z0 - traj_k)
+            vel = (acent - c_prev) / traj_k if c_prev is not None else np.zeros(2)
+            pred_nm = (acent + vel * gap) * vox[:2]
+            sy, sx = _shift_mask(ays, axs, vel * gap, shape2d)
+            nx_cent_nm = np.array([nextf[j][2] for j in nx_ids]) * vox[:2]
+            ringA = _ring_brightness(E, z0, ays, axs, shape2d)
+            for p in pool:
+                j = nx_ids[p]; bys, bxs = nextf[j][0], nextf[j][1]
+                ir = _iou(ays, axs, bys, bxs, shape2d)
+                im = _iou(sy, sx, bys, bxs, shape2d)
+                td = np.linalg.norm(nx_cent_nm[p] - pred_nm) / 1000.0
+                ar = -abs(np.log((nextf[j][3] + 1) / (aarea + 1)))
+                ic = _interior_corr(E, z0, ays, axs, z0 + gap, bys, bxs, vel * gap, shape2d)
+                rm = -abs(ringA - _ring_brightness(E, z0 + gap, bys, bxs, shape2d)) / 255.0
+                rows.append([ir, im, td, ar, gap, ic, rm, int(j == oid)])
+                inst_meta.append((iid, gap, z0, has_true))
+            iid += 1
+    if not rows:
+        return {"error": "no instances"}
+    A = np.array(rows, float)
+    X = A[:, :7]; y = A[:, 7].astype(int)
+    meta = np.array(inst_meta)  # iid, gap, z0, has_true
+    grp = meta[:, 2]
+    GEOM = [0, 1, 2, 3, 4]; ULTRA = [0, 1, 2, 3, 4, 5, 6]
+
+    n_splits = max(2, min(5, len(np.unique(grp))))
+
+    def oof(cols):
+        s = np.full(len(y), np.nan)
+        for tr, te in GroupKFold(n_splits=n_splits).split(X, y, grp):
+            if len(np.unique(y[tr])) < 2:
+                continue
+            m = make_pipeline(StandardScaler(),
+                              LogisticRegression(max_iter=2000, class_weight="balanced"))
+            m.fit(X[tr][:, cols], y[tr]); s[te] = m.predict_proba(X[te][:, cols])[:, 1]
+        return s
+
+    s_geom, s_ultra = oof(GEOM), oof(ULTRA)
+
+    def top1(scores, gap, confusable_only=False):
+        hit = n = 0
+        for k in np.unique(meta[meta[:, 1] == gap, 0]):
+            sel = meta[:, 0] == k
+            if not meta[sel][0, 3]:      # terminal cut -> no true continuation; skip top-1
+                continue
+            yl = y[sel]; sc = scores[sel]
+            if np.isnan(sc).all():
+                continue
+            hit += int(yl[np.argmax(sc)]); n += 1
+        return hit / n if n else float("nan")
+
+    # abstention: does max fused score separate has-true (connect) from terminal (abstain)?
+    def connect_auc(scores):
+        mx, lab = [], []
+        for k in np.unique(meta[:, 0]):
+            sel = meta[:, 0] == k; sc = scores[sel]
+            if np.isnan(sc).all():
+                continue
+            mx.append(np.nanmax(sc)); lab.append(int(meta[sel][0, 3]))
+        lab = np.array(lab)
+        if len(np.unique(lab)) < 2:
+            return float("nan")
+        return float(roc_auc_score(lab, mx))
+
+    res = {"gaps": list(gaps), "n_rows": len(y),
+           "connect_auc_geom": connect_auc(s_geom),
+           "connect_auc_ultra": connect_auc(s_ultra)}
+    for gap in gaps:
+        res[f"gap{gap}"] = {
+            "fused_geom": top1(s_geom, gap), "fused_ultra": top1(s_ultra, gap)}
+    if verbose:
+        print(f"rows={len(y)}  (interior-content + myelin-ring added to geometry fusion)")
+        print(f"{'gap(nm)':>8} {'fused_geom':>11} {'fused+ULTRA':>12}")
+        for gap in gaps:
+            r = res[f"gap{gap}"]
+            print(f"{gap*int(vox[2]):>8} {r['fused_geom']:>11.3f} {r['fused_ultra']:>12.3f}")
+        print(f"connect-vs-abstain AUC (know when NOT to connect):"
+              f" geom={res['connect_auc_geom']:.3f}  +ultra={res['connect_auc_ultra']:.3f}")
+    return res
+
+
 def evaluate_follow_fused(seg, *, gaps=(3, 6, 10, 15, 20), traj_k=5, min_area=15,
                           cut_slices=None, search_nm=2500.0, seed=0, verbose=True):
     """The combined follower: a LEARNED fusion of cut-face + trajectory per candidate.
