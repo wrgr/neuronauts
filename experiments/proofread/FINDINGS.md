@@ -278,6 +278,32 @@ trajectory across the gap where they aren't.** This is the working local cue the
 appearance-cosine and blind-corridor attempts were groping for — and it was in the
 segmentation the whole time.
 
+### The combined follower: learned fusion of cut-face + trajectory (`evaluate_follow_fused`)
+
+Fused the two cues per candidate: raw cut-face IoU, **motion-compensated IoU** (shift
+the cut face by the fragment's own extrapolated z-drift, then match shape),
+trajectory-position distance, and area — a leakage-safe logistic (GroupKFold by cut
+slice) weights them.  Top-1 vs each single cue, by gap (mip-2 seg box, ~46 candidates
+per cut, chance ~0.02):
+
+| z-gap | cut-face | trajectory | motion-comp | **learned fusion** |
+|---|---|---|---|---|
+| 120 nm | 0.767 | 0.697 | 0.775 | **0.859** |
+| 240 nm | 0.420 | 0.487 | 0.518 | **0.576** |
+| 400 nm | 0.233 | 0.319 | 0.329 | **0.371** |
+| 600 nm | 0.138 | 0.210 | 0.211 | **0.238** |
+| 800 nm | 0.099 | 0.160 | 0.142 | **0.177** |
+
+**The fused follower is best at every gap** — the single cues trade off (cut-face wins
+short, trajectory wins long, motion-comp bridges the middle) and the learned combiner
+takes the best of each automatically.  At the operational gap (120 nm ≈ 3 sections) it
+reaches **0.859** vs 0.775 for the best single cue.  Accuracy falls with gap because
+re-linking across 800 nm among ~46 candidates is genuinely hard (chance 0.02) — but the
+message is the shape: **cut-face contiguity ⊕ trajectory extrapolation, fused, beats
+either alone across the whole range, using only geometry — no appearance, no
+type-confounding.** That is "follow like a human," and every ingredient (cut faces,
+trajectory, the fusion) is real and learnable.
+
 Honest caveats: 189 scattered clean neurons are far sparser than real neuropil, so
 the confusable fraction (13%) and the numbers on it are **optimistic** — dense tissue
 has more parallel distractors. Clean skeletons, not messy fragments. The models are

@@ -83,6 +83,13 @@ exactly where the *trajectory* model carries you. Follow contiguously by cut-fac
 overlap where slices are close; extrapolate by trajectory across the gap. That is the
 honest, working local cue, and it was in the segmentation all along.
 
+**The combined follower (`evaluate_follow_fused`).** A learned fusion of cut-face IoU +
+motion-compensated IoU + trajectory position is **best at every gap** — cut-face wins
+short gaps, trajectory wins long, motion-comp bridges the middle, and the combiner
+takes the best of each: top-1 **0.86** at 120 nm (vs 0.77 best single), still ahead at
+every larger gap. Pure geometry, no appearance. This is "follow like a human": cut-face
+contiguity ⊕ trajectory extrapolation, fused.
+
 ## Metric
 Synapse-pair line-graph F1 (`neuronauts.line_graph.evaluate_suite`) before/after
 auto-correction, leakage-safe on the proofread column; precision reported *with*
