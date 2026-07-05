@@ -38,15 +38,19 @@ does it resolve the residual ambiguous edits shape/grammar alone cannot?
   queue with Neuroglancer site links (`treestitch.ngl_export`). Driver:
   `run_complementarity.py`.
 
-## Result so far — see `FINDINGS.md` (honest: not yet a win)
-Pillars 1 and 2 are **validated** as cues on real data (grammar rejects soma-merges
-ΔE<0; local cut-face separates same/different process +0.58 vs +0.30 at proper
-cross-section sites). But the **end-to-end complementarity does not yet clear the
-bar**: on one 24 µm column box (24 local cut-errors, 0 join candidates) shape≈chance
-(AUC 0.487), local best-single (0.601), joint 0.536, and confident auto-edits run
-**below base rate** (0.125 vs 0.30). Diagnosed cause: candidates are sampled at
-**synapse-cleft positions, not on the neurite at the edit seam** (26/80 sites have no
-cross-section) — a mechanical fix (geometric seam localization), not a dead end.
+## Result — see `FINDINGS.md` (honest: the local cue does not deliver)
+**Global grammar (Pillar 1) is the cue that carries deployable signal** — it rejects
+real multi-soma merge seams (ΔE −1) and is blind only to same-compartment seams (the
+complementarity boundary). **The local cut-face ultrastructure cue (Pillar 2) does
+not.** Tested directly at real merge seams *on the neurite* (`seam_test.py`), cut-face
+similarity is anti-predictive (seam 0.627 vs continuation 0.552, AUC 0.40) because
+cut-face/SegCLR embeddings encode **cell type, not identity**, and the two processes
+at a seam are adjacent same-type — the earlier +0.58/+0.30 re-ID used easy random
+distractors, not the hard seam negatives. So the two-cue thesis is **not supported by
+the local cue we have**; a useful second cue must read membrane continuity / topology
+across the seam, not cross-section appearance. The infrastructure (three pillars,
+combiner, abstaining queue, ground truth) is built and tested; the conclusion is that
+grammar, not local ultrastructure, is the signal.
 
 ## Metric
 Synapse-pair line-graph F1 (`neuronauts.line_graph.evaluate_suite`) before/after

@@ -1,0 +1,369 @@
+{
+  "summary": {
+    "n_total": 27,
+    "n_ok": 27,
+    "n_seam_ok": 3,
+    "n_cont_ok": 24,
+    "cutface_sim_seam_mean": 0.6272421081860861,
+    "cutface_sim_cont_mean": 0.552066475773851,
+    "barrier_seam_mean": 0.0171177763937826,
+    "barrier_cont_mean": 0.037556608812616625,
+    "auc_cutface": 0.40277777777777773,
+    "auc_barrier": 0.3958333333333333,
+    "grammar_seam_join_de_mean": -0.6666666666666665,
+    "grammar_seam_reject_frac": 0.6666666666666666
+  },
+  "rows": [
+    {
+      "kind": "seam",
+      "label": 1,
+      "cutface_sim": 0.4272821545600891,
+      "barrier": 0.027113271555246628,
+      "ok": 1,
+      "gap_nm": 687.1157107794872,
+      "grammar_join_de": -0.9999999999999996,
+      "ids": [
+        864691136923545060,
+        864691136176349446
+      ]
+    },
+    {
+      "kind": "seam",
+      "label": 1,
+      "cutface_sim": 0.6792631149291992,
+      "barrier": 0.024240057626101173,
+      "ok": 1,
+      "gap_nm": 700.2171091882859,
+      "grammar_join_de": -1.0,
+      "ids": [
+        864691135945998116,
+        864691135155979108
+      ]
+    },
+    {
+      "kind": "seam",
+      "label": 1,
+      "cutface_sim": 0.7751810550689697,
+      "barrier": 0.0,
+      "ok": 1,
+      "gap_nm": 1322.0590001962848,
+      "grammar_join_de": 0.0,
+      "ids": [
+        864691135463455550,
+        864691135292658102
+      ]
+    },
+    {
+      "kind": "continuation",
+      "label": 0,
+      "cutface_sim": 0.617293119430542,
+      "barrier": 0.008488553072882429,
+      "ok": 1,
+      "gap_nm": 2818.555658488936,
+      "grammar_join_de": NaN,
+      "ids": [
+        864691135686494647,
+        864691135686494647
+      ]
+    },
+    {
+      "kind": "continuation",
+      "label": 0,
+      "cutface_sim": 0.38038718700408936,
+      "barrier": 0.08580428722458032,
+      "ok": 1,
+      "gap_nm": 2204.8092888048163,
+      "grammar_join_de": NaN,
+      "ids": [
+        864691135686494647,
+        864691135686494647
+      ]
+    },
+    {
+      "kind": "continuation",
+      "label": 0,
+      "cutface_sim": 0.7035825848579407,
+      "barrier": 0.06970517449910948,
+      "ok": 1,
+      "gap_nm": 4282.660855122665,
+      "grammar_join_de": NaN,
+      "ids": [
+        864691135686494647,
+        864691135686494647
+      ]
+    },
+    {
+      "kind": "continuation",
+      "label": 0,
+      "cutface_sim": 0.5330673456192017,
+      "barrier": 0.010002751723801882,
+      "ok": 1,
+      "gap_nm": 2090.5118990333444,
+      "grammar_join_de": NaN,
+      "ids": [
+        864691135686494647,
+        864691135686494647
+      ]
+    },
+    {
+      "kind": "continuation",
+      "label": 0,
+      "cutface_sim": 0.9826457500457764,
+      "barrier": 0.018649358635221124,
+      "ok": 1,
+      "gap_nm": 2976.7247861712995,
+      "grammar_join_de": NaN,
+      "ids": [
+        864691135686494647,
+        864691135686494647
+      ]
+    },
+    {
+      "kind": "continuation",
+      "label": 0,
+      "cutface_sim": 0.7065044641494751,
+      "barrier": 0.07526498356521343,
+      "ok": 1,
+      "gap_nm": 2831.817589498667,
+      "grammar_join_de": NaN,
+      "ids": [
+        864691135686494647,
+        864691135686494647
+      ]
+    },
+    {
+      "kind": "continuation",
+      "label": 0,
+      "cutface_sim": 0.3963615596294403,
+      "barrier": 0.011750578532994441,
+      "ok": 1,
+      "gap_nm": 2697.1989391760235,
+      "grammar_join_de": NaN,
+      "ids": [
+        864691136812081779,
+        864691136812081779
+      ]
+    },
+    {
+      "kind": "continuation",
+      "label": 0,
+      "cutface_sim": 0.5160072445869446,
+      "barrier": 0.034480722933746294,
+      "ok": 1,
+      "gap_nm": 3493.7886655634684,
+      "grammar_join_de": NaN,
+      "ids": [
+        864691136812081779,
+        864691136812081779
+      ]
+    },
+    {
+      "kind": "continuation",
+      "label": 0,
+      "cutface_sim": 0.36222460865974426,
+      "barrier": 0.16092722563132378,
+      "ok": 1,
+      "gap_nm": 3448.617994947133,
+      "grammar_join_de": NaN,
+      "ids": [
+        864691136812081779,
+        864691136812081779
+      ]
+    },
+    {
+      "kind": "continuation",
+      "label": 0,
+      "cutface_sim": 0.8129908442497253,
+      "barrier": 0.0385962729407138,
+      "ok": 1,
+      "gap_nm": 3122.921708912985,
+      "grammar_join_de": NaN,
+      "ids": [
+        864691136812081779,
+        864691136812081779
+      ]
+    },
+    {
+      "kind": "continuation",
+      "label": 0,
+      "cutface_sim": 0.7289687395095825,
+      "barrier": 0.026269718029696007,
+      "ok": 1,
+      "gap_nm": 4397.126334323361,
+      "grammar_join_de": NaN,
+      "ids": [
+        864691136812081779,
+        864691136812081779
+      ]
+    },
+    {
+      "kind": "continuation",
+      "label": 0,
+      "cutface_sim": 0.40329688787460327,
+      "barrier": 0.0,
+      "ok": 1,
+      "gap_nm": 2826.4918184916087,
+      "grammar_join_de": NaN,
+      "ids": [
+        864691136812081779,
+        864691136812081779
+      ]
+    },
+    {
+      "kind": "continuation",
+      "label": 0,
+      "cutface_sim": 0.32504966855049133,
+      "barrier": 0.02307776975573998,
+      "ok": 1,
+      "gap_nm": 4437.520028123817,
+      "grammar_join_de": NaN,
+      "ids": [
+        864691136195284556,
+        864691136195284556
+      ]
+    },
+    {
+      "kind": "continuation",
+      "label": 0,
+      "cutface_sim": 0.7486417293548584,
+      "barrier": 0.02249103437475514,
+      "ok": 1,
+      "gap_nm": 6665.61325010685,
+      "grammar_join_de": NaN,
+      "ids": [
+        864691136195284556,
+        864691136195284556
+      ]
+    },
+    {
+      "kind": "continuation",
+      "label": 0,
+      "cutface_sim": 0.8125844597816467,
+      "barrier": 0.017152027765284635,
+      "ok": 1,
+      "gap_nm": 4102.85364106496,
+      "grammar_join_de": NaN,
+      "ids": [
+        864691136195284556,
+        864691136195284556
+      ]
+    },
+    {
+      "kind": "continuation",
+      "label": 0,
+      "cutface_sim": -0.09214448928833008,
+      "barrier": 0.022664176390399787,
+      "ok": 1,
+      "gap_nm": 2859.7622278783947,
+      "grammar_join_de": NaN,
+      "ids": [
+        864691136195284556,
+        864691136195284556
+      ]
+    },
+    {
+      "kind": "continuation",
+      "label": 0,
+      "cutface_sim": 0.4452974796295166,
+      "barrier": 0.0069315347390568405,
+      "ok": 1,
+      "gap_nm": 2832.61010377355,
+      "grammar_join_de": NaN,
+      "ids": [
+        864691136195284556,
+        864691136195284556
+      ]
+    },
+    {
+      "kind": "continuation",
+      "label": 0,
+      "cutface_sim": 0.1840854436159134,
+      "barrier": 0.024882156185702897,
+      "ok": 1,
+      "gap_nm": 4015.9123496411125,
+      "grammar_join_de": NaN,
+      "ids": [
+        864691136195284556,
+        864691136195284556
+      ]
+    },
+    {
+      "kind": "continuation",
+      "label": 0,
+      "cutface_sim": 0.4941186010837555,
+      "barrier": 0.008202109388925728,
+      "ok": 1,
+      "gap_nm": 2801.4853203256303,
+      "grammar_join_de": NaN,
+      "ids": [
+        864691135975539779,
+        864691135975539779
+      ]
+    },
+    {
+      "kind": "continuation",
+      "label": 0,
+      "cutface_sim": 0.7500019073486328,
+      "barrier": 0.03967368462628723,
+      "ok": 1,
+      "gap_nm": 3109.1400740397658,
+      "grammar_join_de": NaN,
+      "ids": [
+        864691135975539779,
+        864691135975539779
+      ]
+    },
+    {
+      "kind": "continuation",
+      "label": 0,
+      "cutface_sim": 0.5164027810096741,
+      "barrier": 0.01967252724315966,
+      "ok": 1,
+      "gap_nm": 6088.178709597805,
+      "grammar_join_de": NaN,
+      "ids": [
+        864691135975539779,
+        864691135975539779
+      ]
+    },
+    {
+      "kind": "continuation",
+      "label": 0,
+      "cutface_sim": 0.7125185132026672,
+      "barrier": 0.016244239560066678,
+      "ok": 1,
+      "gap_nm": 3451.2017543793045,
+      "grammar_join_de": NaN,
+      "ids": [
+        864691135975539779,
+        864691135975539779
+      ]
+    },
+    {
+      "kind": "continuation",
+      "label": 0,
+      "cutface_sim": 0.5759199857711792,
+      "barrier": 0.07423801411593983,
+      "ok": 1,
+      "gap_nm": 2700.885780628274,
+      "grammar_join_de": NaN,
+      "ids": [
+        864691135975539779,
+        864691135975539779
+      ]
+    },
+    {
+      "kind": "continuation",
+      "label": 0,
+      "cutface_sim": 0.6337890028953552,
+      "barrier": 0.0861897105681975,
+      "ok": 1,
+      "gap_nm": 3671.965141446743,
+      "grammar_join_de": NaN,
+      "ids": [
+        864691135975539779,
+        864691135975539779
+      ]
+    }
+  ]
+}
