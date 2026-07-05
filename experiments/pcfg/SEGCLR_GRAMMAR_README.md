@@ -33,14 +33,18 @@ This explains everything:
 
 ## Results (leakage-safe on the proofread column, tangential train/eval split)
 
-**Splits** (stitch m343 fragments back into cells):
-- Most are trivial — proximity alone gets ~1.00 (the true continuation is the only
-  thing nearby).
-- On *contested* endpoints (a wrong-cell candidate also within reach, n=12):
-  distance 0.50 → geometry 0.75 → **SegCLR 1.00**. ⚠ But see caveats: n=12, a
-  lenient "same-neuron" metric, and SegCLR only wins when the distractor is a
-  *different type*. **Honest read: geometry does the work; SegCLR disambiguates
-  type on a small hard slice.**
+**Splits** — the goal-aligned test (synapse-pair F1 after stitching fragments,
+dense 8-neuron patch):
+- **Oracle** (join only correct contacts) → F1 0.928 at precision 0.96: the good
+  local joins exist and would fix most splits.
+- **Every local method (distance/geometry/SegCLR/combined) collapses precision
+  0.96 → 0.14** (F1 0.24). In dense tissue different-neuron contacts outnumber
+  same (247 vs 172), local info can't separate them, and agglomeration
+  transitivity turns a few wrong joins into one giant blob.
+- ⚠ The earlier per-endpoint "contested 1.00" was a lenient metric on n=12 and
+  did *not* survive the synapse-level agglomeration test. **Honest read: you
+  CANNOT fix splits without introducing mergers from cheap local info** — the
+  bottleneck is precision under agglomeration, which needs cell *identity*.
 
 **Merges:**
 - Multi-soma: **AUC 1.0** (grammar).

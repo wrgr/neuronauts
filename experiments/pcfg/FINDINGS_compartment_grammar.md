@@ -265,6 +265,57 @@ The architecture is symmetric — **structure proposes, SegCLR decides**:
   geometry alone misses.  This is SegCLR's comparative strength, realised.
 
 
+## ★ Landmark question: can we JOIN fragments to fix splits WITHOUT introducing mergers, from local info? — NO
+
+The goal in the repo's currency: put each neuron's **half-synapses** back on the
+correct neuron. Start = m343 fragments (under-merged). Stitch fragments by contact,
+score joins by {distance, geometry=tangent colinearity, SegCLR, combined},
+agglomerate, measure **synapse-pair precision/recall/F1** vs true neuron. Dense
+8-neuron column patch, 279 fragments, 34 424 half-synapses.
+
+| | precision | recall | F1 |
+|---|---|---|---|
+| no-stitch (baseline) | 0.96 | 0.76 | 0.848 |
+| **ORACLE** — join only *correct* same-neuron contacts | 0.96 | 0.90 | **0.928** |
+| distance / geometry / segclr / combined (any threshold) | **0.14** | 0.9+ | **0.24** |
+
+**The good joins exist** (oracle fixes most splits: recall 0.76→0.90 at precision
+0.96). But **every local method collapses precision 0.96 → 0.14** — it merges nearly
+everything into one blob. Three compounding reasons:
+1. In dense tissue, **different-neuron contacts outnumber same-neuron** (247 vs 172):
+   most touching fragments are *different* cells.
+2. Local grammar/geometry/SegCLR **cannot separate same- from different-neuron
+   contacts** (SegCLR = type not identity; colinearity is ambiguous at a contact).
+3. **Agglomeration transitivity is catastrophic** — ~7 wrong joins chain all 8 cells
+   into one component; every method's accepted set contains far more. One bad join
+   fuses two whole cells.
+
+**Answer:** the landmark ("accurate fragment-joining without introducing mergers
+from cheap local info") **does not work** in dense tissue. The bottleneck is not
+recall (splits are locally fixable) but **precision under agglomeration** — and
+that needs cell *identity*, which SegCLR does not carry (below). A viable path is
+non-agglomerative / globally-consistent partition with a hard merge-cost, not
+greedy local joins.
+
+## Can tweaking open SegCLR recover cell identity? — NO (not decodable)
+
+SegCLR is open code, so: could a tweak make it encode *identity*, not just type?
+Test: train a supervised metric head on **frozen** SegCLR to separate same-cell
+from **different-cell-SAME-TYPE** pairs (held-out cells; 8 cells, mostly 23P).
+
+| | AUC |
+|---|---|
+| raw cosine (SegCLR as-is) | **0.513** |
+| learned metric head (frozen SegCLR) | **0.509** |
+
+Both at **chance**. Individual identity is **not present** in the frozen embeddings
+for same-type cells — so no simple head/metric extracts it. This is a consequence
+of the ~4 µm receptive field: two same-type axons are genuinely indistinguishable
+in local EM. The only levers that could help are ones that add *information*:
+retrain SegCLR with a **larger receptive field + distant same-cell positives**, or
+use **EM-native seam features** (membrane continuity at the actual contact) — not a
+post-hoc tweak to the released embeddings.
+
 ## Split fixer 2×2 ablation (geometry × SegCLR) + merge detector
 
 **Split — contested endpoints** (a same- AND a different-neuron endpoint both
