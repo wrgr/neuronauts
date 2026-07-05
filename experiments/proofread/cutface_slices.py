@@ -321,6 +321,137 @@ def evaluate_follow_ultra(seg, em, *, gaps=(3, 6, 10), traj_k=5, min_area=25,
     return res
 
 
+def evaluate_follow_pipeline(seg, *, gaps=(3, 6), traj_k=5, min_area=25,
+                             search_nm=2500.0, caliber_ratio=2.5, soma_um2=15.0,
+                             seed=0, verbose=True):
+    """The three-stage follower end-to-end: RANK -> GRAMMAR-VETO -> ABSTAIN/COMMIT.
+
+    1. **Rank** — fused geometry score (cut-face IoU + motion-comp + trajectory) picks
+       the top candidate per cut.
+    2. **Grammar veto** — reject the top candidate if the join is ungrammatical: a
+       caliber jump (cross-section **area ratio** > ``caliber_ratio``) or joining two
+       soma-scale objects (both areas > ``soma_um2`` µm²).  This is Pillar-1
+       ``grammar_energy``'s caliber/soma terms applied to the local join, computed from
+       the real cross-section areas.
+    3. **Abstain or commit** — commit only if the fused score ≥ threshold; else abstain.
+
+    Terminal cut faces (the object does *not* continue) are included, so committing to
+    one is a **false merge** — the expensive error.  We sweep the threshold and report
+    precision (of commits, fraction that are the correct true continuation) vs coverage
+    (fraction of real continuations correctly fixed), **with and without the veto**.
+    """
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.pipeline import make_pipeline
+    from sklearn.model_selection import GroupKFold
+
+    d = seg.data; vox = np.asarray(seg.voxel_size_nm, float)
+    px_um2 = (vox[0] * vox[1]) / 1e6
+    nz = d.shape[2]; shape2d = d.shape[:2]
+    fp = {}
+    def foot(z):
+        if z not in fp:
+            fp[z] = _footprints(d[:, :, z], min_area)
+        return fp[z]
+    cut_slices = list(range(traj_k + 1, nz - max(gaps) - 1, 2))
+
+    rows, meta = [], []   # row: [iou,imc,td,ar,gap, area_a_um2, area_b_um2, is_true]; meta:[iid,has_true]
+    iid = 0
+    for gap in gaps:
+        for z0 in cut_slices:
+            face = foot(z0); nextf = foot(z0 + gap)
+            if not nextf:
+                continue
+            nx_ids = list(nextf)
+            nx_cent_nm = np.array([nextf[j][2] for j in nx_ids]) * vox[:2]
+            for oid, (ays, axs, acent, aarea) in face.items():
+                acent_nm = acent * vox[:2]
+                dcent = np.linalg.norm(nx_cent_nm - acent_nm, axis=1)
+                pool = np.where(dcent <= search_nm)[0]
+                if len(pool) < 2:
+                    continue
+                has_true = oid in nextf
+                c_prev = _centroid_on(d, oid, z0 - traj_k)
+                vel = (acent - c_prev) / traj_k if c_prev is not None else np.zeros(2)
+                pred_nm = (acent + vel * gap) * vox[:2]
+                sy, sx = _shift_mask(ays, axs, vel * gap, shape2d)
+                for p in pool:
+                    j = nx_ids[p]; bys, bxs = nextf[j][0], nextf[j][1]
+                    rows.append([
+                        _iou(ays, axs, bys, bxs, shape2d),
+                        _iou(sy, sx, bys, bxs, shape2d),
+                        np.linalg.norm(nx_cent_nm[p] - pred_nm) / 1000.0,
+                        -abs(np.log((nextf[j][3] + 1) / (aarea + 1))), gap,
+                        aarea * px_um2, nextf[j][3] * px_um2, int(j == oid)])
+                    meta.append([iid, int(has_true)])
+                iid += 1
+    if not rows:
+        return {"error": "no instances"}
+    A = np.array(rows, float); meta = np.array(meta)
+    X = A[:, :5]; y = A[:, 7].astype(int)
+    area_a, area_b = A[:, 5], A[:, 6]
+    grp = np.array([m for m in meta[:, 0]])         # group by cut-instance for CV safety
+    # fused geometry score (leakage-safe by cut slice would need z0; group by iid keeps
+    # a cut's candidates together, which is what matters for ranking)
+    s = np.full(len(y), np.nan)
+    n_splits = max(2, min(5, len(np.unique(grp))))
+    for tr, te in GroupKFold(n_splits=n_splits).split(X, y, grp):
+        if len(np.unique(y[tr])) < 2:
+            continue
+        m = make_pipeline(StandardScaler(),
+                          LogisticRegression(max_iter=2000, class_weight="balanced"))
+        m.fit(X[tr], y[tr]); s[te] = m.predict_proba(X[te])[:, 1]
+
+    # per-cut: top candidate, its score, whether grammar-vetoed, whether it's the truth
+    cuts = []
+    for k in np.unique(meta[:, 0]):
+        sel = np.where(meta[:, 0] == k)[0]
+        sc = s[sel]
+        if np.isnan(sc).all():
+            continue
+        top = sel[np.nanargmax(sc)]
+        ratio = max(area_a[top], area_b[top]) / (min(area_a[top], area_b[top]) + 1e-9)
+        vetoed = (ratio > caliber_ratio) or (area_a[top] > soma_um2 and area_b[top] > soma_um2)
+        cuts.append((float(s[top]), int(y[top]), int(meta[sel[0], 1]), bool(vetoed)))
+    cuts = np.array([(a, b, c, d_) for a, b, c, d_ in cuts], float)
+    score, is_true_top, has_true, vetoed = cuts[:, 0], cuts[:, 1], cuts[:, 2], cuts[:, 3].astype(bool)
+    n_realcont = int(has_true.sum())
+
+    def sweep(use_veto):
+        out = []
+        for t in np.linspace(0.30, 0.95, 40):
+            commit = (score >= t) & (~(vetoed & use_veto))
+            nc = int(commit.sum())
+            if nc == 0:
+                continue
+            tp = int(((is_true_top == 1) & (has_true == 1) & commit).sum())  # correct fix
+            out.append((float(t), tp / nc, tp / max(1, n_realcont), nc))
+        return out
+
+    def op_point(curve):
+        good = [r for r in curve if r[1] >= 0.95]
+        return max(good, key=lambda r: r[2]) if good else None
+
+    pc_noveto, pc_veto = sweep(False), sweep(True)
+    res = {"n_cuts": len(cuts), "n_real_continuations": n_realcont,
+           "veto_fire_rate": float(vetoed.mean()),
+           "veto_kills_true": int((vetoed & (is_true_top == 1) & (has_true == 1)).sum()),
+           "veto_kills_false": int((vetoed & ~((is_true_top == 1) & (has_true == 1))).sum()),
+           "op_noveto": op_point(pc_noveto), "op_veto": op_point(pc_veto),
+           "pc_noveto": pc_noveto, "pc_veto": pc_veto}
+    if verbose:
+        print(f"cuts={len(cuts)} (real continuations={n_realcont}, terminals={len(cuts)-n_realcont})")
+        print(f"grammar veto fires on {vetoed.mean():.1%} of top picks; "
+              f"kills {res['veto_kills_false']} false vs {res['veto_kills_true']} true connects")
+        for tag, op in (("no-veto", res["op_noveto"]), ("+veto", res["op_veto"])):
+            if op:
+                print(f"  {tag:8s} P>=0.95 at thr={op[0]:.2f} -> precision={op[1]:.3f} "
+                      f"coverage={op[2]:.3f} ({op[3]} commits)")
+            else:
+                print(f"  {tag:8s} never reaches P>=0.95")
+    return res
+
+
 def evaluate_follow_fused(seg, *, gaps=(3, 6, 10, 15, 20), traj_k=5, min_area=15,
                           cut_slices=None, search_nm=2500.0, seed=0, verbose=True):
     """The combined follower: a LEARNED fusion of cut-face + trajectory per candidate.

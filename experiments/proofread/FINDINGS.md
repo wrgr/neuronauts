@@ -346,6 +346,33 @@ Wiring Pillar-1 `grammar_energy` as a **hard veto** on the chosen candidate (rej
 join raises the grammar energy) is the missing consistency filter — cheap to add on top of
 the ranker, and the natural next step alongside the abstention threshold.
 
+### The three-stage follower, end-to-end (`evaluate_follow_pipeline`)
+
+Wired all three: **rank** (fused geometry) → **grammar veto** (reject the top pick on a
+caliber jump — cross-section area ratio > 2.5 — or a two-soma join; Pillar-1's caliber/soma
+terms on the real cross-section areas) → **abstain/commit** (commit only above a score
+threshold, else leave the gap).  Terminal cut faces (objects that don't continue) are
+included, so committing to one is a false merge.  Precision (commits that are the correct
+true continuation) vs coverage (real continuations fixed), sweeping the threshold, mip-2,
+24 246 cuts (21% terminal):
+
+- **The grammar veto helps.** It fires on ~19% of top picks and kills **false connects 2.2:1
+  over true** (3173 vs 1439); at matched coverage it lifts precision **0.69 → 0.73**.
+- **Precision ceiling is ~0.73–0.84, below the P≥0.95 bar.** Restricting to the cleanest
+  single-jump regime (gap 120 nm) reaches P=0.84 @ 0.75 coverage; the mixed (120+240 nm)
+  config tops ~0.73.  The residual is terminals whose nearest neighbour has high footprint
+  overlap (an unavoidable local false merge) and multi-section-gap ranking errors.
+
+**Honest reading.** The architecture works and each stage pulls its weight — but this
+config is **not yet deployable-precision**.  The gap between here and the 0.995 contiguous
+linking (`evaluate_cutfaces`, 40 nm) is the design lesson: **follow section-by-section
+(gap 1) where linking is near-perfect, and only invoke the harder gap-jump at a real
+break.**  Reaching high precision then needs (a) contiguous tracking not section-skipping,
+(b) **global assignment / matching** so each cut face claims ≤1 partner (kills the terminal
+false-merges a greedy top-1 makes), and (c) the grammar veto with **real compartment
+labels** (synapse polarity), not just caliber.  All three are known, scoped next steps —
+the end-to-end skeleton (rank → veto → abstain) is now built and measured.
+
 Honest caveats: 189 scattered clean neurons are far sparser than real neuropil, so
 the confusable fraction (13%) and the numbers on it are **optimistic** — dense tissue
 has more parallel distractors. Clean skeletons, not messy fragments. The models are

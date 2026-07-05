@@ -48,3 +48,18 @@ def test_motion_compensation_beats_raw_for_moving_object():
     assert 5 in res
     # motion-compensated cut-face should track the moving object at least as well as raw
     assert res[5]["iou_motioncomp_top1"] >= res[5]["iou_raw_top1"]
+
+
+def test_pipeline_runs_and_separates_terminal():
+    # object 5 continues across all z; object 8 terminates at z=15 (a tip).
+    from experiments.proofread.cutface_slices import evaluate_follow_pipeline
+    d = np.zeros((80, 80, 30), np.uint64)
+    d[10:20, 10:20, :] = 5                       # continues everywhere
+    d[10:20, 40:50, :16] = 8                     # ends at z=15 (terminal above)
+    d[40:50, 40:50, :] = 3                       # a distractor column
+    v = VolumeChunk(data=d, voxel_size_nm=(32, 32, 40),
+                    bbox_voxels=((0, 0, 0), d.shape), mip=2)
+    res = evaluate_follow_pipeline(v, gaps=(3,), traj_k=3, min_area=20,
+                                   search_nm=6000.0, verbose=False)
+    assert "n_cuts" in res and res["n_cuts"] > 0
+    assert res["n_real_continuations"] < res["n_cuts"]   # some terminals exist
