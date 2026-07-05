@@ -1,0 +1,19 @@
+{
+  "n_instances": 110,
+  "K": 16,
+  "mip": 1,
+  "geometry": {
+    "top1": 0.8454545454545455,
+    "hard_top1": 0.8620689655172413,
+    "confusable_top1": 0.7321428571428571,
+    "hard_n": 58,
+    "confusable_n": 56
+  },
+  "geometry_plus_em": {
+    "top1": 0.7909090909090909,
+    "hard_top1": 0.7931034482758621,
+    "confusable_top1": 0.6428571428571429,
+    "hard_n": 58,
+    "confusable_n": 56
+  }
+}

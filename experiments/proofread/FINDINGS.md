@@ -215,6 +215,39 @@ from raw EM, supervised by human edits** (and read *membrane continuity / topolo
 not cross-section appearance) — not a hand-picked pretrained cosine. That is an open,
 promising direction, not a closed door.
 
+### First attempt at learned local EM (`follow_em.py`) — the cheap version does *not* help
+
+Took the honest next step: add **raw EM sampled along each candidate corridor** (mip-1
+intensity mean + membrane-catching min over a small ball, K=16 steps → 32 raw numbers,
+no seg mask, no pretrained cosine, no hand threshold) as extra input channels to the
+learned geometry model, on an EM-fetched confusable-enriched subset (110 instances,
+56 confusable, one fetch each).
+
+| model | overall | hard | confusable |
+|---|---|---|---|
+| geometry (raw coords) | 0.845 | 0.862 | 0.732 |
+| **geometry + raw-EM corridor** | 0.791 | 0.793 | **0.643** |
+
+**Adding the EM corridor made it worse, not better.** Two honest reasons, verified:
+(1) *the corridor is the wrong reader* — a straight chord between two skeleton points
+on a thin (~200 nm), curving neurite **leaves the process even for a true
+continuation**, so corridor intensity does not cleanly separate true from distractor
+(a minimal repro on 5 confusable instances showed near-identical true/distractor
+profiles: mean 0.53 vs 0.53); (2) 32 noisy features on 110 instances overfit. Note the
+earlier "membranes < 0.30" eyeballing was *my* mis-calibration — MICrONS EM is
+low-contrast (bulk 115–144/255, membranes ~100), fixed here by raw min-over-ball
+sampling; the learned model still found no usable signal in the straight corridor.
+
+**What this does and does not show (learning from the earlier overclaim):** it shows
+the *cheap straight-corridor* learned-EM feature does not add signal on this task — it
+does **not** show local EM is useless. The field's working local-EM method (**RoboEM**)
+is a learned local *flight* that a 3D CNN steers to *follow the process*, not a straight
+chord — precisely because the naive corridor fails. So the honest conclusion stands:
+extracting the local-ultrastructure cue needs a **learned tracer that follows the
+neurite** (RoboEM-style), a substantial 3D-CNN build, not a corridor feature. The
+geometry follow model remains the solid, cheap, positive result; local EM is a real
+but *harder* second cue that this first cheap attempt does not unlock.
+
 Honest caveats: 189 scattered clean neurons are far sparser than real neuropil, so
 the confusable fraction (13%) and the numbers on it are **optimistic** — dense tissue
 has more parallel distractors. Clean skeletons, not messy fragments. The models are
