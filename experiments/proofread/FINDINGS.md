@@ -137,18 +137,59 @@ one bounded membrane pass through, or do two membranes appose?) or a RoboEM-styl
 local trace — **not cross-section appearance**, which is type-confounded. The
 cut-face encoder is the wrong instrument for the second cue.
 
+## Update 2: *following* by trajectory inference — this **works** (`follow_test.py`)
+
+If appearance is the wrong instrument, what do humans actually use? Trajectory
+momentum + logical reconnection. Tested directly, **offline on skeletons, no EM**
+(the appearance trap avoided by construction): cut a real interior point, open a
+realistic gap (delete the neuron's own cable within `gap_nm`), and rank every
+vertex from *every* loaded neuron in the surrounding annulus — the real pool of
+competing processes. True continuation = far side of the gap (same neuron); the
+rest are distractors. 189 clean neurons, 2191 cut instances, gap 2 µm.
+
+| scorer | top-1 | hard¹ | confusable² |
+|---|---|---|---|
+| nearest (proximity) | 0.464 | 0.000 | 0.305 |
+| align (direction only) | 0.941 | 0.921 | 0.563 |
+| **learned (trajectory + caliber)** | **0.962** | **0.939** | **0.722** |
+
+¹ *hard* = the 1175 cases where the nearest vertex is a distractor (proximity
+misleads). ² *confusable* = the 295 cases with a **parallel, similarly-aligned
+distractor** (a fascicle) — the genuinely hard inference. Chance top-1 = 0.425.
+
+**Reading:** proximity is useless (≈ chance); **you can follow a process by
+trajectory alone at 0.96 top-1, recovering 94% of the cases where proximity
+fails.** Where a parallel process competes, direction alone drops to 0.56 but the
+learned model — adding caliber continuity — recovers to **0.72**, i.e. the *logical*
+features (caliber must match through a continuation) already start closing the gap
+direction can't. The residual (parallel same-caliber processes) is exactly where
+the next inference layer — global consequence (does this strand a fragment? reconnect
+to a soma?) and look-ahead — must take over. This is the learnable backbone of
+"follow like a human," and it needs **no appearance**.
+
+Honest caveats: 189 scattered clean neurons are far sparser than real neuropil, so
+the confusable fraction (13%) and the 0.72 on it are **optimistic** — dense tissue
+has more parallel distractors. Clean skeletons, not messy fragments. The "learned"
+model is a leave-one-neuron-out logistic over 4 geometric features — a proof of
+signal, not a system. But the direction is clear and the opposite of the appearance
+result: **geometry/trajectory carries identity signal; cross-section appearance does
+not.**
+
 ## Honest next steps (revised)
 
-1. **Replace the local cue** with a membrane-continuity / topology reader across the
-   seam (or a short local trace), and re-run `seam_test.py` — that is the real test
-   of whether a *second* cue exists beyond grammar.
-2. **Lean on grammar** for deployment now: it carries real signal (rejects
+1. **Build the "follow" model out** — this is the promising direction. Add the
+   *inference-by-consequence* features to `follow_test.py` (does a candidate reconnect
+   to a soma? does rejecting it strand a fragment? how many synapses does each choice
+   orphan?) and a short look-ahead down each option; measure how much of the
+   confusable residual (0.72 → ?) they close. Then train it as a ranker on the real
+   edit log (v117→later), supervised by the human's actual reconnections — appearance
+   excluded.
+2. **Lean on grammar** for merge-side deployment now: it carries real signal (rejects
    ungrammatical merges); wire confident grammar-rejected merges through **matching**
    (not agglomeration) and report synapse-pair F1 before/after vs oracle 0.928 /
    greedy 0.14.
-3. More seams (relax `min_verts`, more m343 merges) to firm up the n=3 seam estimate
-   — though the sign is consistent with the type-not-identity finding established
-   across this repo.
+3. Denser distractor sets (more neurons / a reconstructed sub-block) to replace the
+   optimistic sparse-skeleton floor in the follow test with real neuropil density.
 
 ## Positioning
 
