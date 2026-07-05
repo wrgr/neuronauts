@@ -26,5 +26,13 @@
     "hard_n": 1175,
     "confusable_top1": 0.7220338983050848,
     "confusable_n": 295
+  },
+  "consequence": {
+    "top1": 0.9767229575536285,
+    "mrr": 0.9856925517810958,
+    "hard_top1": 0.9668085106382979,
+    "hard_n": 1175,
+    "confusable_top1": 0.8406779661016949,
+    "confusable_n": 295
   }
 }

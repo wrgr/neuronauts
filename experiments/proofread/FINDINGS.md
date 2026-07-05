@@ -151,7 +151,8 @@ rest are distractors. 189 clean neurons, 2191 cut instances, gap 2 µm.
 |---|---|---|---|
 | nearest (proximity) | 0.464 | 0.000 | 0.305 |
 | align (direction only) | 0.941 | 0.921 | 0.563 |
-| **learned (trajectory + caliber)** | **0.962** | **0.939** | **0.722** |
+| learned (trajectory + caliber) | 0.962 | 0.939 | 0.722 |
+| **+ consequence (reciprocal trajectory)** | **0.977** | **0.970** | **0.841** |
 
 ¹ *hard* = the 1175 cases where the nearest vertex is a distractor (proximity
 misleads). ² *confusable* = the 295 cases with a **parallel, similarly-aligned
@@ -159,31 +160,44 @@ distractor** (a fascicle) — the genuinely hard inference. Chance top-1 = 0.425
 
 **Reading:** proximity is useless (≈ chance); **you can follow a process by
 trajectory alone at 0.96 top-1, recovering 94% of the cases where proximity
-fails.** Where a parallel process competes, direction alone drops to 0.56 but the
-learned model — adding caliber continuity — recovers to **0.72**, i.e. the *logical*
-features (caliber must match through a continuation) already start closing the gap
-direction can't. The residual (parallel same-caliber processes) is exactly where
-the next inference layer — global consequence (does this strand a fragment? reconnect
-to a soma?) and look-ahead — must take over. This is the learnable backbone of
-"follow like a human," and it needs **no appearance**.
+fails.** Where a parallel process competes (the confusable set), direction alone
+drops to 0.56 and trajectory+caliber to 0.72 — the residual is the hard case.
+
+**The consequence layer closes most of that residual.** Adding **bidirectional
+consistency** — does the candidate's own cable *point back through the gap at the
+cut* (a severed cable is collinear from both ends; a parallel fascicle member is
+laterally offset, so its cable does not extrapolate to the cut) — lifts the
+confusable case **0.72 → 0.84** and the hard case 0.94 → 0.97. Verified: robust
+across 4 seeds (confusable +0.07–0.12 each); a single-feature ablation isolates the
+driver as **reciprocal trajectory** (adds +0.16 alone; `tan_agree` adds a little;
+`ray_gap` is *useless* — a tight fascicle has a small line-gap, so it favours the
+distractor — and was dropped). This is exactly "inference by consequence": for two
+ends to be one process, *each* must be consistent with the other, not just locally
+plausible. And it needs **no appearance** — pure geometry, no identity, no soma.
+
+The still-open residual (~16% of confusable) is where same-caliber, mutually-collinear
+processes genuinely need *global* consequence (does rejecting this strand a fragment /
+orphan synapses / fail to reach a soma?) and look-ahead — the next layer.
 
 Honest caveats: 189 scattered clean neurons are far sparser than real neuropil, so
-the confusable fraction (13%) and the 0.72 on it are **optimistic** — dense tissue
-has more parallel distractors. Clean skeletons, not messy fragments. The "learned"
-model is a leave-one-neuron-out logistic over 4 geometric features — a proof of
-signal, not a system. But the direction is clear and the opposite of the appearance
-result: **geometry/trajectory carries identity signal; cross-section appearance does
-not.**
+the confusable fraction (13%) and the numbers on it are **optimistic** — dense tissue
+has more parallel distractors. Clean skeletons, not messy fragments. The models are
+leave-one-neuron-out logistics over 4–6 geometric features — a proof of signal, not a
+system. But the direction is clear and the opposite of the appearance result:
+**geometry/trajectory (both forward and reciprocal) carries identity signal;
+cross-section appearance does not.**
 
 ## Honest next steps (revised)
 
-1. **Build the "follow" model out** — this is the promising direction. Add the
-   *inference-by-consequence* features to `follow_test.py` (does a candidate reconnect
-   to a soma? does rejecting it strand a fragment? how many synapses does each choice
-   orphan?) and a short look-ahead down each option; measure how much of the
-   confusable residual (0.72 → ?) they close. Then train it as a ranker on the real
-   edit log (v117→later), supervised by the human's actual reconnections — appearance
-   excluded.
+1. **Build the "follow" model out** — this is the promising direction. Bidirectional
+   trajectory already closed most of the confusable residual (0.72 → 0.84). Next add
+   the *global* consequence features (does a candidate reconnect toward a soma? does
+   rejecting it strand a fragment / orphan synapses?) and a short look-ahead down each
+   option; measure how much of the remaining ~16% they close. Then train it as a
+   ranker on the real edit log (v117→later), supervised by the human's actual
+   reconnections — appearance excluded. Needs a *fragment-level* setup (cut cells into
+   pieces) so soma/stranding features are non-circular, and clean radius/soma-table
+   data (CAVE nucleus table), not the patchy skeleton radius.
 2. **Lean on grammar** for merge-side deployment now: it carries real signal (rejects
    ungrammatical merges); wire confident grammar-rejected merges through **matching**
    (not agglomeration) and report synapse-pair F1 before/after vs oracle 0.928 /

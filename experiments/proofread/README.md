@@ -55,11 +55,14 @@ grammar, not local ultrastructure, is the signal.
 **Following by inference works (`follow_test.py`).** The constructive counterpart:
 cut a real neurite, open a gap, and rank competing processes by *trajectory* (no EM).
 Proximity is useless (top-1 0.46 ≈ chance) but trajectory+caliber follows the true
-continuation at **0.96 top-1**, recovering **94%** of proximity-failures; on the hard
-parallel-process cases it holds **0.72** where direction-alone gets 0.56. So identity
-lives in *geometry/trajectory*, not cross-section appearance — and the residual
-(parallel processes) is where global-consequence inference must take over. This is
-the learnable backbone of "follow like a human," trainable on the edit log.
+continuation at **0.96 top-1**, recovering **94%** of proximity-failures. On the hard
+parallel-process (fascicle) cases, direction alone gets 0.56, trajectory+caliber 0.72,
+and adding **bidirectional consistency** (does the far end's cable point back through
+the gap at the cut — inference by consequence) lifts it to **0.84** (verified across 4
+seeds; driver = reciprocal trajectory). So identity lives in *geometry/trajectory*,
+not cross-section appearance, and each layer of *logical* consistency closes more of
+the residual — the learnable backbone of "follow like a human," trainable on the edit
+log, no EM.
 
 ## Metric
 Synapse-pair line-graph F1 (`neuronauts.line_graph.evaluate_suite`) before/after

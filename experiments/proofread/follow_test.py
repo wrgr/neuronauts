@@ -53,11 +53,49 @@ def load_neurons(pattern="cache/skel_current/*.npz", limit=None):
             continue
         if len(v) < 150:
             continue
+        r = np.where(np.isfinite(r), r, 150.0)   # radius data is patchy -> default
         adj = [[] for _ in range(len(v))]
         for a, b in e:
             adj[a].append(b); adj[b].append(a)
         out.append(Neuron(v, e, r, adj))
     return out
+
+
+def neuron_tangents(N: Neuron) -> np.ndarray:
+    """Unit local cable direction per vertex (sign-arbitrary); robust to branches."""
+    T = np.zeros_like(N.v)
+    for k in range(len(N.v)):
+        nb = N.adj[k]
+        if len(nb) == 1:
+            t = N.v[nb[0]] - N.v[k]
+        elif len(nb) == 2:
+            t = N.v[nb[1]] - N.v[nb[0]]
+        else:  # branch: the two most-opposed neighbours span the through-cable
+            dirs = [(N.v[b] - N.v[k]) / (np.linalg.norm(N.v[b] - N.v[k]) + 1e-9) for b in nb]
+            bi, bd = (0, 1), 2.0
+            for i in range(len(dirs)):
+                for j in range(i + 1, len(dirs)):
+                    c = float(dirs[i] @ dirs[j])
+                    if c < bd:
+                        bd = c; bi = (i, j)
+            t = N.v[nb[bi[1]]] - N.v[nb[bi[0]]]
+        nrm = np.linalg.norm(t)
+        T[k] = t / nrm if nrm > 1e-9 else 0.0
+    return T
+
+
+def _line_gap(v, d, c, t):
+    """Closest-approach distance (nm) between the endpoint ray (v,d) and the
+    candidate's cable line (c,t): small when they are two halves of one cable."""
+    w0 = v - c
+    b = float(d @ t); dd = float(d @ w0); e = float(t @ w0)
+    denom = 1.0 - b * b
+    if denom < 1e-6:                       # near-parallel: use perpendicular offset
+        perp = w0 - (w0 @ d) * d
+        return float(np.linalg.norm(perp))
+    sc = (b * e - dd) / denom; tc = (e - b * dd) / denom
+    closest = w0 + sc * d - tc * t
+    return float(np.linalg.norm(closest))
 
 
 def _component_from(nb, adj, removed, cap=4000):
@@ -80,6 +118,7 @@ def build_instances(neurons, *, gap_nm=1500.0, search_radius=3500.0,
     # global vertex table (all neurons) for realistic distractors
     allv = np.vstack([n.v for n in neurons])
     allr = np.concatenate([n.r for n in neurons])
+    alltan = np.vstack([neuron_tangents(n) for n in neurons])
     owner = np.concatenate([np.full(len(n.v), i) for i, n in enumerate(neurons)])
     local_idx = np.concatenate([np.arange(len(n.v)) for n in neurons])
     tree = cKDTree(allv)
@@ -108,7 +147,7 @@ def build_instances(neurons, *, gap_nm=1500.0, search_radius=3500.0,
             if not gi:
                 continue
             cand = np.asarray(gi)
-            c_pos = allv[cand]; c_rad = allr[cand]
+            c_pos = allv[cand]; c_rad = allr[cand]; c_tan = alltan[cand]
             c_owner = owner[cand]; c_local = local_idx[cand]
             # true = same neuron AND on the far-side component
             is_true = np.array([(c_owner[j] == ni) and (int(c_local[j]) in true_comp)
@@ -117,19 +156,38 @@ def build_instances(neurons, *, gap_nm=1500.0, search_radius=3500.0,
                 continue
             inst.append({
                 "v": N.v[v_i], "d": d, "r_v": float(N.r[v_i]),
-                "c_pos": c_pos, "c_rad": c_rad, "is_true": is_true,
+                "c_pos": c_pos, "c_rad": c_rad, "c_tan": c_tan, "is_true": is_true,
                 "neuron": ni,
             })
     return inst
+
+
+# feature layout: 0=align 1=dist 2=dcal 3=caliber | 4=recip 5=tan_agree 6=ray_gap
+# Ablation (confusable top-1): base 0.72; +recip 0.89 (the driver); +tan_agree 0.79;
+# +ray_gap 0.75 (near-useless — a tight parallel fascicle has a *small* line-gap, so
+# it favours the distractor).  So the consequence signal is the single reciprocal-
+# trajectory feature: does the far end's cable point back through the gap at the cut.
+BASE_COLS = [0, 1, 2, 3]                 # trajectory + caliber (the prior model)
+CONSEQ_COLS = [0, 1, 2, 3, 4, 5]         # + reciprocal + tangent-agreement (drop ray_gap)
 
 
 def _features(inst):
     v, d, r_v = inst["v"], inst["d"], inst["r_v"]
     rel = inst["c_pos"] - v
     dist = np.linalg.norm(rel, axis=1)
-    align = (rel @ d) / (dist + 1e-9)                 # cos angle to trajectory
+    u = rel / (dist[:, None] + 1e-9)
+    align = rel @ d / (dist + 1e-9)                    # cos angle to trajectory
     dcal = np.abs(inst["c_rad"] - r_v) / (r_v + 1e-6)
-    return np.column_stack([align, dist / 1000.0, dcal, np.full(len(dist), r_v / 1000.0)]), dist, align
+    tan = inst["c_tan"]
+    # consequence-of-continuity (bidirectional): does the candidate's cable point
+    # back at the endpoint, run parallel to it, and lie on the same extrapolated line?
+    recip = np.abs((tan * (-u)).sum(axis=1))           # candidate cable aims at v
+    tan_agree = np.abs(tan @ d)                        # cables run in the same line
+    ray_gap = np.array([_line_gap(v, d, inst["c_pos"][j], tan[j])
+                        for j in range(len(dist))]) / 1000.0
+    F = np.column_stack([align, dist / 1000.0, dcal, np.full(len(dist), r_v / 1000.0),
+                         recip, tan_agree, ray_gap])
+    return F, dist, align
 
 
 def evaluate(neurons, *, gap_nm=1500.0, search_radius=3500.0, per_neuron=6, seed=0,
@@ -154,19 +212,25 @@ def evaluate(neurons, *, gap_nm=1500.0, search_radius=3500.0, per_neuron=6, seed
     X = np.vstack(X); y = np.concatenate(y)
     iid = np.concatenate(iid); nid = np.concatenate(nid)
 
-    # leave-one-neuron-out learned scores
-    learned = np.full(len(y), np.nan)
-    neurons_u = np.unique(nid)
-    from sklearn.model_selection import LeaveOneGroupOut
-    if len(neurons_u) >= 3:
+    # leave-one-neuron-out learned scores for two nested feature sets
+    def loo_scores(cols):
+        s = np.full(len(y), np.nan)
+        neurons_u = np.unique(nid)
+        if len(neurons_u) < 3:
+            return s
+        Xc = X[:, cols]
         for tr_n in neurons_u:
             tr = nid != tr_n; te = nid == tr_n
             if len(np.unique(y[tr])) < 2:
                 continue
             m = make_pipeline(StandardScaler(),
                               LogisticRegression(max_iter=2000, class_weight="balanced"))
-            m.fit(X[tr], y[tr])
-            learned[te] = m.predict_proba(X[te])[:, 1]
+            m.fit(Xc[tr], y[tr])
+            s[te] = m.predict_proba(Xc[te])[:, 1]
+        return s
+
+    learned = loo_scores(BASE_COLS)          # trajectory + caliber (prior model)
+    learned_conseq = loo_scores(CONSEQ_COLS)  # + bidirectional-consistency inference
 
     # a "confusable" instance has a DISTRACTOR nearly as aligned as the best true
     # candidate (a parallel process) -- the genuinely hard, fascicle-like case
@@ -202,11 +266,11 @@ def evaluate(neurons, *, gap_nm=1500.0, search_radius=3500.0, per_neuron=6, seed
                 "confusable_n": conf_n}
 
     # build per-instance score arrays for each scorer
-    def gather(colscore):
+    def gather(pick):
         out = []
         for k, (F, dist, align, is_true) in enumerate(feats_per_inst):
             sel = iid == k
-            out.append(colscore(F, dist, align, learned[sel]))
+            out.append(pick(F, dist, align, learned[sel], learned_conseq[sel]))
         return out
 
     res = {
@@ -214,9 +278,10 @@ def evaluate(neurons, *, gap_nm=1500.0, search_radius=3500.0, per_neuron=6, seed
         "mean_candidates": float(np.mean([len(f[0]) for f in feats_per_inst])),
         "mean_true_per_inst": float(np.mean([f[3].sum() for f in feats_per_inst])),
         "chance_top1": float(np.mean([f[3].mean() for f in feats_per_inst])),
-        "nearest": top1(gather(lambda F, dist, al, lr: -dist)),
-        "align": top1(gather(lambda F, dist, al, lr: al)),
-        "learned": top1(gather(lambda F, dist, al, lr: lr)),
+        "nearest": top1(gather(lambda F, dist, al, lr, lc: -dist)),
+        "align": top1(gather(lambda F, dist, al, lr, lc: al)),
+        "learned": top1(gather(lambda F, dist, al, lr, lc: lr)),
+        "consequence": top1(gather(lambda F, dist, al, lr, lc: lc)),
     }
     if verbose:
         print(f"instances={res['n_instances']}  mean candidates/inst="
@@ -224,9 +289,9 @@ def evaluate(neurons, *, gap_nm=1500.0, search_radius=3500.0, per_neuron=6, seed
         print(f"chance top-1 = {res['chance_top1']:.3f}")
         print(f"confusable instances (a parallel/aligned distractor present): "
               f"{res['nearest']['confusable_n']}")
-        for name in ("nearest", "align", "learned"):
+        for name in ("nearest", "align", "learned", "consequence"):
             r = res[name]
-            print(f"  {name:8s} top1={r['top1']:.3f}  mrr={r['mrr']:.3f}  "
+            print(f"  {name:12s} top1={r['top1']:.3f}  mrr={r['mrr']:.3f}  "
                   f"hard_top1={r['hard_top1']:.3f} (n={r['hard_n']})  "
                   f"confusable_top1={r['confusable_top1']:.3f} (n={r['confusable_n']})")
     return res
