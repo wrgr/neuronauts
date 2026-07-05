@@ -24,9 +24,14 @@ does it resolve the residual ambiguous edits shape/grammar alone cannot?
   soma-merging joins (ΔE −1); **neutral on same-compartment merges (ΔE 0) — the
   residual that Pillar 2 must resolve** (the complementarity boundary, visible on
   turn one).
-- **Pillar 2 — `local_evidence.py`** (todo): local EM cues at the edit site —
-  membrane/cross-section/cytoplasm match (committed `cutface_encoder*.pt` via
-  `neuronauts.em_corridor`) + a short continuation score.
+- **Pillar 2 — `local_evidence.py`** (done): local EM cues at the edit site —
+  cut-face cross-section/cytoplasm match (committed `cutface_encoder*.pt` via
+  `neuronauts.em_corridor.cross_section_patch`) + a membrane-barrier score along
+  the connecting axis, from **one** bulk EM+seg fetch. `LocalEvidence(cutface_sim,
+  barrier, ...)`; `continuation` summarises "one process". *Validated on real
+  MICrONS mip-1 EM:* same-neurite z-gap pairs mean cut-face sim **+0.58** vs
+  cross-neurite **+0.30** (separable), barrier ≈0 on continuous cytoplasm. Barrier
+  is a labelled *first-cut* intensity approximation, not the RoboEM flight method.
 - **Pillar 3 — `combiner.py`** (todo): calibrated abstaining combiner over
   [grammar ΔEnergy, local evidence], trained on real edits
   (`edit_history` / `synapse_correction`), applied via **matching** (not
