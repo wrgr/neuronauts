@@ -265,6 +265,30 @@ The architecture is symmetric — **structure proposes, SegCLR decides**:
   geometry alone misses.  This is SegCLR's comparative strength, realised.
 
 
+## Contiguity + global matching — right idea, wrong substrate (SegCLR)
+
+Insight (correct): the fragments were **one continuous process** that segmentation
+cut, so a true split = two fragments that were *contiguous* (coaxial end-to-end,
+matching caliber), whereas a false contact = two cells with a membrane between.
+And a cut has two faces → each fragment endpoint rejoins **≤1** partner → **matching**
+(global), not agglomeration → structurally no blob cascade.
+
+Tested on the same dense patch (265 fragments):
+- The **coaxial end-to-end filter is precise**: 18 candidate joins, **17
+  same-neuron** — it cleanly rejects the side-by-side different-cell contacts that
+  wrecked precision before. *Contiguity geometry is the right discriminator.*
+- But **recall ≈ 0** (18 candidates vs ~172 real adjacencies). The coaxial cut-face
+  signal cannot be extracted from **sparse (~1 µm), overlapping SegCLR point
+  clouds**; m343 fragments interleave rather than tile end-to-end.
+- Matching vs agglomeration is moot at 18 candidates; SegCLR adds nothing.
+
+**Takeaway:** contiguity is the right *signal* and matching the right *global
+structure*, but the continuity lives in **skeleton geometry / EM cut-faces**
+(caliber, cross-section, membrane apposition) — **not** in SegCLR type embeddings.
+Split-fixing is a **geometric-continuity** problem (standard skeleton/mesh
+agglomeration), and SegCLR is the wrong tool for it, just as it lacks the identity
+needed for same-type merges.
+
 ## ★ Landmark question: can we JOIN fragments to fix splits WITHOUT introducing mergers, from local info? — NO
 
 The goal in the repo's currency: put each neuron's **half-synapses** back on the
