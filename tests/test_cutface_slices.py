@@ -63,3 +63,22 @@ def test_pipeline_runs_and_separates_terminal():
                                    search_nm=6000.0, verbose=False)
     assert "n_cuts" in res and res["n_cuts"] > 0
     assert res["n_real_continuations"] < res["n_cuts"]   # some terminals exist
+
+
+def test_global_matching_runs_and_excludes_reuse():
+    # obj 5 continues; obj 8 is a terminal tip overlapping obj 5's continuation.
+    # greedy lets the tip also claim obj 5's face; global must not (b claimed once).
+    from experiments.proofread.cutface_slices import evaluate_follow_matching
+    d = np.zeros((60, 60, 24), np.uint64)
+    d[20:30, 8:18, :] = 5                        # continues across all z
+    d[20:30, 15:25, :13] = 8                     # terminal tip, overlaps 5, ends at z=12
+    v = VolumeChunk(data=d, voxel_size_nm=(32, 32, 40),
+                    bbox_voxels=((0, 0, 0), d.shape), mip=2)
+    res = evaluate_follow_matching(v, gaps=(2,), traj_k=2, min_area=20,
+                                   search_nm=6000.0, verbose=False)
+    assert res["n_true_continuations"] > 0
+    # global should never commit MORE false matches than greedy at the same coverage
+    def prec_at(curve, cov):
+        c = [r for r in curve if r[2] >= cov]
+        return max(c, key=lambda r: r[1])[1] if c else 0.0
+    assert prec_at(res["pc_glob"], 0.5) >= prec_at(res["pc_greedy"], 0.5) - 1e-9

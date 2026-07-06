@@ -90,6 +90,16 @@ takes the best of each: top-1 **0.86** at 120 nm (vs 0.77 best single), still ah
 every larger gap. Pure geometry, no appearance. This is "follow like a human": cut-face
 contiguity ⊕ trajectory extrapolation, fused.
 
+**Three-stage follower + global matching (`evaluate_follow_pipeline`, `evaluate_follow_matching`).**
+Full pipeline: rank (fused) → grammar veto (reject caliber-jump / two-soma joins;
++0.04 precision at matched coverage) → abstain/commit (connect-vs-abstain AUC 0.84, so it
+knows when *not* to connect). **Global one-to-one matching** (each cut face claims ≤1
+partner) beats greedy top-1 everywhere and is the safety mechanism against terminal
+false-merges. In the **contiguous regime (section-to-section, 40 nm)** it auto-links
+**94.9% of continuations at P≥0.99** — the landmark posture, joining fragments at scale
+without introducing mergers. (Honest caveat: artificial cuts of continuous objects; real
+false splits are harder — next step is the matcher on real splits with synapse-F1.)
+
 ## Metric
 Synapse-pair line-graph F1 (`neuronauts.line_graph.evaluate_suite`) before/after
 auto-correction, leakage-safe on the proofread column; precision reported *with*

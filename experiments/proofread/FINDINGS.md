@@ -373,6 +373,39 @@ false-merges a greedy top-1 makes), and (c) the grammar veto with **real compart
 labels** (synapse polarity), not just caliber.  All three are known, scoped next steps —
 the end-to-end skeleton (rank → veto → abstain) is now built and measured.
 
+### Global matching — the safety mechanism, and a deployable operating point (`evaluate_follow_matching`)
+
+Greedy top-1 lets a candidate be claimed by many cut faces, so a terminal tip whose
+neighbour overlaps it becomes a false merge.  **Global one-to-one matching** (assign
+confident edges first, each face on *either* side claims ≤1 partner) fixes exactly that:
+the neighbour is taken by its own true continuation, the tip is left unmatched.  Bipartite
+weight = motion-compensated cut-face IoU; sweep the accept threshold; precision (committed
+matches that are same-object) vs coverage (true continuations recovered).  mip-2, one box:
+
+| regime | metric | greedy | **global** |
+|---|---|---|---|
+| **gap 40 nm (contiguous)** | coverage @ P≥0.99 | 0.900 | **0.949** |
+| gap 40 nm | coverage @ P≥0.95 | 0.952 | **0.972** |
+| gap 40 nm | precision @ cov≥0.85 | 0.996 | **0.998** |
+| gap 120 nm | precision @ cov≥0.70 | 0.820 | **0.892** |
+| mixed 40+120 nm | precision @ cov≥0.85 | 0.860 | **0.929** |
+
+Two results.  **(1) Global > greedy everywhere**, most where it matters — high coverage,
+where greedy's reuse conflicts bite (+0.05–0.07 precision at cov≥0.85; +0.02–0.05 coverage
+at P≥0.95).  One-partner-per-face is the mechanism that makes auto-apply safe.  **(2) The
+contiguous regime is deployable:** following **section-to-section (40 nm)** with global
+matching auto-links **94.9% of continuations at P≥0.99**.  That is the landmark posture —
+joining fragments at scale without introducing mergers — and it confirms the design:
+*follow contiguously where linking is near-perfect; invoke the harder gap-jump only at a
+real break.*
+
+**Honest caveats.** These are *artificial* cuts of continuous objects; a **real** false
+split broke for a reason (misalignment, damage), so real breaks are harder than a clean
+40 nm cut — the 0.99@0.95 is an upper bound, not the real-split number.  Still mip-2, one
+box, truth defined by seg id.  The next step is to run the matcher on **real** false
+splits (the reconnections proofreaders made) and report synapse-pair F1 before/after — but
+the mechanism (global matching ≫ greedy, contiguous ≫ gap-jump) is real and measured.
+
 Honest caveats: 189 scattered clean neurons are far sparser than real neuropil, so
 the confusable fraction (13%) and the numbers on it are **optimistic** — dense tissue
 has more parallel distractors. Clean skeletons, not messy fragments. The models are

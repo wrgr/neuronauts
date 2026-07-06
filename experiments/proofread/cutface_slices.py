@@ -321,6 +321,112 @@ def evaluate_follow_ultra(seg, em, *, gaps=(3, 6, 10), traj_k=5, min_area=25,
     return res
 
 
+def evaluate_follow_matching(seg, *, gaps=(3, 6), traj_k=5, min_area=25,
+                             search_nm=2500.0, seed=0, verbose=True):
+    """Global one-to-one MATCHING vs greedy top-1 — the safety mechanism.
+
+    Between the cut faces on slice ``z0`` and the candidate faces on ``z0+gap`` we build a
+    bipartite graph weighted by motion-compensated cut-face IoU.  Greedy lets every cut
+    face grab its best candidate (a candidate can be claimed by many → a terminal tip
+    whose neighbour overlaps it becomes a false merge).  **Global** assigns confident
+    edges first with mutual exclusion, so each face — on *either* side — claims at most one
+    partner: the neighbour is taken by its own true continuation and the tip is correctly
+    left unmatched.  We sweep the accept threshold and report precision (of committed
+    matches, fraction same-object) vs coverage (true continuations recovered).
+    """
+    d = seg.data; vox = np.asarray(seg.voxel_size_nm, float)
+    nz = d.shape[2]; shape2d = d.shape[:2]
+    fp = {}
+    def foot(z):
+        if z not in fp:
+            fp[z] = _footprints(d[:, :, z], min_area)
+        return fp[z]
+    cut_slices = list(range(traj_k + 1, nz - max(gaps) - 1, 2))
+
+    greedy, glob, n_true = [], [], 0    # each edge: (weight, is_true)
+    for gap in gaps:
+        for z0 in cut_slices:
+            A = foot(z0); B = foot(z0 + gap)
+            if not A or not B:
+                continue
+            b_ids = list(B); b_cent = np.array([B[j][2] for j in b_ids]) * vox[:2]
+            a_ids = list(A)
+            for oid in a_ids:
+                if oid in B:
+                    n_true += 1
+            # weighted edges (near pairs only), motion-compensated IoU
+            edges = []       # (w, ai, bi, is_true)
+            best_per_a = {}  # ai -> (w, bi, is_true)  for greedy
+            for ai, oid in enumerate(a_ids):
+                ays, axs, acent, aarea = A[oid]
+                c_prev = _centroid_on(d, oid, z0 - traj_k)
+                vel = (acent - c_prev) / traj_k if c_prev is not None else np.zeros(2)
+                sy, sx = _shift_mask(ays, axs, vel * gap, shape2d)
+                acent_nm = acent * vox[:2]
+                near = np.where(np.linalg.norm(b_cent - acent_nm, axis=1) <= search_nm)[0]
+                for bi in near:
+                    j = b_ids[bi]
+                    w = _iou(sy, sx, B[j][0], B[j][1], shape2d)
+                    if w <= 0:
+                        continue
+                    it = int(j == oid)
+                    edges.append((w, ai, bi, it))
+                    if ai not in best_per_a or w > best_per_a[ai][0]:
+                        best_per_a[ai] = (w, bi, it)
+            # greedy: each a takes its best b (b may be reused)
+            for ai, (w, bi, it) in best_per_a.items():
+                greedy.append((w, it))
+            # global: assign confident edges first, each a and b claimed once
+            edges.sort(reverse=True)
+            used_a, used_b = set(), set()
+            for w, ai, bi, it in edges:
+                if ai in used_a or bi in used_b:
+                    continue
+                used_a.add(ai); used_b.add(bi)
+                glob.append((w, it))
+    if n_true == 0:
+        return {"error": "no true continuations"}
+    G = np.array(greedy, float); GL = np.array(glob, float)
+
+    def sweep(M):
+        out = []
+        for t in np.linspace(0.02, 0.9, 45):
+            sel = M[:, 0] >= t
+            nc = int(sel.sum())
+            if nc == 0:
+                continue
+            tp = int(M[sel, 1].sum())
+            out.append((float(t), tp / nc, tp / n_true, nc))
+        return out
+
+    pc_greedy, pc_glob = sweep(G), sweep(GL)
+
+    def at_prec(curve, p):
+        good = [r for r in curve if r[1] >= p]
+        return max(good, key=lambda r: r[2]) if good else None
+
+    res = {"n_true_continuations": n_true,
+           "op_greedy_p95": at_prec(pc_greedy, 0.95), "op_glob_p95": at_prec(pc_glob, 0.95),
+           "op_greedy_p99": at_prec(pc_greedy, 0.99), "op_glob_p99": at_prec(pc_glob, 0.99),
+           "pc_greedy": pc_greedy, "pc_glob": pc_glob}
+    if verbose:
+        print(f"true continuations={n_true}")
+        for p, kg, kl in (("0.95", "op_greedy_p95", "op_glob_p95"),
+                          ("0.99", "op_greedy_p99", "op_glob_p99")):
+            g, l = res[kg], res[kl]
+            gs = f"cov={g[2]:.3f}@thr{g[0]:.2f}" if g else "unreached"
+            ls = f"cov={l[2]:.3f}@thr{l[0]:.2f}" if l else "unreached"
+            print(f"  P>={p}:  greedy {gs:22s}  GLOBAL {ls}")
+        # precision at matched coverage
+        def pat(curve, cov):
+            c = [r for r in curve if r[2] >= cov]
+            return max(c, key=lambda r: r[1])[1] if c else float("nan")
+        print("  precision at matched coverage:")
+        for cov in (0.5, 0.7, 0.85):
+            print(f"    cov>={cov}: greedy P={pat(pc_greedy,cov):.3f}  GLOBAL P={pat(pc_glob,cov):.3f}")
+    return res
+
+
 def evaluate_follow_pipeline(seg, *, gaps=(3, 6), traj_k=5, min_area=25,
                              search_nm=2500.0, caliber_ratio=2.5, soma_um2=15.0,
                              seed=0, verbose=True):
