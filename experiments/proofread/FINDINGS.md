@@ -1,3 +1,50 @@
+# Honest v117 baseline: what the pre-proofreading agglomeration actually gets wrong
+
+*(`v117_baseline.py`, `tests/test_v117_baseline.py`; metric verified on the whole
+proofread column, not boxes.)*
+
+**Question.** How well does the pre-proofreading **v117** agglomeration place each
+neuron's synapses onto a single object, vs the proofread **v1507** truth? Scored only
+on rooted-soma cells (those with ground truth); the rest of the volume is present as
+realistic confusables. Metric = **matched per-neuron confusion**: match each true
+neuron to the v117 object holding the most of its synapse *halves*; TP = its halves
+there, FN = its halves split into other objects, FP = other neurons' halves in that
+object. All 1355 proofread column cells (5.5 M halves), split leakage-safe into
+train/eval/gap slabs. Truth v1507 (supported release > 1400); prediction v117 via
+`get_roots` at the v117 timestamp, anchored on supervoxel ids.
+
+| region | neurons | v117 objs/neuron | P | R | F1 | **axon-OUT recall** (median/neuron) | dend-IN recall |
+|---|---|---|---|---|---|---|---|
+| overall | 1355 | 68 | 0.999 | 0.857 | 0.923 | **0.095** (87 % of cells < 0.5) | 0.959 |
+| train | 744 | 69 | 0.999 | 0.861 | 0.925 | 0.100 | 0.960 |
+| eval (held-out) | 307 | 67 | 1.000 | 0.841 | 0.914 | 0.089 | 0.952 |
+| gap | 304 | 63 | 1.000 | 0.863 | 0.926 | 0.093 | 0.964 |
+
+**Three verified conclusions:**
+
+1. **Precision ≈ 1.0, even at full density.** With all 1355 proofread cells packed
+   into the column, FP is 0.12 % of halves and there are **0 catastrophic merges**
+   (no v117 object is the primary home of two proofread cells) in every region. v117
+   essentially never merges two *proofread* cells. (It does merge cells with
+   *untruthed* fragments — unscorable against truth, but a real risk for a joiner.)
+
+2. **The error is splits, and it is almost entirely axonal.** Dendritic **input**
+   synapses are ~0.95 recall (one v117 object already holds them; median 1 object
+   covers 90 %). Axonal **output** synapses are shattered: **median 0.09 recall per
+   neuron** — a typical cell has only ~9 % of its outputs on its largest piece, the
+   rest scattered across dozens of the ~68 objects (median 35 objects to cover 90 %
+   of outputs).
+
+3. **The 0.92 overall F1 is misleading.** Inputs are 83 % of halves and nearly free,
+   so they dominate the count. "Synapses on the correct neuron" is ~0.85 by raw count
+   but **~0.09 for the outputs that carry the connectome.** So the task is **axon
+   reconstruction — joining shattered axonal output pieces without merging cells —
+   not merge-cutting.** This is why earlier work at the L2/supervoxel level and in
+   tiny boxes was mis-framed. Everything downstream is measured as **axon-output
+   recall lift at held precision**, axon and dendrite reported separately.
+
+---
+
 # Two-cue abstaining auto-proofreader — findings
 
 Error **detection + correction** framed like a trained proofreader: every candidate
