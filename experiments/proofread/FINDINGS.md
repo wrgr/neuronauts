@@ -406,33 +406,47 @@ box, truth defined by seg id.  The next step is to run the matcher on **real** f
 splits (the reconnections proofreaders made) and report synapse-pair F1 before/after — but
 the mechanism (global matching ≫ greedy, contiguous ≫ gap-jump) is real and measured.
 
-### Attempting the real-split test — the honest data boundary
+### The real-split test — done with CAVE v117→v1822 (`real_splits.py`)
 
-Tried to run the matcher on **real proofreader splits** and hit a genuine data wall worth
-recording (not a failure — a fact about the available ground truth):
+*(Correction of a prior wrong note that claimed this wasn't doable: it is — fetch the
+graphene cutout `agglomerate=True` at the v117 timestamp for fragments and at v1822 for
+the proofread grouping, the same v117↔later machinery used throughout this repo.  There was
+no data wall; the earlier reasoning was simply mistaken.)*
 
-1. **The static seg is flat.** `fetch_seg_volume` pulls the bossdb precomputed seg, whose
-   IDs **self-root** (`get_roots(id) == id`) — a flat base agglomeration, not the live
-   graphene supervoxel↔proofread-root graph.  So it cannot supply "these two fragments are
-   really one neuron" ground truth on its own.
-2. **The cached column box has only 2 real false splits** (`summarize_edits`:
-   `merge_targets = 2`), and they are **15.5 µm and 2.7 µm** apart at *synapse-side*
-   granularity — one is far outside the cut-face regime, the other is a single local case.
-   Two heterogeneous examples cannot yield an honest synapse-F1 number.
+Dense voxel ground truth: v117 id = fragment, v1822 id = proofread neuron; a **real false
+split** = a v1822 root gathering ≥2 v117 fragments.  18 µm box, mip-3: **11 803 fragments,
+15 real splits.**  Re-linked v117 fragments by motion-compensated cut-face IoU with global
+matching; a link is correct iff the fragments share a v1822 root.
 
-So the systematic real-split test is **not doable on this box**; it needs a real data build,
-scoped precisely: (a) fetch the **live graphene** supervoxel layer (`agglomerate=False`)
-plus `get_roots` at the proofread timestamp to get fragments + true grouping — *or*
-accumulate proofreader edits over a **larger region / many boxes** (~2 splits per 24 µm
-box) to gather enough **z-oriented, cut-face-regime** real splits; (b) validate the split
-count against `summarize_edits` before relying on it (CLAUDE.md); (c) run the
-`evaluate_follow_matching` machinery with **root-id truth** instead of same-seg-id truth;
-(d) map synapses to the pre/post fragments and report **line-graph F1 before/after**
-(`neuronauts.line_graph.evaluate_suite`) vs the oracle 0.928 / greedy-agglo 0.14 anchors.
-The follower machinery is ready to consume that set unchanged — only the ground-truth
-labelling swaps from "same static seg id" to "same proofread root."  **What is proven now
-is the mechanism on controlled cuts; the real-split-at-scale F1 is the next build, gated on
-assembling that set — and deliberately not faked from n≈2.**
+**Re-anchor on the goal: synapses on the correct neuron.**  The point of split-fixing is
+the synapse-pair line-graph F1 (`line_graph.compute_line_graph_f1`), so a fragment matters
+exactly insofar as it carries synapses — a tiny synapse-bearing fragment is as valuable as
+a dendrite.  Computed the real metric on the cached column SideTable, grouping synapse
+endpoints by v117 (fragmented) vs the proofread truth (later version):
+
+```
+synapse endpoints = 17 874
+F1_before (v117 vs proofread truth):  P=0.989  R=0.993  F1=0.991
+false-split neurons = 2;  synapse endpoints on them = 147 (0.8%)
+recall gap closeable by fixing splits: 0.007  (R 0.993 -> 1.0 oracle)
+```
+
+**The proofread column is already ~solved (F1 0.991).**  Split-fixing headroom here is
+0.7% because the region is proofread and v117 is already good — which is exactly why real
+splits are sparse (15 in an 18 µm box, mostly tiny).  So "improve F1 on the proofread
+column" is the wrong demonstration; the value of an auto-proofreader is in the **vast
+un-proofread bulk**, where automated F1 is far lower — but there we have **no per-synapse
+ground truth** except by proofreading more.  That is the real measurement problem, not a
+follower limitation.
+
+**What is genuinely proven / in hand:** the follower cues (cut-face contiguity, trajectory,
+global matching) are real and strong on controlled cuts; the **real v117→v1822 split ground
+truth is now assembled** (`fetch_agglo_volume` + `split_truth`, 15 real splits with sizes
+and synapse counts).  The honest next build is a **synapse-weighted** split-fixing demo:
+take a rawer starting grouping (or a less-proofread region with proofread truth), fix
+splits with the follower, and report **synapse-pair F1 before/after at held precision** —
+the metric that was the goal all along.  Not the geometric top-1 numbers this thread
+drifted into.
 
 Honest caveats: 189 scattered clean neurons are far sparser than real neuropil, so
 the confusable fraction (13%) and the numbers on it are **optimistic** — dense tissue
