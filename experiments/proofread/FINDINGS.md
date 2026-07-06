@@ -406,6 +406,34 @@ box, truth defined by seg id.  The next step is to run the matcher on **real** f
 splits (the reconnections proofreaders made) and report synapse-pair F1 before/after — but
 the mechanism (global matching ≫ greedy, contiguous ≫ gap-jump) is real and measured.
 
+### Attempting the real-split test — the honest data boundary
+
+Tried to run the matcher on **real proofreader splits** and hit a genuine data wall worth
+recording (not a failure — a fact about the available ground truth):
+
+1. **The static seg is flat.** `fetch_seg_volume` pulls the bossdb precomputed seg, whose
+   IDs **self-root** (`get_roots(id) == id`) — a flat base agglomeration, not the live
+   graphene supervoxel↔proofread-root graph.  So it cannot supply "these two fragments are
+   really one neuron" ground truth on its own.
+2. **The cached column box has only 2 real false splits** (`summarize_edits`:
+   `merge_targets = 2`), and they are **15.5 µm and 2.7 µm** apart at *synapse-side*
+   granularity — one is far outside the cut-face regime, the other is a single local case.
+   Two heterogeneous examples cannot yield an honest synapse-F1 number.
+
+So the systematic real-split test is **not doable on this box**; it needs a real data build,
+scoped precisely: (a) fetch the **live graphene** supervoxel layer (`agglomerate=False`)
+plus `get_roots` at the proofread timestamp to get fragments + true grouping — *or*
+accumulate proofreader edits over a **larger region / many boxes** (~2 splits per 24 µm
+box) to gather enough **z-oriented, cut-face-regime** real splits; (b) validate the split
+count against `summarize_edits` before relying on it (CLAUDE.md); (c) run the
+`evaluate_follow_matching` machinery with **root-id truth** instead of same-seg-id truth;
+(d) map synapses to the pre/post fragments and report **line-graph F1 before/after**
+(`neuronauts.line_graph.evaluate_suite`) vs the oracle 0.928 / greedy-agglo 0.14 anchors.
+The follower machinery is ready to consume that set unchanged — only the ground-truth
+labelling swaps from "same static seg id" to "same proofread root."  **What is proven now
+is the mechanism on controlled cuts; the real-split-at-scale F1 is the next build, gated on
+assembling that set — and deliberately not faked from n≈2.**
+
 Honest caveats: 189 scattered clean neurons are far sparser than real neuropil, so
 the confusable fraction (13%) and the numbers on it are **optimistic** — dense tissue
 has more parallel distractors. Clean skeletons, not messy fragments. The models are
