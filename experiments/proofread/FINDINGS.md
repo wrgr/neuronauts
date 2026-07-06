@@ -454,6 +454,51 @@ dropping precision** (greedy joining collapses P to 0.14 — the trap).  The geo
 precision-preserving joiner; the goal-aligned test is its **synapse-pair F1 before (0.234) →
 after, at held precision**, on L2 fragments with v1822-root truth.
 
+### The goal-metric result (`synapse_f1_join.py`) — the follower does NOT crack it at scale
+
+Ran exactly that: L2 volume (10 µm box, 632 synapses), join L2 fragments by global
+cut-face matching, sweep the accept threshold, synapse-pair F1 vs v1822 truth.
+
+| threshold | joins | join precision | recall | **F1** |
+|---|---|---|---|---|
+| before (L2) | — | — | 0.132 | **0.234** |
+| 0.10 (join freely) | 56 999 | 0.14 | 0.983 | **0.007** |
+| 0.52 (best F1) | 2 101 | 0.49 | 0.148 | **0.256** |
+| 0.80 (high-precision) | 372 | 0.81 | 0.139 | **0.245** |
+
+**The follower does not deliver a deployable synapse-F1 lift on real fragments at scale.**
+Best F1 is 0.256 vs 0.234 — a 0.02 gain — and it reproduces the field's known wall: join
+freely and recall hits 0.98 but **F1 collapses to 0.007** (the greedy-agglomeration
+precision cascade, matching this repo's 0.14 anchor); tighten to precise joins and coverage
+vanishes (F1 barely moves).  **Join edge-precision never reaches 0.90.**
+
+**Why — the honest mechanism.** Split-fixing is *cascade-sensitive*: a partition F1 needs
+near-perfect join precision because one wrong join merges two whole neurons and destroys
+many synapse pairs at once (union-find is unforgiving).  The local cut-face follower gives
+0.6–0.8 edge precision on dense, adversarial-by-construction L2 fragments; that is nowhere
+near the ~0.99 needed to avoid catastrophic cascades.  The 0.99 @ 0.95-coverage headline was
+on *artificial single cuts of isolated continuous objects with curated candidates* — the
+prior `FINDINGS_synapse_correction.md` (de-split geom AUC 0.988) had the same optimism and
+explicitly flagged that its non-adversarial negatives overstate the case.  At real scale,
+with every nearby fragment a candidate, the local geometry cue is not precise enough.
+
+### Honest bottom line of the whole two-cue effort
+
+- **Global grammar** (multi-soma, A↔D, caliber): real but narrow — catches gross errors.
+- **Local geometry** (cut-face + trajectory + global matching): strong on curated/artificial
+  cuts; **at scale on real fragments it hits the precision/recall wall** (F1 0.234 → 0.245 at
+  usable precision; collapses if pushed for recall).
+- **Local appearance / ultrastructure** (cut-face cosine, EM corridor, interior content):
+  type-confounded or redundant — no measured lift.
+
+The landmark — join fragments at scale without introducing mergers, for a large synapse-F1
+gain — is **not achieved by these local cues**.  That is consistent with why automated
+proofreading is an open problem: the deployable bar is ~0.99 join precision to beat the
+cascade, and local geometry alone does not reach it.  A real advance needs either a much
+stronger (likely learned, context-rich) join classifier or a fundamentally non-greedy global
+formulation with calibrated abstention that commits *only* the ~near-certain joins — the
+honest next direction, now measured against the correct baseline (F1 0.234) and metric.
+
 **What is genuinely proven / in hand:** the follower cues (cut-face contiguity, trajectory,
 global matching) are real and strong on controlled cuts; the **real v117→v1822 split ground
 truth is now assembled** (`fetch_agglo_volume` + `split_truth`, 15 real splits with sizes
