@@ -499,6 +499,42 @@ stronger (likely learned, context-rich) join classifier or a fundamentally non-g
 formulation with calibrated abstention that commits *only* the ~near-certain joins — the
 honest next direction, now measured against the correct baseline (F1 0.234) and metric.
 
+### Merge-aware constrained joining (`merge_aware_join.py`) — vetoes don't lift F1, and *why*
+
+Tried the "recognize merges and defer that subtree" idea: confident-first union-find that
+commits a join only if the resulting component stays grammatical — **A↔D veto** (reject an
+axon-typed↔dendrite-typed join with no soma, type from synapse polarity: pre side = axon,
+post side = dendrite), **2-soma veto**, **caliber veto**, **quarantine** of
+merge-contaminated fragments.  10 µm box, greedy vs merge-aware, per-veto ablation:
+
+```
+BEFORE (L2):            F1=0.234
+GREEDY best:            F1=0.257  join_P=0.61
+MERGE-AWARE best:       F1=0.250  join_P=0.48   (no better; the vetoes barely fire)
+ablation: no_ad / no_soma / no_quarantine  all ≡ full;  no_vetoes = greedy 0.257
+typing:  axon=64  dend=79  contaminated=1  soma_frags=0
+```
+
+**The vetoes do not help — and the reason is the useful finding.** Only ~143 of ~1000+ L2
+fragments could be **typed at all**: an L2 fragment is so small it carries ≤ 1 synapse, so
+synapse-polarity typing covers almost nothing, `soma_frags=0` (no soma-scale L2 in the box),
+and `contaminated=1`.  With almost no typed fragments, the A↔D veto has nothing to act on
+(removing it is identical to keeping it).  The dominant join errors are therefore between
+**untyped, same-compartment** fragments — two *different* axons whose cut-faces overlap in
+dense neuropil (the "confusable" parallel-process case) — which **no grammar/polarity veto
+can catch**.
+
+**Precise diagnosis (the value of the negative):** the merge signature others might exploit
+(polarity / grammar) is real but lives at the *neuron* scale, while the errors that cascade
+live at the *L2-fragment* scale where that signal is absent.  Two honest implications:
+(1) the veto idea could still work if applied to **partially-assembled components** once they
+accumulate enough synapses to be typed — but the damaging joins happen *before* components
+grow that large, so it's chicken-and-egg; (2) the residual wrong joins are same-type
+parallel processes, exactly the case local appearance is type-confounded on — so the missing
+ingredient is genuinely a **finer identity discriminator between same-type neighbors**, not
+another grammar constraint.  That is the crisp statement of what an advance must provide,
+measured on the correct baseline (F1 0.234) and metric.
+
 **What is genuinely proven / in hand:** the follower cues (cut-face contiguity, trajectory,
 global matching) are real and strong on controlled cuts; the **real v117→v1822 split ground
 truth is now assembled** (`fetch_agglo_volume` + `split_truth`, 15 real splits with sizes
