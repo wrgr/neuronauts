@@ -81,3 +81,7 @@ scratchpad_bulk_synapses.py
 !models/cell_gnn_5feat.metrics.json
 !models/cell_gnn_real.pt
 !models/cell_gnn_real.metrics.json
+
+# v117 baseline/joiner result artifacts (regenerable)
+experiments/proofread/v117_baseline.json
+experiments/proofread/v117_joiner*.json

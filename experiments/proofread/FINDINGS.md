@@ -45,6 +45,63 @@ train/eval/gap slabs. Truth v1507 (supported release > 1400); prediction v117 vi
 
 ---
 
+# The v117-object joiner: candidate generation isn't the wall, the discriminator is
+
+*(`v117_proofread.py`, `tests/test_v117_proofread.py`.)*
+
+Given the baseline, the joiner's job is precise: **reconnect a neuron's shattered
+axonal output pieces to its arbor without merging cells.** Each v117 object gets a
+geometry (its L2 rep-coord point cloud + `max_dt_nm` caliber, via `get_leaves` →
+`l2cache`) and its output/input synapse counts. Candidate joins are built **globally**
+across all sampled neurons (KDTree over object point clouds within a gap) so
+wrong-neuron distractors are real; each is scored by proximity + trajectory
+colinearity + caliber match and labelled correct iff the two objects share a v1507
+truth. Joins are committed greedy vs merge-aware (`merge_aware_join`, polarity A↔D +
+caliber + soma vetoes), sweeping the accept threshold. Metric = **matched
+axon-output recall at held precision** vs the oracle (correct-joins-only) ceiling.
+
+**Gap sweep, 30 train neurons (2826 objects; base axon-output recall median 0.098):**
+
+| candidate gap | oracle median | **achievable @ P≥0.999** | greedy max-recall (P) |
+|---|---|---|---|
+| 2 µm | 0.113 | 0.098 (no lift) | 0.65 (P 0.03) |
+| 3 µm | 0.217 | 0.098 (no lift) | 0.73 (P 0.03) |
+| 5 µm | 0.436 | 0.098 (no lift) | 0.89 (P 0.03) |
+| 8 µm | **0.754** | 0.098 (no lift) | 0.94 (P 0.03) |
+
+The held-out **eval** region reproduces this exactly (oracle-median 0.155→0.432→**0.735**
+at 3/5/8 µm; achievable-at-held-P flat at the base; greedy 0.98 at P 0.03) — the
+pattern is leakage-proof, not a train artifact.
+
+**The decisive finding (honest negative that localizes the problem):**
+
+1. **Candidate generation is *not* the bottleneck.** The oracle ceiling rises steeply
+   with gap — correct proximity joins within 8 µm recover axon-output recall from 0.10
+   to **0.75**. The information to reassemble the axon *is* largely present in local
+   proximity; the correct joins exist in the candidate set.
+
+2. **The discriminator is the wall.** No hand-crafted geometric cue
+   (proximity + trajectory + caliber, with merge-aware polarity/caliber/soma vetoes)
+   commits *any* net-positive joins at held precision — achievable recall stays pinned
+   at the 0.098 baseline at every gap. Join edge-precision tops out ~0.5–0.58, and
+   committing at that precision **collapses neuron-level precision to 0.03** (one wrong
+   join fuses two cells through the union-find — the cascade this repo keeps hitting).
+
+3. **Why:** the surviving candidates are *same-compartment* — a true axonal
+   continuation vs an adjacent **parallel axon** a couple of µm away. They are
+   collinear, caliber-matched and both axon-typed, so geometry, caliber and the A↔D
+   polarity veto are all blind to the distinction. This is the identity/same-type
+   residual, now quantified at the correct (v117-object) granularity with the correct
+   (axon-output recall) metric.
+
+**So the well-posed open problem is a same-type identity discriminator** — the joins
+are there (oracle 0.75), but selecting them needs a cue that separates a process from
+its parallel neighbour, which no local geometry provides. That is exactly what the
+deferred hard-negative identity-embedding plan targets, and this result is the clean
+motivation for it (and the honest reason not to claim an F1 lift from geometry alone).
+
+---
+
 # Two-cue abstaining auto-proofreader — findings
 
 Error **detection + correction** framed like a trained proofreader: every candidate
