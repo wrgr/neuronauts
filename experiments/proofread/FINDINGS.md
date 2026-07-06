@@ -431,13 +431,28 @@ false-split neurons = 2;  synapse endpoints on them = 147 (0.8%)
 recall gap closeable by fixing splits: 0.007  (R 0.993 -> 1.0 oracle)
 ```
 
-**The proofread column is already ~solved (F1 0.991).**  Split-fixing headroom here is
-0.7% because the region is proofread and v117 is already good — which is exactly why real
-splits are sparse (15 in an 18 µm box, mostly tiny).  So "improve F1 on the proofread
-column" is the wrong demonstration; the value of an auto-proofreader is in the **vast
-un-proofread bulk**, where automated F1 is far lower — but there we have **no per-synapse
-ground truth** except by proofreading more.  That is the real measurement problem, not a
-follower limitation.
+**CORRECTION — that 0.991 was the wrong baseline.**  v117 in this column is *already
+proofread* (v117 roots 604 ≈ v1822 roots 609; `summarize_edits` = 14 changed roots of
+5362), so "v117 vs v1822" measured proofread-vs-proofread ≈ 1.0 — and 0.991 impossibly
+*exceeds* this repo's oracle ceiling (0.928), the tell that it is not a real "before."
+The real fragmented baseline is the **L2 chunk level** (the fragment unit behind the
+oracle-0.928 / greedy-0.14 anchors).  Mapping the same synapse supervoxels to L2 fragments
+vs v1822 roots (10 µm box, 1264 endpoints, 1042 L2 fragments, 609 neurons):
+
+```
+L2-fragment baseline vs v1822 truth:  P=1.000  R=0.132  F1=0.234
+```
+
+**So the column is NOT solved — at the fragment level F1 is 0.234, with enormous headroom
+(→ 0.928 oracle).**  Precision is perfect (L2 fragments never wrongly merge); recall is
+13% because each neuron is shattered into ~1.7 fragments per synapse.  **Every point of
+recall = a synapse-bearing fragment correctly joined** — which is exactly why tiny
+synapse-carrying splits are the whole game.  This is the correct substrate the whole effort
+should have been on: **join L2 fragments to raise synapse-pair recall toward 0.928 without
+dropping precision** (greedy joining collapses P to 0.14 — the trap).  The geometry follower
+(cut-face + trajectory + global matching + grammar veto + abstention) is precisely a
+precision-preserving joiner; the goal-aligned test is its **synapse-pair F1 before (0.234) →
+after, at held precision**, on L2 fragments with v1822-root truth.
 
 **What is genuinely proven / in hand:** the follower cues (cut-face contiguity, trajectory,
 global matching) are real and strong on controlled cuts; the **real v117→v1822 split ground
