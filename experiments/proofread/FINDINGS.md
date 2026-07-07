@@ -117,17 +117,35 @@ the type-trained encoder (0.58) barely edges chance and doesn't beat the geometr
 residual. That is a valid negative for the committed cues.
 
 A purpose-trained hard-negative **identity** embedding (the plan's untried lever) was
-attempted (EM + v117-seg + v1507-seg blocks, leakage-safe train/eval, NT-Xent with
-in-window adjacent-process negatives). **Result: inconclusive, not a clean negative** —
-the masked mip2 mean-EM "face" representation **fails its own sanity control**: faces of
-the *same v117 object* at adjacent z (which must be near-identical) do not retrieve each
-other above chance (same-object AUC 0.50), because every masked mean-EM patch is a
-centred filled blob whose raw correlation saturates ~1.0 for *all* pairs, and the
-type-encoder collapses all thin-axon faces to ~one point. The contrastive loss barely
-moved. So whether a learned embedding can decode single-section identity **remains open**
-— it needs a representation that preserves within-process texture (unmasked **mip1**
-patches, proper augmentation), not the masked mip2 mean-EM used here. Honest status:
-the discriminator is unsolved; the confounded attempt is not evidence either way.
+then built properly on **unmasked mip1 (8 nm)** cross-section patches (EM + v117-seg +
+v1507-seg blocks, leakage-safe train/eval, translation-jitter + flip/rotate augmentation,
+NT-Xent with in-window adjacent-process negatives). A first attempt on *masked mip2*
+mean-EM was discarded because it failed its own sanity control (every masked face is a
+centred blob → same-object retrieval was chance 0.50); the unmasked-mip1 representation
+fixes that — **same-object adjacent-z retrieval is 0.68–0.70** (raw and encoder), so the
+representation is sound and the result below is not a representation artifact.
+
+**Result: a clean, sanity-gated negative.** On the real confusable candidate joins
+(n≈194, geometry held ~flat):
+
+| cue at the two contact faces | AUC (correct vs wrong join) |
+|---|---|
+| geometry score (residual) | 0.636 |
+| **identity embedding (mip1, hard-negative trained)** | **0.447** |
+| committed type encoder | 0.456 |
+| raw mip1 patch cosine | 0.492 |
+
+Every EM-appearance cue — including the purpose-trained identity embedding — sits **at or
+below chance** on the confusions, *below* the geometry residual. The contrastive loss
+never converged and the trained embedding's same-object AUC (0.70) never rose above raw
+(0.68), i.e. training extracted no identity structure. On the confusable pairs the
+appearance similarity is even slightly *anti*-predictive: an adjacent parallel same-type
+axon looks as similar as (or more than) the true continuation across the gap. **So a
+sanity-validated single-section EM identity classifier shows no traction** — consistent
+with the hypothesis that axonal reconnection needs multi-section *tracing* (continuity),
+not single-face classification. Honest caveats: small CPU encoder, mip1 (not mip0),
+same-object ceiling only ~0.70 — a much heavier model or higher resolution could differ —
+but this careful, sanity-gated attempt finds no signal where the joiner needs it.
 
 ---
 
