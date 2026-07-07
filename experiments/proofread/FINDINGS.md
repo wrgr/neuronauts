@@ -100,6 +100,35 @@ its parallel neighbour, which no local geometry provides. That is exactly what t
 deferred hard-negative identity-embedding plan targets, and this result is the clean
 motivation for it (and the honest reason not to claim an F1 lift from geometry alone).
 
+### Local-EM identity discriminator: existing cues fail; a learned one is unproven
+
+On the **real confusable candidate joins** (n≈300, geometry held ~flat in a narrow
+high-score band, so this isolates each cue's *marginal* identity signal):
+
+| cue at the two contact faces | AUC (correct vs wrong join) |
+|---|---|
+| geometry score (residual) | 0.60 |
+| **committed cut-face encoder** (type-level) | **0.58** |
+| raw 48×48 patch cosine | 0.49 |
+| cut-face footprint IoU | 0.49 |
+
+So the *existing* local-EM cues carry no usable identity signal on the confusions —
+the type-trained encoder (0.58) barely edges chance and doesn't beat the geometry
+residual. That is a valid negative for the committed cues.
+
+A purpose-trained hard-negative **identity** embedding (the plan's untried lever) was
+attempted (EM + v117-seg + v1507-seg blocks, leakage-safe train/eval, NT-Xent with
+in-window adjacent-process negatives). **Result: inconclusive, not a clean negative** —
+the masked mip2 mean-EM "face" representation **fails its own sanity control**: faces of
+the *same v117 object* at adjacent z (which must be near-identical) do not retrieve each
+other above chance (same-object AUC 0.50), because every masked mean-EM patch is a
+centred filled blob whose raw correlation saturates ~1.0 for *all* pairs, and the
+type-encoder collapses all thin-axon faces to ~one point. The contrastive loss barely
+moved. So whether a learned embedding can decode single-section identity **remains open**
+— it needs a representation that preserves within-process texture (unmasked **mip1**
+patches, proper augmentation), not the masked mip2 mean-EM used here. Honest status:
+the discriminator is unsolved; the confounded attempt is not evidence either way.
+
 ---
 
 # Two-cue abstaining auto-proofreader — findings
