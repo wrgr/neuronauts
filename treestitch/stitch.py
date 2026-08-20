@@ -271,35 +271,58 @@ def candidate_stitch_edges(
     *,
     endpoint_radius_nm: float = 10_000.0,
     max_edges_per_super: int = 8,
+    max_endpoints_per_super: int = 64,
+    knn_per_endpoint: int = 16,
 ) -> list[StitchCandidate]:
     """Cross-tile endpoint pairs within radius, scored like ``score_edge``.
 
     score = (1 − gap/radius) × (dna_cosine + 1)/2, with the DNA factor = 1
     when either side has no embedding.  One candidate per super pair (the
     closest endpoint pair), degree-capped per super by score.
+
+    Memory-bounded by construction: at most ``max_endpoints_per_super``
+    endpoints per super enter the search (uniform sample when there are
+    more), and neighbours come from per-endpoint k-NN queries
+    (``knn_per_endpoint`` within the radius) instead of an all-pairs radius
+    query — a dense box cannot materialize O(P²) pairs.
     """
     if not supers:
         return []
 
+    rng = np.random.default_rng(0)
     ep_pts: list[np.ndarray] = []
     ep_super: list[int] = []
     ep_local: list[int] = []
     for si, s in enumerate(supers):
         eps = np.asarray(s.skeleton.endpoints_nm, dtype=np.float64)
-        for li in range(len(eps)):
+        idx = np.arange(len(eps))
+        if len(idx) > max_endpoints_per_super:
+            idx = rng.choice(idx, max_endpoints_per_super, replace=False)
+        for li in idx:
             ep_pts.append(eps[li])
             ep_super.append(si)
-            ep_local.append(li)
+            ep_local.append(int(li))
     if not ep_pts:
         return []
     ep_arr = np.stack(ep_pts, axis=0)
 
     try:
-        from scipy.spatial import KDTree
-        pairs = KDTree(ep_arr).query_pairs(r=endpoint_radius_nm,
-                                           output_type="ndarray")
+        from scipy.spatial import cKDTree
+        tree = cKDTree(ep_arr)
+        k = min(knn_per_endpoint + 1, len(ep_arr))
+        dists, nbrs = tree.query(ep_arr, k=k,
+                                 distance_upper_bound=endpoint_radius_nm)
+        if k == 1:
+            dists, nbrs = dists[:, None], nbrs[:, None]
+        pairs_iter = (
+            (pi, int(pj))
+            for pi in range(len(ep_arr))
+            for pj, d in zip(nbrs[pi], dists[pi])
+            if np.isfinite(d) and int(pj) != pi and int(pj) < len(ep_arr)
+        )
+        pairs = [(min(a, b), max(a, b)) for a, b in pairs_iter]
     except ImportError:
-        pairs = _brute_pairs(ep_arr, endpoint_radius_nm)
+        pairs = [tuple(p) for p in _brute_pairs(ep_arr, endpoint_radius_nm)]
 
     # closest endpoint pair per super pair
     best: dict[tuple[int, int], tuple[float, int, int]] = {}
@@ -311,6 +334,8 @@ def candidate_stitch_edges(
         if key != (si, sj):
             pi, pj = pj, pi
         gap = float(np.linalg.norm(ep_arr[pi] - ep_arr[pj]))
+        if gap >= endpoint_radius_nm:
+            continue
         if key not in best or gap < best[key][0]:
             best[key] = (gap, ep_local[pi], ep_local[pj])
 
