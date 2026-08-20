@@ -94,24 +94,36 @@ def run_tile(tile_id, region_t, frags_t, label_map_t, args):
     from treestitch.graph import build_observation_graph
     from treestitch.partition import partition_observations_cc, train_edge_partition
 
+    import numpy as np
+
+    print(f"\n  [{tile_id}] {region_t.n_synapses} obs, {len(frags_t)} fragments")
     encoder = FragmentEncoder(node_input_dim=4, d_model=64, output_dim=32)
     if args.embed_epochs > 0:
+        print(f"  [{tile_id}] training FragmentEncoder ({args.embed_epochs} epochs) …")
         train_fragment_encoder(
             encoder, [frags_t], n_epochs=args.embed_epochs, lr=1e-3,
-            device=args.device, root_label_map=label_map_t, log_every=0)
+            device=args.device, root_label_map=label_map_t,
+            log_every=args.log_every)
     frags_enc = encode_fragments(encoder, frags_t, device=args.device)
 
     graph = build_observation_graph(
         region_t, frags_enc, side="pre", k_spatial=args.k_spatial,
         endpoint_radius_nm=args.endpoint_radius_nm)
+    n_by_type = {t: int((graph.edge_type == t).sum()) for t in (0, 1, 2)}
+    print(f"  [{tile_id}] graph: {graph.n_nodes} nodes, {graph.n_edges} edges "
+          f"(same-frag {n_by_type[0]}, spatial {n_by_type[1]}, "
+          f"endpoint {n_by_type[2]})")
 
+    print(f"  [{tile_id}] training EdgePartitionGNN ({args.partition_epochs} epochs) …")
     model, _ = train_edge_partition(
         graph, n_epochs=args.partition_epochs, device=args.device,
-        seed=args.seed, log_every=0)
+        seed=args.seed, log_every=args.log_every)
     pred = partition_observations_cc(model, graph, bias=args.cc_bias,
                                      device=args.device)
-    print(f"  [{tile_id}] {graph.n_nodes} obs, {len(frags_enc)} fragments, "
-          f"{graph.n_edges} edges → {len(set(int(c) for c in pred if c >= 0))} clusters")
+    ids, counts = np.unique(pred[pred >= 0], return_counts=True)
+    top = ", ".join(str(c) for c in sorted(counts.tolist(), reverse=True)[:5])
+    print(f"  [{tile_id}] → {len(ids)} clusters "
+          f"({int((pred < 0).sum())} abstained; largest: {top})")
     return frags_enc, graph, pred
 
 
@@ -190,6 +202,8 @@ def main() -> int:
     p.add_argument("--max-obs-per-cluster", type=int, default=0)
     p.add_argument("--device", default="cpu")
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--log-every", type=int, default=20,
+                   help="epoch interval for training-loss prints (0 = quiet)")
     args = p.parse_args()
 
     import numpy as np
@@ -238,9 +252,14 @@ def main() -> int:
         atom_parent = aw.atom_parent
         fragments, region, root_label_map = (
             aw.fragments, aw.region, aw.root_label_map)
-        print(f"Atomize [{args.atomize}]: "
-              f"{len(set(atom_parent.values()))} fragments → "
-              f"{len(fragments)} atoms ({len(odd_parents)} odd fragments)")
+        n_parents = len(set(atom_parent.values()))
+        per_parent = np.bincount(np.unique(
+            [atom_parent[int(f.base_root_id)] for f in fragments],
+            return_counts=True)[1])
+        print(f"Atomize [{args.atomize}]: {n_parents} fragments → "
+              f"{len(fragments)} atoms ({len(odd_parents)} odd fragments); "
+              f"atoms/fragment histogram (1,2,3,…): "
+              f"{per_parent[1:8].tolist()}")
     else:
         parent_ids_per_obs = np.asarray(region.pre_seg_id, dtype=np.int64)
         odd_parents = flag_odd_fragments(
@@ -351,6 +370,20 @@ def main() -> int:
     ep = stitch_edge_precision(supers, res.accepted)
     print(f"  stitch-edge precision: {ep['stitch_precision']:.3f} "
           f"({ep['n_correct']}/{ep['n_scored']} scored)")
+    for c in sorted(res.accepted, key=lambda c: -c.score)[:8]:
+        a, b = supers[c.i], supers[c.j]
+        ok = ("✓" if a.majority_label == b.majority_label and a.majority_label
+              else "✗" if a.majority_label and b.majority_label else "?")
+        print(f"    accept {ok} {a.tile_id}#{a.cluster_id}↔{b.tile_id}"
+              f"#{b.cluster_id}  score={c.score:.2f} gap={c.gap_nm:.0f}nm "
+              f"dna_cos={c.dna_cos:.2f}")
+
+    # global cluster-size summary
+    _, gsizes = np.unique(res.super_cluster, return_counts=True)
+    print(f"  global clusters: {len(gsizes)} "
+          f"(supers/cluster: 1×{int((gsizes == 1).sum())}, "
+          f"2×{int((gsizes == 2).sum())}, "
+          f"≥3×{int((gsizes >= 3).sum())}, max {int(gsizes.max())})")
 
     # ------------------------------------------------------------- evaluation
     keep = true != 0

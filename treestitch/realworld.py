@@ -449,7 +449,8 @@ def _assemble_world_arrays(
     fragments = []
     root_label_map: dict[int, set[int]] = {}
     n_l2_ok = n_l2_fail = 0
-    for fr in np.unique(frag_ids):
+    uniq_frags = np.unique(frag_ids)
+    for fi, fr in enumerate(uniq_frags):
         mask = frag_ids == fr
         idxs = np.where(mask)[0]
         frag = None
@@ -461,6 +462,9 @@ def _assemble_world_arrays(
                 n_l2_ok += 1
             else:
                 n_l2_fail += 1
+            if verbose and (fi + 1) % 50 == 0:
+                print(f"    L2 skeletons: {fi + 1}/{len(uniq_frags)} fragments "
+                      f"({n_l2_ok} ok, {n_l2_fail} fallback) …")
         if frag is None:
             frag = _cloud_fragment(int(fr), f"minnie65_v{version}",
                                    pos[idxs], idxs)
