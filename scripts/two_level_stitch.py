@@ -148,10 +148,28 @@ def main() -> int:
                    help="region bbox in nm (real mode)")
     p.add_argument("--version", type=int, default=1718)
     p.add_argument("--max-synapses", type=int, default=20_000,
-                   help="per-tile synapse cap (real mode)")
+                   help="total synapse cap after fetch (real mode)")
     p.add_argument("--min-syn-per-fragment", type=int, default=5)
+    p.add_argument("--tile-x-nm", type=float, default=0,
+                   help="use the tiled CAVE fetch with this x-tile width "
+                        "(needed for bboxes above the ~250k-row query cap)")
+    p.add_argument("--per-tile-limit", type=int, default=200_000)
     # tiling
+    p.add_argument("--grid", default="2x2",
+                   help="tile grid 'RxC' over the two largest spatial axes")
     p.add_argument("--halo-nm", type=float, default=40_000.0)
+    # level −1 atomization
+    p.add_argument("--atomize", choices=["none", "branch", "shatter", "odd"],
+                   default="none",
+                   help="split fragments into atoms before level 0: 'branch' "
+                        "= at branch vertices; 'shatter' = branches + odd "
+                        "(abnormally long) edges; 'odd' = cut odd edges only "
+                        "in fragments flagged odd")
+    p.add_argument("--long-edge-factor", type=float, default=4.0)
+    p.add_argument("--long-edge-min-um", type=float, default=10.0)
+    p.add_argument("--odd-skip", action="store_true",
+                   help="exclude atoms of odd fragments from the shared-atom "
+                        "forced-merge channel (skip, don't trust, their ids)")
     # level-0 pipeline
     p.add_argument("--embed-epochs", type=int, default=40)
     p.add_argument("--partition-epochs", type=int, default=80)
@@ -203,7 +221,36 @@ def main() -> int:
         hi = tuple(args.bbox[3:])
         fragments, region, root_label_map = build_region_world(
             (lo, hi), version=args.version, max_synapses=args.max_synapses,
-            min_syn_per_fragment=args.min_syn_per_fragment, seed=args.seed)
+            min_syn_per_fragment=args.min_syn_per_fragment, seed=args.seed,
+            tile_x_nm=args.tile_x_nm, per_tile_limit=args.per_tile_limit)
+
+    # -------------------------------------------- level −1: atomization (opt)
+    from treestitch.atomize import flag_odd_fragments, frankenmerge_separation
+
+    long_edge_min_nm = args.long_edge_min_um * 1_000.0
+    if args.atomize != "none":
+        from treestitch.atomize import atomize_world
+        aw = atomize_world(fragments, region, mode=args.atomize,
+                           long_edge_factor=args.long_edge_factor,
+                           long_edge_min_nm=long_edge_min_nm)
+        parent_ids_per_obs = aw.parent_ids_per_obs
+        odd_parents = aw.odd_parents
+        atom_parent = aw.atom_parent
+        fragments, region, root_label_map = (
+            aw.fragments, aw.region, aw.root_label_map)
+        print(f"Atomize [{args.atomize}]: "
+              f"{len(set(atom_parent.values()))} fragments → "
+              f"{len(fragments)} atoms ({len(odd_parents)} odd fragments)")
+    else:
+        parent_ids_per_obs = np.asarray(region.pre_seg_id, dtype=np.int64)
+        odd_parents = flag_odd_fragments(
+            fragments, long_edge_factor=args.long_edge_factor,
+            long_edge_min_nm=long_edge_min_nm)
+        atom_parent = {int(f.base_root_id): int(f.base_root_id)
+                       for f in fragments}
+        if odd_parents:
+            print(f"{len(odd_parents)}/{len(fragments)} fragments flagged odd "
+                  f"(not split; use --atomize to split, --odd-skip to distrust)")
 
     pos = region.pre_pt_nm
     true = region.pre_root_id
@@ -212,26 +259,31 @@ def main() -> int:
     if len(np.unique(obs_keys)) != len(obs_keys):
         raise RuntimeError("observation keys are not unique — halo joins would be wrong")
 
-    # ------------------------------------------------------ 2×2 tiling (core)
+    # ------------------------------------------------------ R×C tiling (core)
+    n_rows, n_cols = (int(x) for x in args.grid.lower().split("x"))
     extent = pos.max(0) - pos.min(0)
     ax0, ax1 = np.argsort(extent)[-2:]
-    mid0 = float(np.median(pos[:, ax0]))
-    mid1 = float(np.median(pos[:, ax1]))
-    print(f"Tiling 2×2 on axes {int(ax0)}/{int(ax1)} at "
-          f"({mid0:.0f}, {mid1:.0f}) nm, halo {args.halo_nm:.0f} nm")
+    # equal-count bin edges per axis (balanced tiles)
+    q0 = np.quantile(pos[:, ax0], np.linspace(0, 1, n_rows + 1))
+    q1 = np.quantile(pos[:, ax1], np.linspace(0, 1, n_cols + 1))
+    q0[0], q0[-1] = -np.inf, np.inf
+    q1[0], q1[-1] = -np.inf, np.inf
+    print(f"Tiling {n_rows}×{n_cols} on axes {int(ax0)}/{int(ax1)}, "
+          f"halo {args.halo_nm:.0f} nm")
 
     tiles = {}
     owner_tile = np.empty(len(pos), dtype=object)
-    for tid, (s0, s1) in {"A": (-1, -1), "B": (+1, -1),
-                          "C": (-1, +1), "D": (+1, +1)}.items():
-        core = (((pos[:, ax0] >= mid0) if s0 > 0 else (pos[:, ax0] < mid0)) &
-                ((pos[:, ax1] >= mid1) if s1 > 0 else (pos[:, ax1] < mid1)))
-        halo = ((pos[:, ax0] >= (mid0 - args.halo_nm if s0 > 0 else -np.inf)) &
-                (pos[:, ax0] <  (np.inf if s0 > 0 else mid0 + args.halo_nm)) &
-                (pos[:, ax1] >= (mid1 - args.halo_nm if s1 > 0 else -np.inf)) &
-                (pos[:, ax1] <  (np.inf if s1 > 0 else mid1 + args.halo_nm)))
-        tiles[tid] = {"core": core, "mask": halo}
-        owner_tile[core] = tid
+    for r in range(n_rows):
+        for c in range(n_cols):
+            tid = f"r{r}c{c}"
+            core = ((pos[:, ax0] >= q0[r]) & (pos[:, ax0] < q0[r + 1]) &
+                    (pos[:, ax1] >= q1[c]) & (pos[:, ax1] < q1[c + 1]))
+            halo = ((pos[:, ax0] >= q0[r] - args.halo_nm) &
+                    (pos[:, ax0] < q0[r + 1] + args.halo_nm) &
+                    (pos[:, ax1] >= q1[c] - args.halo_nm) &
+                    (pos[:, ax1] < q1[c + 1] + args.halo_nm))
+            tiles[tid] = {"core": core, "mask": halo}
+            owner_tile[core] = tid
 
     # -------------------------------------------------- level 0: tile pipeline
     print("\nLevel 0: per-tile partitions")
@@ -249,7 +301,7 @@ def main() -> int:
             tid, frags_enc, pred, graph.fragment_id, obs_keys[mask],
             labels=graph.labels))
 
-    print(f"\n{len(supers)} super-fragments across 4 tiles")
+    print(f"\n{len(supers)} super-fragments across {len(tiles)} tiles")
 
     # obs_key → super index per tile (for label assembly)
     key_to_super = {tid: {} for tid in tiles}
@@ -273,8 +325,14 @@ def main() -> int:
     # ---------------------------------------------------- level 1: stitching
     print("\nLevel 1: seam stitch")
     forced_obs = link_shared_observations(supers, min_shared=args.min_shared)
-    forced_atom = ([] if args.no_atom_links else link_shared_atoms(supers))
+    excluded_atoms = ({a for a, par in atom_parent.items() if par in odd_parents}
+                      if args.odd_skip else set())
+    forced_atom = ([] if args.no_atom_links
+                   else link_shared_atoms(supers, exclude_atoms=excluded_atoms))
     forced = sorted(set(forced_obs) | set(forced_atom))
+    if excluded_atoms:
+        print(f"  odd-skip: {len(excluded_atoms)} atoms from odd fragments "
+              f"excluded from the shared-atom channel")
     res = stitch_super_fragments(
         supers,
         endpoint_radius_nm=args.stitch_radius_nm,
@@ -310,11 +368,16 @@ def main() -> int:
     for name, lab in (("baseline", baseline), ("stitched", res and stitched)):
         m = pairwise_merge_metrics(lab, true)
         frac, n_multi = multi_tile_assembly_fraction(lab, true, owner_tile, keep)
-        rows.append((name, _ari(lab), m, frac, n_multi))
-    for name, ari, m, frac, n_multi in rows:
+        fk = frankenmerge_separation(lab, true, parent_ids_per_obs)
+        rows.append((name, _ari(lab), m, frac, n_multi, fk))
+    for name, ari, m, frac, n_multi, fk in rows:
+        fk_str = (f"  fk_sep={fk['fk_separation']:.3f} "
+                  f"({fk['n_separated']}/{fk['n_frankenmerges']})"
+                  if fk["n_frankenmerges"] else "")
         print(f"  {name:9s} ARI={ari:.3f}  merge_P={m['merge_precision']:.3f} "
               f"merge_R={m['merge_recall']:.3f}  "
-              f"multi-tile objects fully assembled: {frac:.1%} (of {n_multi})")
+              f"multi-tile objects fully assembled: {frac:.1%} (of {n_multi})"
+              f"{fk_str}")
 
     b, s = rows[0], rows[1]
     print(f"\nΔARI = {s[1] - b[1]:+.3f}   Δmerge_R = "

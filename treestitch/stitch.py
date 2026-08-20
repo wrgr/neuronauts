@@ -182,6 +182,7 @@ def link_shared_atoms(
     *,
     min_shared: int = 1,
     mutual_best: bool = True,
+    exclude_atoms: set[int] | None = None,
 ) -> list[tuple[int, int]]:
     """Cross-tile super-fragment pairs that share a member atom.
 
@@ -196,10 +197,17 @@ def link_shared_atoms(
     other) limits the damage; downstream, this channel should be treated like
     a forced merge only when frankenmerge pressure is low, or fed through the
     cannot-link constraints instead.
+
+    ``exclude_atoms`` drops the listed atom ids from the overlap counting —
+    the "skip odd components" treatment: an atom whose identity is suspect
+    (odd skeleton, possible frankenmerge) never forces a merge.
     """
+    excl = exclude_atoms or set()
     key_owner: dict[int, list[int]] = defaultdict(list)
     for si, s in enumerate(supers):
         for a in s.atom_ids:
+            if int(a) in excl:
+                continue
             key_owner[int(a)].append(si)
     return _link_by_shared_keys(supers, key_owner, min_shared=min_shared,
                                 mutual_best=mutual_best)
