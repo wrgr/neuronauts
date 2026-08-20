@@ -104,10 +104,14 @@ def stitch_overview_state(
     obs_pos_nm: np.ndarray,
     obs_global_labels: np.ndarray,
     *,
-    max_synapses: int = 2000,
-    max_supers: int = 400,
+    max_synapses: int = 1500,
+    max_supers: int = 120,
 ) -> dict:
-    """Observations + super skeletons, coloured by global (stitched) cluster."""
+    """Observations + super skeletons, coloured by global (stitched) cluster.
+
+    Budgets are sized so the encoded URL stays under ~1 MB — beyond that,
+    browsers reject the fragment and the state must be pasted into the
+    viewer's JSON editor instead."""
     pos = np.asarray(obs_pos_nm, dtype=np.float64)
     glab = np.asarray(obs_global_labels, dtype=np.int64)
     n_clusters = max(int(super_cluster.max()) + 1, 1) if len(super_cluster) else 1
@@ -126,7 +130,7 @@ def stitch_overview_state(
     for si in order:
         color = _cluster_color(int(super_cluster[si]), n_clusters, alpha=0.85)
         skel_ann.extend(_skeleton_lines(
-            supers[si].skeleton, f"s{si}", color, max_edges=60))
+            supers[si].skeleton, f"s{si}", color, max_edges=25))
 
     layers = _base_layers() + [
         _annotation_layer("observations_by_global_cluster", obs_ann),
@@ -169,7 +173,7 @@ def odd_fragments_state(
     fragments: list,
     odd_parents: set,
     *,
-    max_fragments: int = 150,
+    max_fragments: int = 60,
 ) -> dict:
     """Skeletons of odd-flagged fragments (orange) vs a sample of normal ones
     (teal)."""
@@ -178,11 +182,11 @@ def odd_fragments_state(
     for f in fragments:
         if f.base_root_id in odd_parents and n_odd < max_fragments:
             ann.extend(_skeleton_lines(f, f"odd{f.base_root_id}",
-                                       "rgba(255,150,0,0.95)", max_edges=80))
+                                       "rgba(255,150,0,0.95)", max_edges=40))
             n_odd += 1
         elif f.base_root_id not in odd_parents and n_norm < max_fragments // 3:
             ann.extend(_skeleton_lines(f, f"norm{f.base_root_id}",
-                                       "rgba(0,200,200,0.5)", max_edges=40))
+                                       "rgba(0,200,200,0.5)", max_edges=25))
             n_norm += 1
     layers = _base_layers() + [_annotation_layer("odd_vs_normal_fragments", ann)]
     all_v = [np.asarray(f.vertices_nm).mean(axis=0) for f in fragments[:200]]
