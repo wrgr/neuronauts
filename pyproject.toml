@@ -16,6 +16,7 @@ dependencies = [
     "numpy",
     "scipy",
     "truststore",
+    "pyarrow",  # Arrow IPC payloads from the CAVE materialization API (data/lineage.py)
 ]
 
 [project.optional-dependencies]

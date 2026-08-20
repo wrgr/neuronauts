@@ -211,6 +211,36 @@ hierarchical agglomeration (Beier et al., Nat. Methods 2017), specialized by
    ARI over the union, merge_P stays ≥ 0.95. New code: a seam-edge harvester +
    the degree/cycle/cannot-link-constrained Kruskal (~200 lines around
    `fragment_graph.py` / `assemble.py`).
+
+   **→ RUN (2026-08-20), synthetic worlds.** Implemented as
+   `treestitch/stitch.py` + `scripts/two_level_stitch.py` (level 0 = the real
+   FragmentEncoder → EdgePartitionGNN → GAEC pipeline per tile). Findings:
+
+   | Config (24 obj × 4 pieces) | ΔARI | Δmerge_P | multi-tile assembly |
+   |---|---|---|---|
+   | 40 µm halo, exact channels only | **+0.031** | **+0.004** | **0% → 100%** |
+   | seeds 1/2, same config | +0.021 / +0.045 | −0.042 / 0.000 | 83% / 100% |
+   | 40 µm halo + geometry endpoint edges @0.05 | −0.009 | −0.063 | 0% → 100% |
+   | zero halo (endpoint channel only) | −0.292 | −0.322 | 0% → 100% |
+   | frankenmerge 0.15, shared-obs links only | +0.014 | −0.024 | 0% → 60% |
+   | frankenmerge 0.15, + shared-atom links | −0.007 | −0.074 | 0% → 60% |
+
+   Three design claims confirmed, one placeholder falsified:
+   - **The exact halo-identity channel alone delivers the box-ceiling win**
+     (100% multi-tile assembly at unchanged merge precision) — no model at
+     level 1.
+   - **Halos are load-bearing twice**: they make the exact channel dense *and*
+     give tiles the context to partition well (zero-halo baseline merge_P
+     collapses 0.92 → 0.66 before any stitching).
+   - **The frankenmerge caveat on atom links is real**: under frankenmerge
+     pressure, shared-*atom* forced merges cost 3× more precision than
+     shared-*observation* merges (−0.074 vs −0.024). Atomization (level −1)
+     or obs-only linking is the answer, as designed.
+   - **Geometry-only endpoint scoring is not deployable** (stitch-edge
+     precision 0.17–0.67): proximity × pooled-DNA-compat cannot separate
+     adjacent objects. The endpoint channel needs the learned stitch scorer
+     (experiment 4) before it earns weight; until then it defaults to a
+     conservative min-score.
 2. **Atomization A/B.** Rerun the region benchmark with v117 roots pre-split
    into L2-branch atoms. Success: out-of-sample frankenmerge halves end up in
    different clusters (the Bar-3 outcome) *without* any fk-detection features,
