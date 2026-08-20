@@ -241,6 +241,31 @@ hierarchical agglomeration (Beier et al., Nat. Methods 2017), specialized by
      adjacent objects. The endpoint channel needs the learned stitch scorer
      (experiment 4) before it earns weight; until then it defaults to a
      conservative min-score.
+
+   **→ RUN (2026-08-20), real data.** Same script on the Phase-2.x dense bbox
+   (x 950–1150k, y 930–1000k, z 780–880k nm; v117→v1718): 20k fetched
+   synapses → 1826 after the sliver filter, 288 v117 fragments, 312 neurons,
+   **19 real frankenmerges**, L2 skeletons 288/288. 2×2 tiles on x/z, 20 µm
+   halo, per-tile training only (~800 obs & 100 epochs per tile — well below
+   the Phase-2.6 regime, so level-0 partitions are weaker than the Phase
+   numbers; metrics here are all-pairs pairwise P/R, not the Phase scripts'
+   edge-level merge_P, and are not directly comparable):
+
+   | Channels | ΔARI | Δmerge_R | Δmerge_P | multi-tile assembly (241 objects) |
+   |---|---|---|---|---|
+   | shared-obs only | +0.101 | +0.162 | **−0.007** | 0% → 22.0% |
+   | + shared-atom | **+0.132** | **+0.331** | −0.105 | 0% → **50.6%** |
+
+   The real-data run confirms the synthetic story end-to-end: the exact
+   shared-observation channel improves global assembly at *unchanged*
+   precision, while the shared-atom channel trades precision for a much
+   larger recall/assembly gain — the cost concentrating exactly where the 19
+   frankenmerges and level-0 impurity live. That trade is the concrete,
+   measured argument for level −1 atomization: once atoms cannot span
+   neurons, the atom channel's recall comes without its precision bill.
+   Remaining gap to 100% assembly is level-0 under-merging (847 super-
+   fragments for 312 neurons), i.e. more/better level-0 training and the
+   learned stitch scorer — not the stitch machinery itself.
 2. **Atomization A/B.** Rerun the region benchmark with v117 roots pre-split
    into L2-branch atoms. Success: out-of-sample frankenmerge halves end up in
    different clusters (the Bar-3 outcome) *without* any fk-detection features,
