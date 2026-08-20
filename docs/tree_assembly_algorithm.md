@@ -304,3 +304,21 @@ hierarchical agglomeration (Beier et al., Nat. Methods 2017), specialized by
 
 Each experiment is a day-scale run on existing data paths and directly falsifies
 one load-bearing claim of the design before any large build.
+
+## 5. Backlog
+
+- **Neuroglancer visualization harness** (requested 2026-08-20). Extend
+  `treestitch/ngl_export.py` (zero-dep NGL JSON state builder, Phase 2.10)
+  into a harness that renders every product of this pipeline for visual
+  inspection: per-tile partitions (synapses colored by cluster),
+  super-fragment skeletons, accepted/rejected seam-stitch edges with scores,
+  atomization cuts and odd-flagged fragments, frankenmerge separations
+  (halves colored by predicted cluster), and the abstain/REVIEW queue as an
+  annotation layer. One URL per tile / seam / neuron, plus an index page.
+- **Tile-parallel driver.** Split `two_level_stitch.py` into per-tile workers
+  (save partition outputs to disk) + a stitch collector, so tiles fan out
+  across processes/machines; on a single 4-core box run variants
+  concurrently instead (torch intra-op threading already saturates cores).
+- **Learned stitch scorer** (experiment 4) — prerequisite for the endpoint
+  channel to carry weight at level 1; geometry-only scoring measured
+  insufficient.
