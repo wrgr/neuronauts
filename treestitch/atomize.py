@@ -176,26 +176,35 @@ def oddness_scores(
     """Label-free per-fragment oddness diagnostics.
 
     Returns ``max_edge_nm``, ``median_edge_nm``, ``max_over_median``,
-    ``n_odd_edges``, ``is_odd``.  A fragment is odd when it contains at least
-    one odd edge (see ``odd_edge_mask``) — the frankenmerge / bad-skeleton
-    signature.
+    ``n_odd_edges``, ``n_components``, ``is_odd``.  A fragment is odd when it
+    contains an odd edge (the L2-MST frankenmerge-bridge signature) **or** its
+    skeleton has ≥ 2 connected components (a "skeleton" that is not one piece
+    is inherently suspect identity evidence — e.g. a fused fragment whose
+    parts were never geometrically joined).
     """
     edges = np.asarray(frag.edges, dtype=np.int64).reshape(-1, 2)
+    V = len(frag.vertices_nm)
     if len(edges) == 0:
         return {"max_edge_nm": 0.0, "median_edge_nm": 0.0,
-                "max_over_median": 0.0, "n_odd_edges": 0, "is_odd": False}
+                "max_over_median": 0.0, "n_odd_edges": 0,
+                "n_components": max(V, 1), "is_odd": V > 1}
     v = np.asarray(frag.vertices_nm, dtype=np.float64)
     lens = np.linalg.norm(v[edges[:, 0]] - v[edges[:, 1]], axis=1)
     med = float(np.median(lens))
     odd = odd_edge_mask(frag.vertices_nm, edges,
                         long_edge_factor=long_edge_factor,
                         long_edge_min_nm=long_edge_min_nm)
+    uf = _UF(V)
+    for u, w in edges:
+        uf.union(int(u), int(w))
+    n_components = len({uf.find(i) for i in range(V)})
     return {
         "max_edge_nm": float(lens.max()),
         "median_edge_nm": med,
         "max_over_median": float(lens.max() / med) if med > 0 else float("inf"),
         "n_odd_edges": int(odd.sum()),
-        "is_odd": bool(odd.any()),
+        "n_components": n_components,
+        "is_odd": bool(odd.any()) or n_components > 1,
     }
 
 

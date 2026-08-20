@@ -80,6 +80,17 @@ def test_oddness_scores_and_flags():
     assert flag_odd_fragments([normal, odd]) == {2}
 
 
+def test_oddness_flags_disconnected_skeleton():
+    # two chains, no bridge edge at all (the synthetic-frankenmerge shape):
+    # no odd edge, but 2 components → odd
+    verts = [(0, 0, 0), (1000, 0, 0), (52000, 0, 0), (53000, 0, 0)]
+    f = frag_from(verts, [(0, 1), (2, 3)], fid=3)
+    s = oddness_scores(f)
+    assert s["n_odd_edges"] == 0
+    assert s["n_components"] == 2
+    assert s["is_odd"]
+
+
 # ---------------------------------------------------------------------------
 # split_fragment
 # ---------------------------------------------------------------------------

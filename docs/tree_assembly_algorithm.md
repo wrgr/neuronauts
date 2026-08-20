@@ -270,6 +270,30 @@ hierarchical agglomeration (Beier et al., Nat. Methods 2017), specialized by
    into L2-branch atoms. Success: out-of-sample frankenmerge halves end up in
    different clusters (the Bar-3 outcome) *without* any fk-detection features,
    at ≤0.02 ARI cost from over-fragmentation.
+
+   **→ RUN (2026-08-20), synthetic (24 obj × 4 pieces, frankenmerge 0.15,
+   7 franken fragments).** Implemented as `treestitch/atomize.py` with three
+   strategies, because branch-splitting alone is *not* enough: the real
+   frankenmerge glue is an abnormally long L2-MST bridge edge sitting
+   mid-path, and in the synthetic generator it is a disconnected component —
+   neither is at a branch point. `oddness_scores` flags both signatures
+   (odd-edge and multi-component), label-free. `frankenmerge_separation`
+   (fk_sep) measures whether franken halves end in disjoint clusters:
+
+   | Treatment | ARI (stitched) | Δmerge_P | assembly | fk_sep |
+   |---|---|---|---|---|
+   | none | 0.670 | −0.035 | 20% | **0.429** ← atom links glue halves |
+   | `--odd-skip` (distrust odd ids) | 0.679 | −0.006 | 20% | **1.000** |
+   | `--atomize branch` | 0.957 | +0.004 | 100% | 1.000 |
+   | `--atomize shatter` (branch + odd edges) | 0.957 | +0.004 | 100% | 1.000 |
+   | `--atomize odd` (split only flagged, 89→96 atoms) | **0.957** | **+0.004** | **100%** | **1.000** |
+
+   Atomization also lifts the *level-0 baseline* (ARI 0.67 → 0.93): cleaner
+   same-atom evidence helps before any stitching. The surgical `odd` mode —
+   shatter only the fragments the label-free detector flags — matches full
+   shatter at 1/5th the atom count. And `odd-skip` alone (no splitting)
+   recovers fk_sep 0.429 → 1.000 at nearly-zero precision cost, so "skip odd
+   components" is the right treatment when re-splitting is off the table.
 3. **Soma cannot-link A/B.** Add the nucleus-table constraint to level-0 GAEC
    and level-1 Kruskal on the densest bbox (T4, where ARI dropped to 0.287).
    Success: ARI recovery at unchanged merge_P.
