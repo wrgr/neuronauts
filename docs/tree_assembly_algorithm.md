@@ -266,6 +266,24 @@ hierarchical agglomeration (Beier et al., Nat. Methods 2017), specialized by
    Remaining gap to 100% assembly is level-0 under-merging (847 super-
    fragments for 312 neurons), i.e. more/better level-0 training and the
    learned stitch scorer — not the stitch machinery itself.
+
+   **→ REPLICATION + odd-skip (2026-08-20, second independent run, same
+   200 µm box).** All numbers reproduce within noise, and the new
+   `frankenmerge_separation` metric quantifies the re-gluing directly:
+
+   | Stitch config | ΔARI | Δmerge_P | assembly | fk re-glued (of 7 sep.) |
+   |---|---|---|---|---|
+   | obs-only | +0.108 | −0.001 | 23.7% | 1 |
+   | + atom links (all) | +0.135 | −0.122 | **54.8%** | **4** |
+   | + atom links, **odd-skip** | +0.089 | −0.039 | 25.7% | 1 |
+
+   The three configs are a precision/recall dial, and the atom channel's
+   precision bill is now shown to *be* the frankenmerge re-gluing. odd-skip
+   keeps obs-only's safety but — because the current oddness thresholds flag
+   85% of real fragments — it drops 597 of 704 atom links and with them most
+   of the assembly gain. Calibrating oddness on real data (so it flags ~the
+   true frankenmerge rate, ~11% here) is the single knob expected to move
+   odd-skip toward atom-links' recall at obs-only's precision.
 2. **Atomization A/B.** Rerun the region benchmark with v117 roots pre-split
    into L2-branch atoms. Success: out-of-sample frankenmerge halves end up in
    different clusters (the Bar-3 outcome) *without* any fk-detection features,
