@@ -204,6 +204,9 @@ def main() -> int:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--log-every", type=int, default=20,
                    help="epoch interval for training-loss prints (0 = quiet)")
+    p.add_argument("--export-viz", default=None, metavar="DIR",
+                   help="write Neuroglancer JSON states + index.html of the "
+                        "stitch products to this directory")
     args = p.parse_args()
 
     import numpy as np
@@ -417,6 +420,25 @@ def main() -> int:
           f"{s[2]['merge_recall'] - b[2]['merge_recall']:+.3f}   "
           f"Δmerge_P = {s[2]['merge_precision'] - b[2]['merge_precision']:+.3f}")
     print(f"Multi-tile assembly: {b[3]:.1%} → {s[3]:.1%}")
+
+    if args.export_viz:
+        from treestitch.stitch_viz import export_stitch_viz
+        urls = export_stitch_viz(
+            args.export_viz,
+            supers=supers,
+            result=res,
+            fragments=fragments,
+            odd_parents=odd_parents,
+            obs_pos_nm=pos,
+            obs_global_labels=stitched,
+            true_labels=true,
+            parent_ids=parent_ids_per_obs,
+            title=f"two-level stitch — {'synthetic' if args.synthetic else 'real'}"
+                  f" {args.grid} atomize={args.atomize}",
+        )
+        print(f"\nNeuroglancer viz → {args.export_viz}/index.html")
+        for name in urls:
+            print(f"  view: {name}")
     return 0
 
 
