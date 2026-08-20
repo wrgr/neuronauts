@@ -294,6 +294,42 @@ hierarchical agglomeration (Beier et al., Nat. Methods 2017), specialized by
    shatter at 1/5th the atom count. And `odd-skip` alone (no splitting)
    recovers fk_sep 0.429 → 1.000 at nearly-zero precision cost, so "skip odd
    components" is the right treatment when re-splitting is off the table.
+
+   **→ RUN (2026-08-20), real 600 µm box** (x 750–1350k nm, 882 v117
+   fragments, 1,047 neurons, 5,617 post-sliver synapses, **96 real
+   frankenmerges**; 2×2 tiles, 30+60 epochs — same budget as the 200 µm
+   runs). Two honest negative findings:
+
+   | Variant | baseline ARI / merge_P | stitched ΔARI | assembly (645 multi-tile obj) |
+   |---|---|---|---|
+   | base | 0.221 / 0.258 | +0.003 | 0% → 2.2% |
+   | blanket shatter (±odd-skip) | 0.062 / 0.062 | −0.013 | ~0% |
+
+   1. **Blanket shatter fails on real data**, opposite of synthetic. The
+      odd-edge thresholds (4× median, 10 µm floor) flag **746/882 (85%)** of
+      real L2-MST fragments — long edges are routine in real skeletons — so
+      "shatter" became blanket atomization (882 → 4,998 atoms), deleting the
+      same-v117-parent prior that demonstrably carries real level 0. Fix
+      before retrying: (a) keep a **same-parent soft edge type** between
+      atoms (demote the parent relationship from identity to evidence, never
+      delete it), (b) recalibrate oddness for real data (≥8× / ≥20 µm, or a
+      relative/percentile rule).
+   2. **At 3.4× the neuron count and the same training budget, level-0
+      collapses** (merge_P 0.75 → 0.26 for base) and stitching cannot
+      recover what level 0 never found — ΔARI +0.003 versus +0.132 on the
+      200 µm box. The binding constraint at scale is per-tile partition
+      quality (training budget/model capacity per tile), not the stitch
+      machinery — the same "evidence quality is the lever" conclusion the
+      repo reached in Phases 2.2–2.3. The scale path is therefore: keep
+      tiles at the size where level 0 is strong (~200 µm), and add *more
+      tiles* — not bigger ones — which is what the hierarchy is for.
+
+   Operational notes from the same runs: the level-1 stitch needed
+   memory-bounded candidate generation (per-endpoint k-NN, endpoint cap) —
+   an all-pairs radius query over dense-box super-fragment endpoints OOMs;
+   and level-0 shows substantial run-to-run variance at fixed seed across
+   thread counts (same tile: 310 vs 694 clusters), so multi-seed reporting
+   is needed for small deltas.
 3. **Soma cannot-link A/B.** Add the nucleus-table constraint to level-0 GAEC
    and level-1 Kruskal on the densest bbox (T4, where ARI dropped to 0.287).
    Success: ARI recovery at unchanged merge_P.
