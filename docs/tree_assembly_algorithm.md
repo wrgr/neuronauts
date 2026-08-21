@@ -348,6 +348,24 @@ hierarchical agglomeration (Beier et al., Nat. Methods 2017), specialized by
    and level-0 shows substantial run-to-run variance at fixed seed across
    thread counts (same tile: 310 vs 694 clusters), so multi-seed reporting
    is needed for small deltas.
+
+   **→ FIX CONFIRMED (2026-08-21): 600 µm rerun at the proven tile size.**
+   Same data, 6×2 grid (~100 µm tiles) and the proven 40+100-epoch budget:
+
+   | 600 µm | baseline ARI / merge_P | stitched ΔARI | Δmerge_P | assembly |
+   |---|---|---|---|---|
+   | 2×2, 30+60 ep (above) | 0.221 / 0.258 | +0.003 | −0.041 | 2.2% |
+   | 6×2, 40+100, obs-only | 0.310 / 0.497 | **+0.118** | −0.121 | 20.9% |
+   | 6×2, 40+100, odd-skip | 0.314 / 0.504 | +0.072 | −0.204 | **29.0%** |
+
+   Scaling by adding right-sized tiles works: the stitch gain grows 40×
+   (+0.003 → +0.118) and assembly 10× on the identical volume. The
+   remaining gap to the 200 µm regime (baseline merge_P 0.50 vs 0.75) is
+   level-0 purity, and here even the obs channel pays precision for it
+   (−0.121 vs −0.001 at 200 µm): forced merges faithfully propagate tile
+   impurity, so the stitch is exactly as clean as its tiles — the direct
+   motivation for the scaffold-first operator of §5. fk_sep on the 96 real
+   frankenmerges: 0.54–0.57 baseline → 0.42 stitched in both configs.
 3. **Soma cannot-link A/B.** Add the nucleus-table constraint to level-0 GAEC
    and level-1 Kruskal on the densest bbox (T4, where ARI dropped to 0.287).
    Success: ARI recovery at unchanged merge_P.
