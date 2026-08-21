@@ -407,6 +407,12 @@ move. Per-root tiers, by exact lineage soma containment:
   output identity its synapses carry, priority-ordered by synapse count.
   Unattributed fragments remain valid anonymous pre-nodes.
 
+Additional tier: **GLIA (ignorable)** — a contained nucleus classified
+non-neuronal (aibs metamodel table) strikes the root from every worklist;
+it also prunes BIG-NOSOMA (astrocytic processes, vasculature) and gives
+the verifier a free rejection rule (no synaptic identity may attach to a
+glial object).
+
 Priorities follow synapse mass throughout. The catastrophic editor's prices
 become tier prices — touching a NAMED claim costs near-infinity; merging
 two ANON nodes is cheap-ish and reversible in effect (it consolidates
@@ -416,6 +422,35 @@ weighted** — coverage grows monotonically, precision never leaves 100.
 `scripts/tier_census.py` measures the day-one tier matrix (post × pre) on
 the dual-side world, the verified precision of NAMED claims, and the
 ranked ANON attribution worklist.
+
+**Propose-then-verify — the mechanism that makes 100% buildable.**
+Verification of a candidate is cheap even when solving is hard: a candidate
+localizes the decision to one junction and one union. So the assembly
+machinery of §§2–4 (stitch, accretion, edge classifier) is demoted to
+*candidate generation* — recall-oriented, allowed to be sloppy — and
+identity claims enter the certified graph only through a per-candidate
+**verification battery**:
+
+1. *Arithmetic*: union contains ≤1 nucleus, none glial; chunkedgraph
+   lineage/edit-history consistency.
+2. *Topology/biology*: union skeleton a single tree; polarity, cable,
+   synapse-count plausibility; prototype/DNA homogeneity.
+3. *EM at the join point*: the cut-face fingerprint verifier
+   (`experiments/fingerprints/cutface/` — panel recall 1.000, top-1 0.767,
+   abstention curve already measured) — a few EM patches per candidate,
+   not a segmentation run.
+4. *Decoy panel*: certify only when the candidate beats distractor
+   scaffolds by a margin — turns any uncalibrated scorer into a
+   calibrated verifier.
+5. *Independence conjunction*: require agreement of independently-failing
+   channels (geometry ∧ classifier ∧ EM ∧ lineage); independent ~5%-error
+   verifiers conjoin to ~1e-4 false-accept.
+
+The v117→v1718 delta supplies unlimited labeled candidates, so the
+battery's false-accept rate is *measured*, not asserted — the
+certification bar is an empirical spec (target set by the graph's
+contamination tolerance), and the abstention curve is the coverage/
+precision dial.
 
 ## 5b. Scaffold-first accretion (coarse-to-fine) — original sketch
 
