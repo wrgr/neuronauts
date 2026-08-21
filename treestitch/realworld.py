@@ -740,10 +740,42 @@ def build_region_world_l2(
     all_frag: list[np.ndarray] = []
     all_label: list[np.ndarray] = []
     all_l2: list[np.ndarray] = []
-    n_done = 0
+    done_roots: set[int] = set()
+
+    # Resume from a partial checkpoint (written every 100 neurons below) —
+    # the walk is hours-long, so a killed run must not lose its progress.
+    part_path = None if cache_path is None else cache_path + ".partial.npz"
+    if part_path is not None and os.path.exists(part_path):
+        d = np.load(part_path)
+        all_pos.append(d["pos"].astype(np.float32))
+        all_frag.append(d["frag_ids"].astype(np.int64))
+        all_label.append(d["labels"].astype(np.int64))
+        all_l2.append(d["l2_ids"].astype(np.uint64))
+        done_roots = {int(r) for r in d["done_roots"]}
+        if verbose:
+            print(f"  resuming from checkpoint: {len(done_roots)} neurons, "
+                  f"{len(d['pos'])} L2 nodes")
+
+    def _checkpoint():
+        if part_path is None:
+            return
+        np.savez_compressed(
+            part_path,
+            pos=np.concatenate(all_pos) if all_pos else np.zeros((0, 3), np.float32),
+            frag_ids=np.concatenate(all_frag) if all_frag else np.zeros(0, np.int64),
+            labels=np.concatenate(all_label) if all_label else np.zeros(0, np.int64),
+            l2_ids=np.concatenate(all_l2) if all_l2 else np.zeros(0, np.uint64),
+            done_roots=np.array(sorted(done_roots), dtype=np.int64),
+        )
+
+    n_done = len(done_roots)
     for rt in seed_roots:
+        if int(rt) in done_roots:
+            continue
         ids, pts = _l2_nodes_with_coords(int(rt), token=tok,
                                          bounds_seg_vox=bounds_seg_vox)
+        done_roots.add(int(rt))
+        n_done += 1
         if len(ids) == 0:
             continue
         keep = ((pts[:, 0] >= x0) & (pts[:, 0] < x1) &
@@ -760,7 +792,8 @@ def build_region_world_l2(
         all_frag.append(v117[ok].astype(np.int64))
         all_label.append(np.full(int(ok.sum()), int(rt), dtype=np.int64))
         all_l2.append(ids[ok])
-        n_done += 1
+        if n_done % 100 == 0:
+            _checkpoint()
         if verbose and n_done % 25 == 0:
             print(f"    {n_done}/{len(seed_roots)} neurons walked, "
                   f"{sum(len(p) for p in all_pos)} L2 nodes so far …")

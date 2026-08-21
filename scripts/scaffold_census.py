@@ -34,6 +34,67 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 
+def mst_odd(points_nm, *, long_edge_factor: float = 4.0,
+            long_edge_min_nm: float = 10_000.0, knn: int = 6) -> bool:
+    """Oddness for point-cloud fragments: long-bridge test on the cloud's MST.
+
+    The k-NN graphs of ``_cloud_fragment`` are the wrong substrate for edge-
+    length gates (their long edges are sampling artifacts); the MST recovers
+    the trunk-vs-bridge structure the L2-skeleton gate relies on."""
+    import numpy as np
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import minimum_spanning_tree
+    from scipy.spatial import cKDTree
+
+    pts = np.asarray(points_nm, dtype=np.float64)
+    n = len(pts)
+    if n < 3:
+        return False
+    k = min(knn + 1, n)
+    d, nbr = cKDTree(pts).query(pts, k=k)
+    rows = np.repeat(np.arange(n), k - 1)
+    cols = nbr[:, 1:].ravel()
+    vals = d[:, 1:].ravel()
+    mst = minimum_spanning_tree(
+        coo_matrix((vals, (rows, cols)), shape=(n, n))).tocoo()
+    lens = mst.data
+    if len(lens) == 0:
+        return True          # k-NN graph disconnected — suspicious by itself
+    med = float(np.median(lens))
+    thresh = max(long_edge_min_nm, long_edge_factor * med)
+    # a disconnected k-NN graph (MST is a forest) is also odd
+    return bool((lens > thresh).any() or len(lens) < n - 1)
+
+
+def somata_contained(fragments, region_bbox, *, version_ts, token,
+                     nucleus_cache):
+    """{v117_root: n_somata} by LINEAGE CONTAINMENT: a soma belongs to a
+    fragment iff its nucleus supervoxel resolves to that v117 root.  Exact —
+    unlike any proximity test, which over-counts for large arbors."""
+    import numpy as np
+
+    from neuronauts.data import lineage as L
+    from treestitch.realworld import _load_nucleus_somas
+
+    somas = _load_nucleus_somas(cache_path=nucleus_cache)
+    (x0, y0, z0), (x1, y1, z1) = region_bbox
+    pad = 50_000.0
+    m = ((somas["x_nm"] >= x0 - pad) & (somas["x_nm"] < x1 + pad) &
+         (somas["y_nm"] >= y0 - pad) & (somas["y_nm"] < y1 + pad) &
+         (somas["z_nm"] >= z0 - pad) & (somas["z_nm"] < z1 + pad))
+    sv = somas["sv"][m].astype(np.uint64)
+    sv = sv[sv > 0]
+    if len(sv) == 0:
+        return {}
+    roots = L.roots_at(sv, version_ts, token=token)
+    if roots is None:
+        raise RuntimeError("roots_at failed for soma supervoxels")
+    counts: dict[int, int] = {}
+    for r in roots[roots > 0]:
+        counts[int(r)] = counts.get(int(r), 0) + 1
+    return counts
+
+
 def count_somata_near(fragments, somas_nm, radius_nm: float = 5_000.0,
                       max_verts: int = 300):
     """[F] number of nucleus somata within ``radius_nm`` of each fragment's
@@ -113,24 +174,34 @@ def main() -> int:
             "n_obs": int(m.sum()),
             "pure": len(labs) == 1,
             "is_fk": len(labs) > 1,
-            "odd_loose": oddness_scores(
-                f, long_edge_factor=4.0, long_edge_min_nm=10_000.0)["is_odd"],
-            "odd_strict": oddness_scores(
-                f, long_edge_factor=8.0, long_edge_min_nm=20_000.0)["is_odd"],
         }
+        if args.l2_substrate:
+            # cloud fragments: MST-based long-bridge gate (k-NN edge stats
+            # flag everything — the substrate lesson from census v2)
+            facts[rid]["odd_loose"] = mst_odd(
+                f.vertices_nm, long_edge_factor=4.0, long_edge_min_nm=10_000.0)
+            facts[rid]["odd_strict"] = mst_odd(
+                f.vertices_nm, long_edge_factor=8.0, long_edge_min_nm=20_000.0)
+        else:
+            facts[rid]["odd_loose"] = oddness_scores(
+                f, long_edge_factor=4.0, long_edge_min_nm=10_000.0)["is_odd"]
+            facts[rid]["odd_strict"] = oddness_scores(
+                f, long_edge_factor=8.0, long_edge_min_nm=20_000.0)["is_odd"]
 
-    # Soma counts (optional — skip gracefully if the nucleus fetch fails)
+    # Soma counts by lineage containment (exact; skip gracefully on failure)
     soma_counts = None
     try:
-        from treestitch.realworld import _load_nucleus_somas
-        somas = _load_nucleus_somas(cache_path=args.nucleus_cache)
-        somas_nm = np.stack([somas["x_nm"], somas["y_nm"], somas["z_nm"]], axis=1)
-        counts = count_somata_near(fragments, somas_nm)
-        soma_counts = {int(f.base_root_id): c
-                       for f, c in zip(fragments, counts)}
-        print(f"nucleus somata loaded: {len(somas_nm)} "
-              f"(fragments with ≥1 nearby soma: "
-              f"{sum(1 for c in counts if c >= 1)}/{len(fragments)})")
+        from neuronauts.data import lineage as L
+        from neuronauts.data.loaders import DEFAULT_TOKEN
+        soma_counts = somata_contained(
+            fragments, (lo3, hi3), version_ts=L.V117_TIMESTAMP,
+            token=DEFAULT_TOKEN, nucleus_cache=args.nucleus_cache)
+        n_with = sum(1 for f in fragments
+                     if soma_counts.get(int(f.base_root_id), 0) >= 1)
+        n_multi = sum(1 for f in fragments
+                      if soma_counts.get(int(f.base_root_id), 0) >= 2)
+        print(f"soma containment (lineage): {n_with}/{len(fragments)} fragments "
+              f"contain ≥1 soma, {n_multi} contain ≥2")
     except Exception as exc:  # network-dependent; census still meaningful
         print(f"nucleus soma gate unavailable ({type(exc).__name__}: {exc}) — skipping")
 
@@ -171,9 +242,12 @@ def main() -> int:
     census("not odd strict + n_obs >= 10",
            lambda r, v: not v["odd_strict"] and v["n_obs"] >= 10)
     if soma_counts is not None:
-        census("<= 1 soma", lambda r, v: soma_counts.get(r, 0) <= 1)
+        census("<= 1 contained soma", lambda r, v: soma_counts.get(r, 0) <= 1)
         census("FULL: strict-odd + n>=10 + <=1 soma",
                lambda r, v: (not v["odd_strict"] and v["n_obs"] >= 10
+                             and soma_counts.get(r, 0) <= 1))
+        census("FULL-loose: loose-odd + <=1 soma",
+               lambda r, v: (not v["odd_loose"]
                              and soma_counts.get(r, 0) <= 1))
     census("LOOSE-FULL: loose-odd + n>=10",
            lambda r, v: not v["odd_loose"] and v["n_obs"] >= 10)
