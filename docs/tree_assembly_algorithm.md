@@ -436,6 +436,30 @@ trunk carries a long L2 edge and flags odd. Claim 2 requires the L2-node
 substrate (`--l2-substrate`, mass ∝ arbor) — census v2. The ≤1-soma gate
 needed distance-to-skeleton rather than bbox proximity (fixed).
 
+**→ Census v3 (2026-08-21, L2-node substrate, 200 µm box; 395 fragments /
+700k L2 nodes / 16 frankenmerges).** Base rate first: the raw v117
+segmentation is already **95.9% pure by fragment and 98.2% pure by mass** —
+the trunk hypothesis at full strength; the scaffold task is excluding ~4%
+bad mass, not finding a rare good subset. And one gate does it:
+
+| Gate (label-free) | frags | mass | purity | mass purity | fk excl. |
+|---|---|---|---|---|---|
+| **≤1 contained soma (lineage)** | 84.1% | **78.9%** | **0.997** | **1.000** | 93.8% |
+| MST-not-odd (either setting) | 15–17% | 7–10% | 1.000 | 1.000 | 100% |
+| soma ∧ not-odd | 14% | 9.1% | 1.000 | 1.000 | 100% |
+
+**Soma containment — a nucleus's supervoxel resolving to the root, one
+batched `roots_at` call — is the primary scaffold gate**: ~79% of arbor
+mass at ~100% mass-weighted purity. The 63 multi-soma roots it excludes are
+the catastrophic-editor caseload, detected by lineage arithmetic alone.
+Oddness demotes to a secondary flag: it is perfectly pure but low-coverage
+because **bbox clipping** slices large arbors into disjoint clouds whose
+MST bridges mimic frankenmerge glue (fix: score oddness on unclipped
+fragments, or discount bridges that span the bbox boundary). Remaining for
+claim 2: the ~21% of mass outside the soma gate = sliver tail + orphan
+axons — exactly the accretion layer's workload. 600 µm confirmation run in
+progress (walk now checkpointed).
+
 ## 6. Backlog
 
 - **Neuroglancer visualization harness** (requested 2026-08-20). Extend
