@@ -423,6 +423,22 @@ weighted** — coverage grows monotonically, precision never leaves 100.
 the dual-side world, the verified precision of NAMED claims, and the
 ranked ANON attribution worklist.
 
+**→ Day-one census (200 µm, 6,918 dual-joined synapses):** post-side NAMED
+59.6% at mass purity 0.9981 (the 0.2% residual = unseen-soma merges — soma
+arithmetic gives three nines, the verifier buys the rest); full-edge 7.2%;
+pre side 85% ANON across 2,613 tiny fragments (flat worklist — attribution
+must be bulk + cheap). MULTI (≥2 nuclei) holds 28.5% of post mass, but
+since **glia carry no synapses**, the v1718 oracle splits it: ~50% benign
+(neuron+glia riders / duplicate nuclei — identity intact), leaving a
+bounded catastrophic caseload of 142 roots (~2.2k syn) per 200 µm box.
+Post-side resolvable mass with benign-MULTI reclaimed: ~73%. Per-nucleus
+neuron-vs-not is served (`nucleus_ref_neuron_svm`,
+`aibs_metamodel_celltypes_v661` at v1300/v1718) — the label-free split is
+a table fetch, nothing to train. Small-box hazard (per review): "0
+contained nuclei" ≠ "no soma" (undetected/sv-less nuclei, dataset edge) —
+so large objects are NEVER attribution candidates regardless of score;
+size/extent is a safety gate, not just a priority.
+
 **Propose-then-verify — the mechanism that makes 100% buildable.**
 Verification of a candidate is cheap even when solving is hard: a candidate
 localizes the decision to one junction and one union. So the assembly

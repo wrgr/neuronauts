@@ -163,6 +163,32 @@ def main() -> int:
     named_precision(region_pre, pre_root, pre_true, pre_counts, lmap_pre,
                     "PRE  (axonal)")
 
+    # ---- MULTI split: benign (glia/duplicate nuclei) vs catastrophic -------
+    # Glia carry no synapses, so a synapse-bearing MULTI root is either a true
+    # neuron-neuron merge (catastrophic) or a neuron merged with glia /
+    # duplicate nucleus detections (identity-benign: every synapse still
+    # belongs to the one neuron). The proofreading oracle separates them for
+    # the census: a MULTI root that maps to a SINGLE v1718 neuron was left
+    # whole by proofreaders → benign.
+    def multi_split(roots, counts, lmap, label):
+        multi = [int(r) for r in np.unique(roots)
+                 if side_tier(r, counts) == "MULTI"]
+        if not multi:
+            print(f"  {label}: no MULTI roots")
+            return
+        benign = [r for r in multi if len(lmap.get(r, set())) == 1]
+        mass = sum(counts.get(r, 0) for r in multi)
+        mass_benign = sum(counts.get(r, 0) for r in benign)
+        print(f"  {label}: {len(multi)} MULTI roots ({mass} syn) — "
+              f"benign (single v1718 target): {len(benign)} roots "
+              f"({mass_benign} syn, {mass_benign / max(mass, 1):.1%} of MULTI mass); "
+              f"catastrophic: {len(multi) - len(benign)} roots "
+              f"({mass - mass_benign} syn)")
+
+    print("\nMULTI split (v1718 oracle; glia have no synapses):")
+    multi_split(post_root, post_counts, lmap_post, "POST")
+    multi_split(pre_root, pre_counts, lmap_pre, "PRE ")
+
     # ---- ranked anonymous pre-side worklist --------------------------------
     anon = [(pre_counts[int(r)], int(r)) for r in np.unique(pre_root)
             if side_tier(r, pre_counts) == "ANON"]
