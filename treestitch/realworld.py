@@ -884,6 +884,44 @@ def _assemble_l2_world(pos, frag_ids, labels, l2_ids, *, version,
     return fragments, region, root_label_map
 
 
+def count_contained_somata(
+    *,
+    version_ts: int,
+    token: Optional[str] = None,
+    nucleus_cache_path: Optional[str] = None,
+    roots_cache_path: Optional[str] = None,
+) -> dict:
+    """{root_id: n_contained_nuclei} across the WHOLE nucleus table, by lineage.
+
+    A nucleus is *contained* in a root iff its supervoxel resolves to that root
+    at ``version_ts`` — exact, unlike any proximity test.  One batched
+    ``roots_at`` call over ~130k supervoxels; cache the result, it never
+    changes for a fixed timestamp.
+    """
+    from neuronauts.data import lineage as L
+    from neuronauts.data.loaders import DEFAULT_TOKEN
+
+    import os
+
+    if roots_cache_path is not None and os.path.exists(roots_cache_path):
+        d = np.load(roots_cache_path)
+        roots = d["roots"]
+    else:
+        somas = _load_nucleus_somas(cache_path=nucleus_cache_path)
+        sv = somas["sv"].astype(np.uint64)
+        sv = sv[sv > 0]
+        roots = L.roots_at(sv, version_ts, token=token or DEFAULT_TOKEN)
+        if roots is None:
+            raise RuntimeError("roots_at failed for nucleus supervoxels")
+        if roots_cache_path is not None:
+            np.savez_compressed(roots_cache_path, roots=roots)
+
+    counts: dict[int, int] = {}
+    for r in roots[roots > 0]:
+        counts[int(r)] = counts.get(int(r), 0) + 1
+    return counts
+
+
 def build_region_world_dual(
     bbox_nm: tuple,
     *,

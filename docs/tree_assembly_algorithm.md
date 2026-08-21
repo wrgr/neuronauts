@@ -377,7 +377,47 @@ hierarchical agglomeration (Beier et al., Nat. Methods 2017), specialized by
 Each experiment is a day-scale run on existing data paths and directly falsifies
 one load-bearing claim of the design before any large build.
 
-## 5. Scaffold-first accretion (coarse-to-fine) — design sketch (2026-08-21)
+## 5. Tiered identity resolution — the corrected frame (2026-08-21)
+
+> Supersedes the scaffold sketch below where they differ. The correction
+> (from review): a scaffold story that celebrates the easy dendritic 98% is
+> naive — that part was never the bottleneck, and at graph scale *any*
+> false merge is quadratic poison (every synapse pair across it is a false
+> edge; cf. the old pipeline's 85% pairwise accuracy vs 0.27 line-graph
+> F1). What has value is **100% precision on any defensible subset** —
+> even dendrites alone — and never asserting identity we cannot certify.
+
+**The product is a fixed synapse graph with progressively resolved
+identities.** Synapses are invariant nodes (the coassign framing); identity
+claims attach to each synapse's two sides; an unresolved side is an
+*anonymous node*, never a guess. The graph is complete in edges from day
+one and is never corrupted, because false identity is the single forbidden
+move. Per-root tiers, by exact lineage soma containment:
+
+- **NAMED** (exactly 1 contained nucleus): identity = that soma's neuron.
+  Target: certify to 100% precision. Dendrites live here, so post-sides of
+  edges certify first — half of every edge done exactly.
+- **MULTI** (≥2 nuclei): a merge error by arithmetic — the catastrophic
+  editor's caseload, found without learning.
+- **BIG-NOSOMA** (no nucleus, high synapse mass): external neuron or
+  must-merge candidate. Deferred as its own labeled node; deferral is free,
+  wrong merging is not.
+- **ANON** (no nucleus, small): orphan axon/dendrite fragments. For axons,
+  **attribution, not reconstruction** — the path is irrelevant; only which
+  output identity its synapses carry, priority-ordered by synapse count.
+  Unattributed fragments remain valid anonymous pre-nodes.
+
+Priorities follow synapse mass throughout. The catastrophic editor's prices
+become tier prices — touching a NAMED claim costs near-infinity; merging
+two ANON nodes is cheap-ish and reversible in effect (it consolidates
+anonymous rows, never corrupts a named one). The metric is
+**certified-edge fraction at verified 100% precision, synapse-mass-
+weighted** — coverage grows monotonically, precision never leaves 100.
+`scripts/tier_census.py` measures the day-one tier matrix (post × pre) on
+the dual-side world, the verified precision of NAMED claims, and the
+ranked ANON attribution worklist.
+
+## 5b. Scaffold-first accretion (coarse-to-fine) — original sketch
 
 An alternative inference operator inside the same tile/halo/cannot-link
 skeleton, motivated by the Phase-2.3 measurement that real v117 structure is
