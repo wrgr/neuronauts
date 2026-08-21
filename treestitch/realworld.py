@@ -449,7 +449,8 @@ def _assemble_world_arrays(
     fragments = []
     root_label_map: dict[int, set[int]] = {}
     n_l2_ok = n_l2_fail = 0
-    for fr in np.unique(frag_ids):
+    uniq_frags = np.unique(frag_ids)
+    for fi, fr in enumerate(uniq_frags):
         mask = frag_ids == fr
         idxs = np.where(mask)[0]
         frag = None
@@ -461,6 +462,9 @@ def _assemble_world_arrays(
                 n_l2_ok += 1
             else:
                 n_l2_fail += 1
+            if verbose and (fi + 1) % 50 == 0:
+                print(f"    L2 skeletons: {fi + 1}/{len(uniq_frags)} fragments "
+                      f"({n_l2_ok} ok, {n_l2_fail} fallback) …")
         if frag is None:
             frag = _cloud_fragment(int(fr), f"minnie65_v{version}",
                                    pos[idxs], idxs)
@@ -736,10 +740,42 @@ def build_region_world_l2(
     all_frag: list[np.ndarray] = []
     all_label: list[np.ndarray] = []
     all_l2: list[np.ndarray] = []
-    n_done = 0
+    done_roots: set[int] = set()
+
+    # Resume from a partial checkpoint (written every 100 neurons below) —
+    # the walk is hours-long, so a killed run must not lose its progress.
+    part_path = None if cache_path is None else cache_path + ".partial.npz"
+    if part_path is not None and os.path.exists(part_path):
+        d = np.load(part_path)
+        all_pos.append(d["pos"].astype(np.float32))
+        all_frag.append(d["frag_ids"].astype(np.int64))
+        all_label.append(d["labels"].astype(np.int64))
+        all_l2.append(d["l2_ids"].astype(np.uint64))
+        done_roots = {int(r) for r in d["done_roots"]}
+        if verbose:
+            print(f"  resuming from checkpoint: {len(done_roots)} neurons, "
+                  f"{len(d['pos'])} L2 nodes")
+
+    def _checkpoint():
+        if part_path is None:
+            return
+        np.savez_compressed(
+            part_path,
+            pos=np.concatenate(all_pos) if all_pos else np.zeros((0, 3), np.float32),
+            frag_ids=np.concatenate(all_frag) if all_frag else np.zeros(0, np.int64),
+            labels=np.concatenate(all_label) if all_label else np.zeros(0, np.int64),
+            l2_ids=np.concatenate(all_l2) if all_l2 else np.zeros(0, np.uint64),
+            done_roots=np.array(sorted(done_roots), dtype=np.int64),
+        )
+
+    n_done = len(done_roots)
     for rt in seed_roots:
+        if int(rt) in done_roots:
+            continue
         ids, pts = _l2_nodes_with_coords(int(rt), token=tok,
                                          bounds_seg_vox=bounds_seg_vox)
+        done_roots.add(int(rt))
+        n_done += 1
         if len(ids) == 0:
             continue
         keep = ((pts[:, 0] >= x0) & (pts[:, 0] < x1) &
@@ -756,7 +792,8 @@ def build_region_world_l2(
         all_frag.append(v117[ok].astype(np.int64))
         all_label.append(np.full(int(ok.sum()), int(rt), dtype=np.int64))
         all_l2.append(ids[ok])
-        n_done += 1
+        if n_done % 100 == 0:
+            _checkpoint()
         if verbose and n_done % 25 == 0:
             print(f"    {n_done}/{len(seed_roots)} neurons walked, "
                   f"{sum(len(p) for p in all_pos)} L2 nodes so far …")
@@ -845,6 +882,44 @@ def _assemble_l2_world(pos, frag_ids, labels, l2_ids, *, version,
               f"(≥2 merges: {int((fpn >= 2).sum())}/{len(fpn)})")
 
     return fragments, region, root_label_map
+
+
+def count_contained_somata(
+    *,
+    version_ts: int,
+    token: Optional[str] = None,
+    nucleus_cache_path: Optional[str] = None,
+    roots_cache_path: Optional[str] = None,
+) -> dict:
+    """{root_id: n_contained_nuclei} across the WHOLE nucleus table, by lineage.
+
+    A nucleus is *contained* in a root iff its supervoxel resolves to that root
+    at ``version_ts`` — exact, unlike any proximity test.  One batched
+    ``roots_at`` call over ~130k supervoxels; cache the result, it never
+    changes for a fixed timestamp.
+    """
+    from neuronauts.data import lineage as L
+    from neuronauts.data.loaders import DEFAULT_TOKEN
+
+    import os
+
+    if roots_cache_path is not None and os.path.exists(roots_cache_path):
+        d = np.load(roots_cache_path)
+        roots = d["roots"]
+    else:
+        somas = _load_nucleus_somas(cache_path=nucleus_cache_path)
+        sv = somas["sv"].astype(np.uint64)
+        sv = sv[sv > 0]
+        roots = L.roots_at(sv, version_ts, token=token or DEFAULT_TOKEN)
+        if roots is None:
+            raise RuntimeError("roots_at failed for nucleus supervoxels")
+        if roots_cache_path is not None:
+            np.savez_compressed(roots_cache_path, roots=roots)
+
+    counts: dict[int, int] = {}
+    for r in roots[roots > 0]:
+        counts[int(r)] = counts.get(int(r), 0) + 1
+    return counts
 
 
 def build_region_world_dual(
