@@ -34,20 +34,27 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 
-def count_somata_near(fragments, somas_nm, margin_nm: float = 10_000.0):
-    """[F] number of nucleus somata inside each fragment's bbox + margin."""
-    import numpy as np
+def count_somata_near(fragments, somas_nm, radius_nm: float = 5_000.0,
+                      max_verts: int = 300):
+    """[F] number of nucleus somata within ``radius_nm`` of each fragment's
+    skeleton vertices.
 
+    Distance-to-skeleton, NOT bounding box: a long axon's bbox covers hundreds
+    of unrelated somata, which made the bbox version flag every fragment."""
+    import numpy as np
+    from scipy.spatial import cKDTree
+
+    tree = cKDTree(somas_nm)
     out = []
-    sx, sy, sz = somas_nm[:, 0], somas_nm[:, 1], somas_nm[:, 2]
+    rng = np.random.default_rng(0)
     for f in fragments:
         v = np.asarray(f.vertices_nm, dtype=np.float64)
-        lo = v.min(0) - margin_nm
-        hi = v.max(0) + margin_nm
-        m = ((sx >= lo[0]) & (sx <= hi[0]) &
-             (sy >= lo[1]) & (sy <= hi[1]) &
-             (sz >= lo[2]) & (sz <= hi[2]))
-        out.append(int(m.sum()))
+        if len(v) > max_verts:
+            v = v[rng.choice(len(v), max_verts, replace=False)]
+        hits: set[int] = set()
+        for lst in tree.query_ball_point(v, r=radius_nm):
+            hits.update(lst)
+        out.append(len(hits))
     return out
 
 
@@ -64,18 +71,33 @@ def main() -> int:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--nucleus-cache", default=None,
                    help="npz cache path for the nucleus table")
+    p.add_argument("--l2-substrate", action="store_true",
+                   help="observations = L2 nodes (mass ∝ arbor; soma-seeded "
+                        "neurons only) instead of subsampled synapses — the "
+                        "honest substrate for the mass-coverage claim")
+    p.add_argument("--l2-cache", default=None,
+                   help="npz cache path for the L2-substrate world arrays")
+    p.add_argument("--max-neurons", type=int, default=0,
+                   help="(l2 substrate) cap seed neurons; 0 = all")
     args = p.parse_args()
 
     import numpy as np
 
     from treestitch.atomize import oddness_scores
-    from treestitch.realworld import build_region_world
+    from treestitch.realworld import build_region_world, build_region_world_l2
 
     lo3, hi3 = tuple(args.bbox[:3]), tuple(args.bbox[3:])
-    fragments, region, root_label_map = build_region_world(
-        (lo3, hi3), version=args.version, max_synapses=args.max_synapses,
-        min_syn_per_fragment=args.min_syn_per_fragment, seed=args.seed,
-        tile_x_nm=args.tile_x_nm, per_tile_limit=args.per_tile_limit)
+    if args.l2_substrate:
+        fragments, region, root_label_map = build_region_world_l2(
+            (lo3, hi3), version=args.version, seed=args.seed,
+            max_neurons=args.max_neurons,
+            nucleus_cache_path=args.nucleus_cache,
+            cache_path=args.l2_cache)
+    else:
+        fragments, region, root_label_map = build_region_world(
+            (lo3, hi3), version=args.version, max_synapses=args.max_synapses,
+            min_syn_per_fragment=args.min_syn_per_fragment, seed=args.seed,
+            tile_x_nm=args.tile_x_nm, per_tile_limit=args.per_tile_limit)
 
     frag_ids = np.asarray(region.pre_seg_id, dtype=np.int64)
     labels = np.asarray(region.pre_root_id, dtype=np.int64)

@@ -402,6 +402,22 @@ afford are emitted as the top of the human-review queue.
 4. Rounds don't compound: attachment precision per round is non-decreasing
    (else the join bias needs a smaller prototype-update weight).
 
+**→ Census v1 (2026-08-21, subsampled-synapse substrate, both boxes):**
+
+| Gate | 200 µm purity / fk-excl / mass | 600 µm purity / fk-excl / mass |
+|---|---|---|
+| none (base rate) | 0.934 / 0% / 100% | 0.891 / 0% / 100% |
+| not-odd (4×/10 µm) | **0.971 / 94.7%** / 11.1% | **0.993 / 99.0%** / 13.9% |
+| not-odd (8×/20 µm) | 0.942 / 84.2% / 18.5% | 0.964 / 93.8% / 17.6% |
+
+**Claim 1 confirmed**: the loose oddness gate alone reaches 97–99% fragment
+purity and excludes 95–99% of real frankenmerges, label-free. The mass
+numbers (11–14%) do **not** test claim 2: on this substrate (synapse cap →
+~5 obs/neuron) trunks are skeleton-huge but synapse-sparse, so nearly every
+trunk carries a long L2 edge and flags odd. Claim 2 requires the L2-node
+substrate (`--l2-substrate`, mass ∝ arbor) — census v2. The ≤1-soma gate
+needed distance-to-skeleton rather than bbox proximity (fixed).
+
 ## 6. Backlog
 
 - **Neuroglancer visualization harness** (requested 2026-08-20). Extend
