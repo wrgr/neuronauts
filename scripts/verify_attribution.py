@@ -56,6 +56,13 @@ def main() -> int:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--nucleus-cache", default=None)
     p.add_argument("--soma-roots-cache", default=None)
+    p.add_argument("--links", action="store_true",
+                   help="verify LINKS between adjacent pre-side fragments "
+                        "instead of fragment→soma-anchor attributions. "
+                        "Identity flows along certified axon chains, so the "
+                        "unit of certification is the link; a link is "
+                        "gradeable when BOTH ends were proofreader-"
+                        "adjudicated (non-self v1718 labels).")
     args = p.parse_args()
 
     import numpy as np
@@ -121,6 +128,10 @@ def main() -> int:
     all_frags = [frag_by_root[r] for r in anchors + anon]
     enc = encode_fragments_morphological(all_frags)
     dna = {int(f.base_root_id): f.dna for f in enc}
+
+    if args.links:
+        return run_link_mode(args, np, cKDTree, roots, pos, region, counts,
+                             anon, anon_label, dna)
 
     # candidate generation: nearest anchors by synapse-cloud gap
     anchor_pts = []
@@ -209,6 +220,101 @@ def main() -> int:
         print("\nno operating point reached zero false-accepts — "
               "battery needs stronger channels (EM cut-face, trained scorer "
               "from a disjoint region)")
+    return 0
+
+
+def run_link_mode(args, np, cKDTree, roots, pos, region, counts,
+                  anon, anon_label, dna):
+    """Verify links between adjacent ANON pre-side fragments.
+
+    Candidates: each ANON fragment's nearest other ANON fragment (by synapse-
+    cloud gap) within the radius, with the decoy margin over the k-nearest
+    panel. Oracle: gradeable iff BOTH ends carry non-self v1718 labels;
+    TRUE iff the labels match.
+    """
+    anon_set = set(anon)
+    a_pts, a_of_pt = [], []
+    order = sorted(anon_set)
+    index_of = {r: i for i, r in enumerate(order)}
+    for r in order:
+        pts = pos[roots == r]
+        a_pts.append(pts)
+        a_of_pt.extend([index_of[r]] * len(pts))
+    cloud = np.concatenate(a_pts, axis=0)
+    of_pt = np.asarray(a_of_pt)
+    tree = cKDTree(cloud)
+
+    radius_nm = args.candidate_radius_um * 1_000.0
+    cands = []
+    for r in order:
+        pts = pos[roots == r]
+        d, idx = tree.query(pts, k=min(40, len(cloud)))
+        d, idx = np.atleast_2d(d), np.atleast_2d(idx)
+        best_gap = {}
+        me = index_of[r]
+        for row_d, row_i in zip(d, idx):
+            for gg, ii in zip(row_d, row_i):
+                a = int(of_pt[int(ii)])
+                if a == me:
+                    continue
+                if gg < best_gap.get(a, np.inf):
+                    best_gap[a] = float(gg)
+        panel = sorted(best_gap.items(), key=lambda kv: kv[1])[:args.panel_k]
+        if not panel or panel[0][1] > radius_nm:
+            continue
+        (b0, g0) = panel[0]
+        g1 = panel[1][1] if len(panel) > 1 else np.inf
+        other = order[b0]
+        if other < r:
+            continue  # dedup: keep one direction per unordered pair
+        va, vb = dna[r], dna[other]
+        cos = float(np.dot(va, vb) /
+                    (np.linalg.norm(va) * np.linalg.norm(vb) + 1e-9))
+        la, lb = anon_label[r], anon_label.get(other, 0)
+        both_adj = (la not in (0, r)) and (lb not in (0, other))
+        cands.append({
+            "gap": g0, "margin": g1 / max(g0, 1.0), "cos": cos,
+            "n_syn": counts.get(r, 0) + counts.get(other, 0),
+            "gradeable": both_adj,
+            "true": both_adj and la == lb,
+        })
+
+    graded = [c for c in cands if c["gradeable"]]
+    n_true = sum(c["true"] for c in graded)
+    total_syn = sum(counts.get(r, 0) for r in anon)
+    print(f"\nLINK mode: {len(cands)} nearest-neighbour links, "
+          f"{len(graded)} gradeable (both ends adjudicated); naive link "
+          f"precision = {n_true / max(len(graded), 1):.3f}")
+
+    print("\nLink battery sweep (gradeable accepts only):")
+    print(f"  {'G(µm)':>6s} {'M':>5s} {'C':>5s} {'accepted':>9s} "
+          f"{'graded':>7s} {'syn mass':>9s} {'precision':>9s} {'false-acc':>9s}")
+    best_zero = None
+    for G in [30, 15, 8, 4, 2, 1]:
+        for M in [1.0, 2.0, 4.0, 8.0]:
+            for C in [-1.0, 0.5, 0.8]:
+                acc = [c for c in cands
+                       if c["gap"] <= G * 1000 and c["margin"] >= M
+                       and c["cos"] >= C]
+                g = [c for c in acc if c["gradeable"]]
+                if len(g) < 5:
+                    continue
+                tp = sum(c["true"] for c in g)
+                fa = 1 - tp / len(g)
+                mass = sum(c["n_syn"] for c in acc)
+                print(f"  {G:6.0f} {M:5.1f} {C:5.1f} {len(acc):9d} "
+                      f"{len(g):7d} {mass / max(total_syn, 1):9.1%} "
+                      f"{tp / len(g):9.3f} {fa:9.3f}")
+                if fa == 0.0 and len(g) >= 10 and (
+                        best_zero is None or mass > best_zero["mass"]):
+                    best_zero = {"G": G, "M": M, "C": C,
+                                 "n": len(acc), "g": len(g), "mass": mass}
+    if best_zero:
+        print(f"\nbest zero-false-accept link point: G={best_zero['G']}µm "
+              f"M={best_zero['M']} C={best_zero['C']} — {best_zero['n']} links "
+              f"({best_zero['g']} graded) touching {best_zero['mass']} syn")
+    else:
+        print("\nno zero-false-accept link point with ≥10 graded accepts")
     return 0
 
 
