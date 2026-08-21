@@ -359,7 +359,50 @@ hierarchical agglomeration (Beier et al., Nat. Methods 2017), specialized by
 Each experiment is a day-scale run on existing data paths and directly falsifies
 one load-bearing claim of the design before any large build.
 
-## 5. Backlog
+## 5. Scaffold-first accretion (coarse-to-fine) — design sketch (2026-08-21)
+
+An alternative inference operator inside the same tile/halo/cannot-link
+skeleton, motivated by the Phase-2.3 measurement that real v117 structure is
+"one dominant trunk + slivers" (88% of soma neurons already a single v117
+root; ~93% of mass in the trunk) and by the 600 µm finding that *clustering*
+difficulty grows with neuron count while *attachment* difficulty does not.
+
+**Round 0 — verified scaffold.** Select v117 roots that pass label-free
+gates (not odd, ≤ 1 soma, plausible size/compactness, optionally calibrated
+model confidence). These are the trunks. A trunk root spans tiles, so
+scaffold mass needs **no stitching at all** — same root id is global
+identity. The two-level stitch machinery is demoted to the sliver tail.
+
+**Rounds 1..k — probabilistic accretion.** Each unattached fragment/atom is
+scored against nearby scaffolds by aggregating the edge classifier's
+probabilities fragment→scaffold (net evidence, star topology) plus endpoint
+continuity and pooled-prototype DNA. Soft assignment with an annealed commit
+threshold; the scaffold's prototype (pooled DNA, shape, partner stats)
+updates as it grows — the "soft bias toward previous joins." Slivers never
+merge with each other directly; flat posteriors go to the review queue, and
+the per-sliver posterior IS the K-materializations product.
+
+**Priced constraints, not absolutes — the catastrophic editor.** Frozen
+cores make round-0 errors permanent, so no constraint is absolute; instead
+one objective prices three move classes: accretion (cheap), shell revision
+(moderate), and catastrophic edits (λ_cat): scaffold split at the highest-
+tension point, scaffold–scaffold merge, cohort eviction. λ_cat calibrates to
+the measured error asymmetry (false merge ≈ 5–10× missed merge). Tension
+signals: bimodal shape, two-soma pressure, DNA heterogeneity, contradictory
+attachment cohorts. Catastrophic edits the optimizer proposes but cannot
+afford are emitted as the top of the human-review queue.
+
+**Load-bearing claims to falsify first** (`scripts/scaffold_census.py`):
+1. Scaffold purity: label-free gates select v117 roots that are ≳99% pure
+   against v1718 (and exclude most real frankenmerges).
+2. Coverage: scaffold roots hold ~85–90% of synapse mass, so the
+   probabilistic layer only handles the tail.
+3. Accretion beats clustering: one attachment round ≥ edge_cc merge_P at
+   comparable recall on the same graph.
+4. Rounds don't compound: attachment precision per round is non-decreasing
+   (else the join bias needs a smaller prototype-update weight).
+
+## 6. Backlog
 
 - **Neuroglancer visualization harness** (requested 2026-08-20). Extend
   `treestitch/ngl_export.py` (zero-dep NGL JSON state builder, Phase 2.10)
