@@ -462,6 +462,31 @@ identity claims enter the certified graph only through a per-candidate
    channels (geometry ∧ classifier ∧ EM ∧ lineage); independent ~5%-error
    verifiers conjoin to ~1e-4 false-accept.
 
+**→ Verifier experiments (2026-08-21, dense 200 µm world, 500k synapses):**
+three-step falsification that reshapes the ANON tier design:
+
+1. *Oracle silence*: 93% of ANON axon fragments keep their own root id at
+   v1718 — proofreaders never adjudicated them. Ground truth for the axon
+   tail exists only where proofreading happened; battery precision is
+   measured on the adjudicated subset and transferred.
+2. *Star attribution is structurally wrong*: even at near-full synapse
+   density, only 9/1,063 adjudicated axon fragments have their neuron among
+   in-box soma anchors — axons travel mm. Identity must flow along
+   certified LINKS in axon chains from trunk entry points.
+3. *Proximity is dead as a link channel*: all 32 doubly-adjudicated
+   nearest-neighbour links are wrong (0/32), nearest-fragment gaps are
+   <1 µm everywhere, and decoy margins collapse to ~1 — dozens of foreign
+   processes pack within a micron. Proximity carries zero identity signal
+   for the axon tail; any proximity-gated accretion would poison chains.
+
+Consequence: the link verifier's carrying channels are **directed
+continuation** (skeleton endpoint + tangent alignment, not isotropic cloud
+distance) and **EM texture at the severance plane** — the cut-face
+fingerprint thread (`experiments/fingerprints/cutface/`, panel recall
+1.000 / top-1 0.767 / abstention curve) is the primary channel, with
+today's zeros as its measured motivation: the trivial spatial baseline it
+was built to beat is not weak here, it is exactly zero.
+
 The v117→v1718 delta supplies unlimited labeled candidates, so the
 battery's false-accept rate is *measured*, not asserted — the
 certification bar is an empirical spec (target set by the graph's
