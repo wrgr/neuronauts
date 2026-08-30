@@ -9,14 +9,14 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Tuple, Any
 import numpy as np
 
-from neuronauts.morpho_grammar.tree_grammar_infiller import TreeGrammarInfiller
+from neuronauts.morpho_grammar.tree_grammar_infiller import EnhancedTreeGrammarInfiller
 from neuronauts.global_merge.represent.local_em_verifier import LocalEMVerifier
 
 
 class DualEngineInfiller:
     """
     Unified Dual-Engine Infilling Pipeline:
-    Stage 1: PCFG Tree-Grammar Transformer emits Top-K syntax-valid candidate fragments.
+    Stage 1: Enhanced PCFG Tree-Grammar Transformer emits Top-K syntax-valid candidate fragments.
     Stage 2: Active Micro-EM Verifier reranks Top-K via directional 3D voxel membrane tensors.
     """
     def __init__(
@@ -26,7 +26,7 @@ class DualEngineInfiller:
         top_k: int = 3,
         seed: int = 42
     ):
-        self.infiller = TreeGrammarInfiller(emb_dim=emb_dim, seed=seed)
+        self.infiller = EnhancedTreeGrammarInfiller(emb_dim=emb_dim, seed=seed)
         self.em_verifier = LocalEMVerifier()
         self.em_weight = em_weight
         self.top_k = top_k

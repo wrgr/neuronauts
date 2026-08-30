@@ -112,7 +112,9 @@ class MorphologicalPCFG:
         vertices_nm: np.ndarray,
         radii_nm: np.ndarray,
         edges: np.ndarray,
-        compartment_type: str
+        compartment_type: str,
+        syn_partners: Optional[List[int]] = None,
+        syn_types: Optional[np.ndarray] = None
     ) -> List[Dict[str, Any]]:
         """
         Serializes a 3D skeleton fragment into structured bracketed tree grammar tokens.
@@ -152,6 +154,10 @@ class MorphologicalPCFG:
         else:
             tangent = [1.0, 0.0, 0.0]
 
+        n_pre = int(np.sum(syn_types == 0)) if syn_types is not None else 0
+        n_post = int(np.sum(syn_types == 1)) if syn_types is not None else 0
+        partners = [int(p) for p in syn_partners] if syn_partners is not None else []
+
         tokens.append({
             "symbol": symbol,
             "fragment_id": fragment_id,
@@ -159,7 +165,10 @@ class MorphologicalPCFG:
             "coord_nm": centroid.tolist(),
             "radius_nm": mean_radius,
             "tangent": tangent,
-            "n_nodes": len(vertices_nm)
+            "n_nodes": len(vertices_nm),
+            "n_syn_pre": n_pre,
+            "n_syn_post": n_post,
+            "syn_partners": partners
         })
 
         return tokens
