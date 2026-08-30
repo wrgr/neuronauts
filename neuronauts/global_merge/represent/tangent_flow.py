@@ -126,12 +126,12 @@ def compute_collinearity(
 
 def find_tangent_flow_bridges(
     fragments: List[SegmentFragment],
-    max_distance_nm: float = 25000.0,
-    min_collinearity: float = 0.25
+    max_distance_nm: float = 35000.0,
+    min_collinearity: float = 0.20
 ) -> List[AssemblyEdge]:
     """
     Fast spatial indexing of endpoints and skeleton vertices to construct long-range attraction bridge edges.
-    Supports both tip-to-tip collinearity and tip-to-skeleton proximity.
+    Supports both tip-to-tip collinearity and directional tip-to-skeleton approach.
     """
     all_endpoints: List[EndpointTangent] = []
     for frag in fragments:
@@ -155,11 +155,11 @@ def find_tangent_flow_bridges(
         if ep1.fragment_id == ep2.fragment_id:
             continue
 
-        collin = compute_collinearity(ep1, ep2, sigma_dist_nm=15000.0)
+        collin = compute_collinearity(ep1, ep2, sigma_dist_nm=18000.0)
         dist = float(np.linalg.norm(ep2.coord_nm - ep1.coord_nm))
         
-        # If very close in space (cut seam <= 3000 nm) or collinear across larger distance
-        if dist <= 3000.0 or collin >= min_collinearity:
+        # Collinear tip-to-tip alignment
+        if collin >= min_collinearity or (dist <= 2500.0 and collin > 0.05):
             pair_key = tuple(sorted([ep1.fragment_id, ep2.fragment_id]))
             seen_frag_pairs.add(pair_key)
             effective_score = max(collin, float(np.exp(-dist / 3000.0)))
@@ -173,7 +173,7 @@ def find_tangent_flow_bridges(
                 metadata={"ep1": ep1.to_dict(), "ep2": ep2.to_dict()}
             ))
 
-    # 2. Index fragment skeleton point clouds for tip-to-skeleton proximity
+    # 2. Directional Tip-to-Skeleton approach trajectory
     for frag1 in fragments:
         if len(frag1.endpoints) == 0:
             continue
@@ -185,23 +185,32 @@ def find_tangent_flow_bridges(
                 if pair_key in seen_frag_pairs:
                     continue
                 
-                # Check distance from endpoint to frag2 vertices
                 if len(frag2.vertices_nm) == 0:
                     continue
                 dists = np.linalg.norm(frag2.vertices_nm - ep.coord_nm, axis=1)
                 min_idx = int(np.argmin(dists))
-                min_d = float(dists[min_idx])
-                if min_d <= 3000.0:  # tight cut seam tolerance (<= 3um)
-                    seen_frag_pairs.add(pair_key)
-                    prox_score = float(np.exp(-min_d / 3000.0))
-                    bridges.append(AssemblyEdge(
-                        src_id=frag1.fragment_id,
-                        dst_id=frag2.fragment_id,
-                        edge_type=EdgeType.TANGENT_FLOW,
-                        distance_nm=min_d,
-                        collinearity_score=prox_score,
-                        weight=prox_score,
-                        metadata={"type": "tip_to_skeleton", "distance_nm": min_d}
-                    ))
+                approach_dist = float(dists[min_idx])
+                
+                if approach_dist <= 8000.0:
+                    approach_vec = frag2.vertices_nm[min_idx] - ep.coord_nm
+                    if approach_dist > 1e-3:
+                        unit_approach = approach_vec / approach_dist
+                        approach_cos = float(np.dot(ep.tangent, unit_approach))
+                    else:
+                        approach_cos = 1.0
+
+                    # Must be actively heading directly toward the target branch
+                    if approach_cos >= 0.60:
+                        seen_frag_pairs.add(pair_key)
+                        prox_score = float(approach_cos * np.exp(-approach_dist / 4000.0))
+                        bridges.append(AssemblyEdge(
+                            src_id=frag1.fragment_id,
+                            dst_id=frag2.fragment_id,
+                            edge_type=EdgeType.TANGENT_FLOW,
+                            distance_nm=approach_dist,
+                            collinearity_score=prox_score,
+                            weight=prox_score,
+                            metadata={"type": "tip_to_skeleton", "approach_cos": approach_cos, "distance_nm": approach_dist}
+                        ))
 
     return bridges

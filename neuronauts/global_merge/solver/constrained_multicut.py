@@ -126,13 +126,25 @@ def compute_edge_weight(
         if has_dna and cos_sim is not None and cos_sim < (dna_split_threshold - 0.20):
             return -4.0 * (1.0 - cos_sim)
         
-        score = max(0.01, min(0.99, edge.collinearity_score))
-        # Positive contractive weight for collinear tangent alignment
-        kinematic_weight = 2.0 * (score - 0.20)
-        if has_dna and cos_sim is not None:
-            w += kinematic_weight + 3.0 * (cos_sim - (dna_split_threshold - 0.20))
+        # If this is an orthogonal tip-to-skeleton approach without DNA evidence, require close contact
+        is_t_junction = (edge.metadata.get('type') == 'tip_to_skeleton')
+        if is_t_junction:
+            if has_dna and cos_sim is not None:
+                if cos_sim < dna_split_threshold:
+                    return -3.0 * (1.0 - cos_sim)
+                w += 1.5 * (cos_sim - dna_split_threshold) + 1.0 * float(np.exp(-edge.distance_nm / 3000.0))
+            else:
+                if edge.distance_nm > 2000.0:
+                    return -2.0  # reject distant unconfirmed T-junction
+                w += 1.0 * float(np.exp(-edge.distance_nm / 2000.0))
         else:
-            w += kinematic_weight
+            score = max(0.01, min(0.99, edge.collinearity_score))
+            # Positive contractive weight for collinear tangent alignment
+            kinematic_weight = 2.0 * (score - 0.20)
+            if has_dna and cos_sim is not None:
+                w += kinematic_weight + 3.0 * (cos_sim - (dna_split_threshold - 0.20))
+            else:
+                w += kinematic_weight
 
     elif edge.edge_type == EdgeType.SPATIAL_KNN:
         dist_decay = float(np.exp(-edge.distance_nm / 10000.0))
@@ -148,8 +160,8 @@ def assemble_global_connectome(
     explicit_edges: Optional[List[AssemblyEdge]] = None,
     bias: float = 0.0,
     enable_tangent_flow: bool = True,
-    max_tangent_dist_nm: float = 25000.0,
-    min_collinearity: float = 0.25,
+    max_tangent_dist_nm: float = 40000.0,
+    min_collinearity: float = 0.10,
     dna_split_threshold: Optional[float] = None
 ) -> GlobalAssemblyResult:
     """
