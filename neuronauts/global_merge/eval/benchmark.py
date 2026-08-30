@@ -137,3 +137,75 @@ def evaluate_frankenmerge_split_rate(
         return 1.0
 
     return float(franken_pairs_split / franken_pairs_total)
+
+
+def compute_path_length_metrics(
+    pred_map: Dict[str, str],
+    gt_map: Dict[str, str],
+    fragments: List[SegmentFragment]
+) -> Dict[str, float]:
+    """
+    Computes biologically rigorous path-length weighted connectomics metrics:
+      - Path-Weighted Precision: Sum(L_i * L_j for TP) / Sum(L_i * L_j for TP+FP)
+      - Path-Weighted Recall:    Sum(L_i * L_j for TP) / Sum(L_i * L_j for TP+FN)
+      - Expected Run Length (ERL, um): Sum(L_c^2) / L_total
+      - Total Ground Truth Path Length (um)
+      - Total Correctly Reconstructed Path Length (um)
+    """
+    frag_len = {}
+    for f in fragments:
+        l_um = float(f.path_length_nm / 1000.0) if f.path_length_nm > 0 else float(len(f.vertices_nm) * 40.0 / 1000.0)
+        frag_len[f.fragment_id] = max(0.1, l_um)
+
+    common_keys = sorted(list(set(pred_map.keys()).intersection(set(gt_map.keys()))))
+    if len(common_keys) < 2:
+        return {"path_P": 1.0, "path_R": 1.0, "erl_um": 0.0, "total_gt_path_um": 0.0}
+
+    tp_weight = 0.0
+    fp_weight = 0.0
+    fn_weight = 0.0
+
+    for i in range(len(common_keys)):
+        for j in range(i + 1, len(common_keys)):
+            f1, f2 = common_keys[i], common_keys[j]
+            w = frag_len.get(f1, 1.0) * frag_len.get(f2, 1.0)
+            
+            p1, p2 = pred_map[f1], pred_map[f2]
+            g1, g2 = gt_map[f1], gt_map[f2]
+
+            if p1 == p2:
+                if g1 == g2:
+                    tp_weight += w
+                else:
+                    fp_weight += w
+            else:
+                if g1 == g2:
+                    fn_weight += w
+
+    path_p = float(tp_weight / (tp_weight + fp_weight)) if (tp_weight + fp_weight) > 0 else 1.0
+    path_r = float(tp_weight / (tp_weight + fn_weight)) if (tp_weight + fn_weight) > 0 else 1.0
+
+    # Compute Expected Run Length (ERL)
+    gt_to_pred_pieces = defaultdict(lambda: defaultdict(float))
+    gt_totals = defaultdict(float)
+    for f_id in common_keys:
+        g = gt_map[f_id]
+        p = pred_map[f_id]
+        l = frag_len.get(f_id, 1.0)
+        gt_to_pred_pieces[g][p] += l
+        gt_totals[g] += l
+
+    total_gt_len = sum(gt_totals.values())
+    sum_l_squared = 0.0
+    for g, preds in gt_to_pred_pieces.items():
+        for p, l_sub in preds.items():
+            sum_l_squared += (l_sub ** 2)
+
+    erl_um = float(sum_l_squared / total_gt_len) if total_gt_len > 0 else 0.0
+
+    return {
+        "path_P": path_p,
+        "path_R": path_r,
+        "erl_um": erl_um,
+        "total_gt_path_um": total_gt_len
+    }
