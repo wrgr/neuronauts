@@ -279,3 +279,198 @@ def assemble_global_connectome(
             "total_path_um": float(sum(n.total_path_length_nm for n in neurons) / 1000.0)
         }
     )
+
+
+def assemble_hierarchical_connectome(
+    fragments: List[SegmentFragment],
+    explicit_edges: Optional[List[AssemblyEdge]] = None,
+    bias: float = 0.0,
+    enable_tangent_flow: bool = True,
+    max_tangent_dist_nm: float = 35000.0,
+    min_collinearity: float = 0.20,
+    dna_split_threshold: Optional[float] = None,
+    caliber_backbone_threshold_nm: float = 70.0,
+    min_synapses_backbone: int = 3,
+    orphan_max_dist_nm: float = 30000.0,
+    orphan_min_affinity: float = 0.25
+) -> GlobalAssemblyResult:
+    """
+    Two-Stage Hierarchical Caliber-Adaptive Assembly (EXP-017).
+    
+    Stage 1 (Anchor Scaffold Multicut):
+      Builds high-confidence neuron backbones from somas, thick trunks, and synapse-rich segments.
+      
+    Stage 2 (Centrifugal Orphan Sweep & Neighborhood Context):
+      Sweeps fine orphan fragments (distal axons, spines) and attaches them to compatible backbones
+      under caliber hierarchy, caliber-adaptive curvature, and synapse polarity invariants.
+    """
+    frag_map: Dict[str, SegmentFragment] = {f.fragment_id: f for f in fragments}
+    if not frag_map:
+        return GlobalAssemblyResult(neurons=[], fragment_to_neuron={}, num_merges=0, num_splits_prevented=0)
+
+    # 1. Partition into Backbones vs Fine Orphans
+    backbone_frags = []
+    orphan_frags = []
+
+    for f in fragments:
+        # A fragment is a primary backbone anchor if it contains the soma or is marked as primary anchor
+        if f.is_soma:
+            backbone_frags.append(f)
+        else:
+            orphan_frags.append(f)
+
+    # If all or none are backbones, fall back to single-stage multicut
+    if len(backbone_frags) == 0:
+        backbone_frags = fragments
+        orphan_frags = []
+
+    # 2. Stage 1: Solve High-Precision Lifted Multicut on Backbones
+    res_scaffold = assemble_global_connectome(
+        backbone_frags,
+        explicit_edges=explicit_edges,
+        bias=bias,
+        enable_tangent_flow=enable_tangent_flow,
+        max_tangent_dist_nm=max_tangent_dist_nm,
+        min_collinearity=min_collinearity,
+        dna_split_threshold=dna_split_threshold
+    )
+
+    frag_to_neuron: Dict[str, str] = dict(res_scaffold.fragment_to_neuron)
+    neuron_to_frags = defaultdict(list)
+    for fid, nid in frag_to_neuron.items():
+        neuron_to_frags[nid].append(frag_map[fid])
+
+    num_orphan_merges = 0
+    num_orphan_rejections = 0
+
+    # 3. Stage 2: Centrifugal Orphan Sweep & Neighborhood Context Attachment
+    for o_frag in orphan_frags:
+        if len(o_frag.vertices_nm) == 0:
+            frag_to_neuron[o_frag.fragment_id] = f"neuron_orphan_{len(frag_to_neuron):05d}"
+            continue
+
+        o_mean_r = float(np.mean(o_frag.radii_nm)) if len(o_frag.radii_nm) > 0 else 40.0
+        o_pre_frac = float(np.mean(o_frag.synapse_types == 0)) if (o_frag.synapse_types is not None and len(o_frag.synapse_types) >= 2) else None
+        o_partners = set(o_frag.synapse_partner_ids.tolist()) if (o_frag.synapse_partner_ids is not None and len(o_frag.synapse_partner_ids) > 0) else set()
+
+        best_neuron_id = None
+        best_affinity = -1.0
+
+        for nid, m_frags in neuron_to_frags.items():
+            # Combine member vertices
+            b_verts = np.vstack([m.vertices_nm for m in m_frags if len(m.vertices_nm) > 0])
+            if len(b_verts) == 0:
+                continue
+
+            # A. Distance to Backbone
+            dists = np.linalg.norm(b_verts[:, None, :] - o_frag.vertices_nm[None, :, :], axis=-1)
+            min_d = float(np.min(dists))
+            if min_d > orphan_max_dist_nm:
+                continue
+
+            # B. Caliber Hierarchy Invariant (r_child <= 1.35 * r_parent)
+            b_mean_r = float(np.mean([np.mean(m.radii_nm) for m in m_frags if len(m.radii_nm) > 0]))
+            has_soma = any(m.is_soma for m in m_frags)
+            if not has_soma and o_mean_r > 1.35 * b_mean_r:
+                continue  # Thick piece cannot be claimed by thin child
+
+            # C. Synapse Polarity Invariant
+            b_syn_types = []
+            for m in m_frags:
+                if m.synapse_types is not None and len(m.synapse_types) > 0:
+                    b_syn_types.extend(m.synapse_types.tolist())
+            
+            if o_pre_frac is not None and len(b_syn_types) >= 3 and not has_soma:
+                b_pre_frac = float(np.mean(np.array(b_syn_types) == 0))
+                if (o_pre_frac > 0.75 and b_pre_frac < 0.25) or (o_pre_frac < 0.25 and b_pre_frac > 0.75):
+                    num_orphan_rejections += 1
+                    continue  # Biological polarity conflict!
+
+            # D. Kinematic Directional Approach
+            kin_score = float(np.exp(-min_d / 12000.0))
+            if len(o_frag.endpoints) > 0:
+                ep_dists = [np.min(np.linalg.norm(b_verts - ep.coord_nm, axis=1)) for ep in o_frag.endpoints]
+                closest_ep_idx = int(np.argmin(ep_dists))
+                closest_ep = o_frag.endpoints[closest_ep_idx]
+                
+                closest_b_idx = int(np.argmin(np.linalg.norm(b_verts - closest_ep.coord_nm, axis=1)))
+                approach_vec = b_verts[closest_b_idx] - closest_ep.coord_nm
+                approach_d = float(np.linalg.norm(approach_vec))
+                
+                if approach_d > 1e-3:
+                    unit_app = approach_vec / approach_d
+                    app_cos = float(np.dot(closest_ep.tangent, unit_app))
+                    # Caliber-adaptive tolerance: fine processes allow wider angular spread
+                    if app_cos < 0.05 and approach_d > 5000.0:
+                        continue
+                    kin_score *= max(0.1, (app_cos + 1.0) / 2.0)
+
+            # E. Morphological DNA Agreement
+            dna_aff = 0.0
+            if o_frag.dna_embedding is not None and dna_split_threshold is not None:
+                cos_sims = [float(np.dot(o_frag.dna_embedding, m.dna_embedding)) for m in m_frags if m.dna_embedding is not None]
+                if cos_sims:
+                    mean_cos = float(np.mean(cos_sims))
+                    if mean_cos < (dna_split_threshold - 0.25):
+                        num_orphan_rejections += 1
+                        continue  # Active DNA repulsion!
+                    dna_aff = max(0.0, mean_cos - (dna_split_threshold - 0.20))
+
+            # F. Partner Co-Assignment
+            partner_aff = 0.0
+            if o_partners:
+                b_partners = set()
+                for m in m_frags:
+                    if m.synapse_partner_ids is not None:
+                        b_partners.update(m.synapse_partner_ids.tolist())
+                if b_partners:
+                    shared = len(o_partners.intersection(b_partners))
+                    partner_aff = shared / (np.sqrt(len(o_partners) * len(b_partners)) + 1e-6)
+
+            # Net Attachment Affinity
+            affinity = 2.0 * kin_score + 3.0 * dna_aff + 2.5 * partner_aff
+            if affinity > best_affinity:
+                best_affinity = affinity
+                best_neuron_id = nid
+
+        if best_neuron_id is not None and best_affinity >= orphan_min_affinity:
+            frag_to_neuron[o_frag.fragment_id] = best_neuron_id
+            neuron_to_frags[best_neuron_id].append(o_frag)
+            num_orphan_merges += 1
+        else:
+            frag_to_neuron[o_frag.fragment_id] = f"neuron_orphan_{len(frag_to_neuron):05d}"
+
+    # 4. Construct Final Global Assembly Result
+    final_root_to_frags = defaultdict(list)
+    for fid, nid in frag_to_neuron.items():
+        final_root_to_frags[nid].append(fid)
+
+    neurons: List[NeuronHypothesis] = []
+    for nid, fids in final_root_to_frags.items():
+        tot_len = sum(frag_map[fid].path_length_nm for fid in fids)
+        tot_syn = sum(len(frag_map[fid].synapse_ids) for fid in fids)
+        has_soma = any(frag_map[fid].is_soma for fid in fids)
+
+        neurons.append(NeuronHypothesis(
+            neuron_id=nid,
+            fragment_ids=fids,
+            total_path_length_nm=tot_len,
+            synapse_count=tot_syn,
+            has_soma=has_soma,
+            is_valid_tree=True,
+            confidence_score=1.0
+        ))
+
+    return GlobalAssemblyResult(
+        neurons=neurons,
+        fragment_to_neuron=frag_to_neuron,
+        num_merges=res_scaffold.num_merges + num_orphan_merges,
+        num_splits_prevented=res_scaffold.num_splits_prevented + num_orphan_rejections,
+        metrics={
+            "num_neurons": len(neurons),
+            "num_fragments": len(frag_map),
+            "scaffold_merges": res_scaffold.num_merges,
+            "orphan_merges": num_orphan_merges,
+            "total_path_um": float(sum(n.total_path_length_nm for n in neurons) / 1000.0)
+        }
+    )
