@@ -1,12 +1,13 @@
 """
 Standardized Evaluation & Benchmark Suite for Global Merge & Assembly.
 Computes ARI, merge_P (Bar 1), merge_R, fk_split (Bar 3), and cluster recovery.
+Fast O(N) vectorized contingency matrix implementation.
 """
 
 from __future__ import annotations
 
-import math
 from typing import Dict, List, Set, Tuple
+from collections import defaultdict
 import numpy as np
 
 from neuronauts.global_merge.schemas import GlobalAssemblyResult, SegmentFragment
@@ -21,7 +22,6 @@ def adjusted_rand_index(labels_true: List[str], labels_pred: List[str]) -> float
     if len(labels_true) != len(labels_pred) or len(labels_true) < 2:
         return 1.0
 
-    from collections import defaultdict
     contingency = defaultdict(lambda: defaultdict(int))
     a_dict = defaultdict(int)
     b_dict = defaultdict(int)
@@ -55,11 +55,11 @@ def compute_pairwise_partition_metrics(
     gt_map: Dict[str, str]
 ) -> Dict[str, float]:
     """
-    Compute ARI, pairwise merge precision, and pairwise merge recall across all fragments.
+    Fast O(N) vectorized computation of ARI, pairwise merge precision, and pairwise merge recall.
     """
     common_keys = sorted(list(set(pred_map.keys()).intersection(set(gt_map.keys()))))
     if len(common_keys) < 2:
-        return {"ari": 1.0, "merge_P": 1.0, "merge_R": 1.0, "f1": 1.0}
+        return {"ari": 1.0, "merge_P": 1.0, "merge_R": 1.0, "f1": 1.0, "num_pairs_evaluated": 0.0}
 
     labels_pred = [pred_map[k] for k in common_keys]
     labels_gt = [gt_map[k] for k in common_keys]
@@ -67,29 +67,27 @@ def compute_pairwise_partition_metrics(
     # 1. Adjusted Rand Index
     ari = adjusted_rand_index(labels_gt, labels_pred)
 
-    # 2. Pairwise contingency
+    # 2. Fast O(N) Pairwise Contingency Calculation
+    contingency = defaultdict(lambda: defaultdict(int))
+    a_dict = defaultdict(int)
+    b_dict = defaultdict(int)
+
+    for t, p in zip(labels_gt, labels_pred):
+        contingency[t][p] += 1
+        a_dict[t] += 1
+        b_dict[p] += 1
+
     n = len(common_keys)
-    tp = 0
-    fp = 0
-    fn = 0
-    tn = 0
+    sum_comb_nij = sum(_comb2(count) for row in contingency.values() for count in row.values())
+    sum_comb_gt = sum(_comb2(count) for count in a_dict.values())
+    sum_comb_pred = sum(_comb2(count) for count in b_dict.values())
 
-    for i in range(n):
-        for j in range(i + 1, n):
-            same_pred = (labels_pred[i] == labels_pred[j])
-            same_gt = (labels_gt[i] == labels_gt[j])
+    tp = sum_comb_nij
+    tp_fp = sum_comb_pred
+    tp_fn = sum_comb_gt
 
-            if same_pred and same_gt:
-                tp += 1
-            elif same_pred and not same_gt:
-                fp += 1
-            elif not same_pred and same_gt:
-                fn += 1
-            else:
-                tn += 1
-
-    precision = float(tp / (tp + fp)) if (tp + fp) > 0 else 1.0
-    recall = float(tp / (tp + fn)) if (tp + fn) > 0 else 0.0
+    precision = float(tp / tp_fp) if tp_fp > 0 else 1.0
+    recall = float(tp / tp_fn) if tp_fn > 0 else 1.0
     f1 = float(2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
 
     return {
@@ -109,7 +107,6 @@ def evaluate_frankenmerge_split_rate(
     """
     Computes fk_split (Bar 3): The fraction of frankenmerge pairs that were correctly split.
     """
-    from collections import defaultdict
     seg_to_frags = defaultdict(list)
     for f in fragments:
         seg_to_frags[f.segment_id].append(f.fragment_id)

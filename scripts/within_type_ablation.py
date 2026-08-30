@@ -203,7 +203,7 @@ def main() -> int:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--cache-dir", default=None,
                    help="Directory to cache downloaded tables")
-    p.add_argument("--encoder", choices=["path", "gnn"], default="path",
+    p.add_argument("--encoder", choices=["path", "gnn", "vicreg"], default="path",
                    help="path=TreeDNAEncoder (hand-crafted 6-D), gnn=SkeletonGNN (raw graph)")
     args = p.parse_args()
 

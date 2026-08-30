@@ -185,3 +185,110 @@ class VICRegSkeletonModel(nn.Module):
             emb = self.backbone(nodes_t, edges_t)
             emb = F.normalize(emb, p=2, dim=-1)
             return emb.cpu().numpy()
+
+
+def train_vicreg_skeleton_gnn(
+    model: VICRegSkeletonModel,
+    fragments,
+    positive_pairs: List[Tuple[int, int]],
+    *,
+    n_epochs: int = 50,
+    lr: float = 1e-3,
+    batch_size: int = 32,
+    sim_coeff: float = 25.0,
+    std_coeff: float = 25.0,
+    cov_coeff: float = 1.0,
+    device: str = "cpu",
+    log_every: int = 10,
+) -> Dict[str, List[float]]:
+    """
+    Train VICRegSkeletonModel on positive fragment pairs.
+    Uses non-contrastive VICReg loss to preserve feature variance across within-type neurons.
+    """
+    from neuronauts.represent.skeleton_gnn import fragment_to_tensors
+
+    model.to(device)
+    model.train()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
+    loss_fn = VICRegLoss(sim_coeff=sim_coeff, std_coeff=std_coeff, cov_coeff=cov_coeff)
+
+    # Precompute CPU tensors
+    tensor_cache = [fragment_to_tensors(f, device="cpu") for f in fragments]
+
+    history = {"loss": [], "invariance": [], "variance": [], "covariance": []}
+    n_pairs = len(positive_pairs)
+    if n_pairs == 0:
+        return history
+
+    rng = np.random.default_rng(42)
+
+    for epoch in range(1, n_epochs + 1):
+        perm = rng.permutation(n_pairs)
+        epoch_losses = []
+        epoch_inv = []
+        epoch_var = []
+        epoch_cov = []
+
+        for start_idx in range(0, n_pairs, batch_size):
+            batch_indices = perm[start_idx : start_idx + batch_size]
+            if len(batch_indices) <= 1:
+                continue
+
+            a_indices = [positive_pairs[idx][0] for idx in batch_indices]
+            b_indices = [positive_pairs[idx][1] for idx in batch_indices]
+
+            # Forward view A
+            embs_a = []
+            for g_idx in a_indices:
+                nf, es, ed, ef = tensor_cache[g_idx]
+                if nf.size(0) == 0:
+                    continue
+                # SkeletonGNN forward
+                h = model.backbone(nf.to(device)[:, :4], torch.stack([es, ed], dim=1).to(device) if es.size(0)>0 else torch.empty((0,2), dtype=torch.long, device=device))
+                embs_a.append(h)
+
+            # Forward view B
+            embs_b = []
+            for g_idx in b_indices:
+                nf, es, ed, ef = tensor_cache[g_idx]
+                if nf.size(0) == 0:
+                    continue
+                h = model.backbone(nf.to(device)[:, :4], torch.stack([es, ed], dim=1).to(device) if es.size(0)>0 else torch.empty((0,2), dtype=torch.long, device=device))
+                embs_b.append(h)
+
+            if len(embs_a) <= 1 or len(embs_b) <= 1 or len(embs_a) != len(embs_b):
+                continue
+
+            h_a = torch.stack(embs_a, dim=0)
+            h_b = torch.stack(embs_b, dim=0)
+
+            z_a = model.projector(h_a)
+            z_b = model.projector(h_b)
+
+            loss, m = loss_fn(z_a, z_b)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            epoch_losses.append(m["loss"])
+            epoch_inv.append(m["invariance"])
+            epoch_var.append(m["variance"])
+            epoch_cov.append(m["covariance"])
+
+        if epoch_losses:
+            l_mean = float(np.mean(epoch_losses))
+            inv_mean = float(np.mean(epoch_inv))
+            var_mean = float(np.mean(epoch_var))
+            cov_mean = float(np.mean(epoch_cov))
+
+            history["loss"].append(l_mean)
+            history["invariance"].append(inv_mean)
+            history["variance"].append(var_mean)
+            history["covariance"].append(cov_mean)
+
+            if log_every > 0 and (epoch % log_every == 0 or epoch == 1):
+                print(f"  epoch {epoch:3d}: loss={l_mean:.4f}  inv={inv_mean:.4f}  var={var_mean:.4f}  cov={cov_mean:.4f}")
+
+    model.eval()
+    return history

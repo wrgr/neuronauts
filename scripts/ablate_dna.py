@@ -206,7 +206,69 @@ def run_ablation(
     print(f"Neurons: {n_neurons}")
     print(f"{'='*60}\n")
 
-    if encoder_type == "gnn":
+    if encoder_type == "vicreg":
+        from neuronauts.global_merge.represent.vicreg_gnn import (
+            VICRegSkeletonModel,
+            train_vicreg_skeleton_gnn,
+        )
+        from neuronauts.represent.skeleton_gnn import fragment_to_tensors
+        import torch
+
+        model = VICRegSkeletonModel(in_dim=4, emb_dim=output_dim, proj_dim=output_dim * 2)
+
+        def encode_frags_vicreg(m, frags):
+            m.eval()
+            encoded = []
+            with torch.no_grad():
+                for f in frags:
+                    nf, es, ed, _ = fragment_to_tensors(f, device="cpu")
+                    if nf.size(0) == 0:
+                        dna = np.zeros(output_dim, dtype=np.float32)
+                    else:
+                        e_tens = torch.stack([es, ed], dim=1) if es.size(0) > 0 else torch.empty((0, 2), dtype=torch.long)
+                        h = m.backbone(nf[:, :4], e_tens)
+                        h = torch.nn.functional.normalize(h, p=2, dim=-1)
+                        dna = h.cpu().numpy()
+                    import dataclasses
+                    encoded.append(dataclasses.replace(f, dna=dna))
+            return encoded
+
+        print("Evaluating random-init VICReg DNA AUC (before training)...")
+        frags_init = encode_frags_vicreg(model, fragments)
+        result_before = evaluate_dna_auc(
+            region, frags_init, max_pairs=max_pairs,
+            rng=np.random.default_rng(seed), include_baseline=True,
+        )
+        _print_before(result_before)
+
+        # Build positive pairs using ground-truth root_label_map
+        from collections import defaultdict
+        gt_to_indices = defaultdict(list)
+        for idx, f in enumerate(fragments):
+            if root_label_map and f.base_root_id in root_label_map:
+                gt = next(iter(root_label_map[f.base_root_id]))
+            else:
+                # If no map, assume pairs are consecutive bisected halves (idx // 2)
+                gt = idx // 2
+            gt_to_indices[gt].append(idx)
+
+        pos_pairs = []
+        for gt, idxs in gt_to_indices.items():
+            if len(idxs) >= 2:
+                for i in range(len(idxs)):
+                    for j in range(i + 1, len(idxs)):
+                        pos_pairs.append((idxs[i], idxs[j]))
+
+        print(f"\nTraining VICRegSkeletonModel ({len(pos_pairs)} positive pairs) for {n_epochs} epochs...")
+        history = train_vicreg_skeleton_gnn(
+            model, fragments, pos_pairs,
+            n_epochs=n_epochs, lr=lr, device=device, log_every=10,
+        )
+
+        print("\nEvaluating trained VICReg DNA AUC...")
+        frags_trained = encode_frags_vicreg(model, fragments)
+
+    elif encoder_type == "gnn":
         from neuronauts.represent.skeleton_gnn import (
             SkeletonGNN,
             encode_fragments_gnn,
@@ -330,7 +392,7 @@ def main() -> int:
     p.add_argument("--max-pairs", type=int, default=2000)
     p.add_argument("--device", default="cpu")
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--encoder", choices=["path", "gnn"], default="path",
+    p.add_argument("--encoder", choices=["path", "gnn", "vicreg"], default="path",
                    help="path=TreeDNAEncoder (hand-crafted features), gnn=SkeletonGNN (data-driven)")
     args = p.parse_args()
 
