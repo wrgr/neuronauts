@@ -427,8 +427,12 @@ def assemble_hierarchical_connectome(
                     shared = len(o_partners.intersection(b_partners))
                     partner_aff = shared / (np.sqrt(len(o_partners) * len(b_partners)) + 1e-6)
 
-            # Net Attachment Affinity
-            affinity = 2.0 * kin_score + 3.0 * dna_aff + 2.5 * partner_aff
+            # Require both geometric proximity/alignment AND non-contradictory DNA/polarity
+            if dna_aff <= 0.0 and kin_score < 0.30:
+                continue  # Insufficient joint evidence
+
+            # Net Multimodal Attachment Affinity (Geometry + DNA + Synapse Membership)
+            affinity = 2.5 * kin_score + 3.5 * dna_aff + 2.0 * partner_aff
             if affinity > best_affinity:
                 best_affinity = affinity
                 best_neuron_id = nid

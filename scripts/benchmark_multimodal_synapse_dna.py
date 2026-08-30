@@ -1,7 +1,7 @@
 """
-Multimodal Global Merge Benchmark: Skeleton Tree-DNA + Tangent Flow + Synapse Membership.
-Evaluates out-of-sample partition quality on 60 real Minnie65 pyramidal neurons (179 fragments)
-comparing Flat Multicut vs Hierarchical Caliber-Adaptive Assembly (EXP-017).
+Large-Scale Multimodal Connectome Assembly Benchmark (EXP-018).
+Evaluates 80 real proofread Minnie65 neurons (240 fragments) with 50+ injected frankenmerges
+comparing Baseline v117, Geometry+DNA, Flat Multimodal, and Hierarchical Multimodal Assembly.
 """
 
 import sys
@@ -20,19 +20,19 @@ from treestitch.data import _split_skeleton_n_pieces
 from treestitch.worldbuild import frankenmerge_adjacent
 
 
-def run_multimodal_benchmark():
-    print("=" * 105)
-    print("BENCHMARKING EXP-017: HIERARCHICAL CALIBER-ADAPTIVE CONNECTOME ASSEMBLY")
-    print("=" * 105)
+def run_large_scale_benchmark():
+    print("=" * 110)
+    print("BENCHMARKING EXP-018: LARGE-SCALE DENSE MULTIMODAL HIERARCHICAL ASSEMBLY (80 REAL NEURONS)")
+    print("=" * 110)
 
-    # 1. Load real proofread pyramidal neurons
-    candidates = sample_neurons(180, seed=42)
+    # 1. Load real proofread neurons
+    candidates = sample_neurons(250, seed=42)
     pieces_rec = []
     obj_counter = 0
     rng = np.random.default_rng(42)
 
     for root_id in candidates:
-        if obj_counter >= 60:
+        if obj_counter >= 80:
             break
         skel = load_skeleton(root_id)
         if skel is None:
@@ -69,15 +69,22 @@ def run_multimodal_benchmark():
 
     print(f"\n[1/4] Extracted {len(pieces_rec)} fragments across {obj_counter} real proofread neurons.")
 
-    # 2. Inject realistic adjacent frankenmerges
-    seg_of_piece, n_franken = frankenmerge_adjacent(pieces_rec, 0.35, rng, radius_nm=6000.0)
-    print(f"[2/4] Injected {n_franken} adjacent membrane-contact frankenmerges.")
+    # 2. Inject realistic adjacent membrane-contact frankenmerges at high scale
+    seg_of_piece, n_franken = frankenmerge_adjacent(pieces_rec, 0.50, rng, radius_nm=10000.0)
+    print(f"[2/4] Injected {n_franken} adjacent membrane-contact frankenmerges across volume.")
 
-    # 3. Train/Test Partitioning
+    # 3. Train/Test Partitioning (70% train, 30% out-of-sample test)
     n_train_objs = int(round(0.70 * obj_counter))
     train_pieces = [p for p in pieces_rec if p['obj_id'] <= n_train_objs]
     test_pieces = [p for p in pieces_rec if p['obj_id'] > n_train_objs]
-    print(f"[3/4] Partition: Train={len(train_pieces)} frags ({n_train_objs} cells) | Test={len(test_pieces)} frags ({obj_counter - n_train_objs} cells OOS)")
+    
+    # Count test frankenmerges
+    test_orig_indices = [k for k, p in enumerate(pieces_rec) if p['obj_id'] > n_train_objs]
+    test_segs = [seg_of_piece[k] for k in test_orig_indices]
+    from collections import Counter
+    test_seg_counts = Counter(test_segs)
+    test_franken_count = sum(1 for c in test_seg_counts.values() if c > 1)
+    print(f"[3/4] Partition: Train={len(train_pieces)} frags ({n_train_objs} cells) | Test={len(test_pieces)} frags ({obj_counter - n_train_objs} cells OOS, {test_franken_count} test frankenmerges)")
 
     from neuronauts.schemas import Fragment as OldFragment
     train_frags = []
@@ -191,17 +198,15 @@ def run_multimodal_benchmark():
     multi_m = compute_pairwise_partition_metrics(res_multi.fragment_to_neuron, gt_map)
     multi_fk = evaluate_frankenmerge_split_rate(res_multi.fragment_to_neuron, gt_map, test_frags_multimodal)
 
-    # 4. Hierarchical Caliber-Adaptive Assembly (EXP-017)
+    # 4. Calibrated Hierarchical Assembly (EXP-018: Geometry + DNA + Synapses)
     res_hier = assemble_hierarchical_connectome(
         test_frags_multimodal,
         enable_tangent_flow=True,
         max_tangent_dist_nm=35000.0,
         min_collinearity=0.20,
         dna_split_threshold=dynamic_theta,
-        caliber_backbone_threshold_nm=70.0,
-        min_synapses_backbone=3,
         orphan_max_dist_nm=35000.0,
-        orphan_min_affinity=0.25
+        orphan_min_affinity=0.45
     )
     hier_m = compute_pairwise_partition_metrics(res_hier.fragment_to_neuron, gt_map)
     hier_fk = evaluate_frankenmerge_split_rate(res_hier.fragment_to_neuron, gt_map, test_frags_multimodal)
@@ -212,7 +217,6 @@ def run_multimodal_benchmark():
         for f in frags:
             n_syn = len(f.synapse_types) if f.synapse_types is not None else 1
             raw_pid = pred_map[f.fragment_id].replace("neuron_", "").replace("seg_", "").replace("orphan_", "")
-            # Ensure integer conversion
             try:
                 p_id = int(raw_pid)
             except ValueError:
@@ -234,24 +238,24 @@ def run_multimodal_benchmark():
     multi_lg = compute_lg_suite(res_multi.fragment_to_neuron, test_frags_multimodal)
     hier_lg = compute_lg_suite(res_hier.fragment_to_neuron, test_frags_multimodal)
 
-    print("\n" + "=" * 105)
-    print("EXACT MEASURED DENSE OUT-OF-SAMPLE BENCHMARK SCORECARD (60 REAL MINNIE65 CELLS)")
-    print("=" * 105)
-    print(f"{'Metric':<32} {'Baseline v117':<16} {'Geometry + DNA':<18} {'Flat Multimodal':<20} {'EXP-017 Hierarchical':<22}")
-    print("-" * 105)
-    print(f"{'Pairwise Out-of-Sample ARI':<32} {base_m['ari']:>14.4f}  {geo_m['ari']:>16.4f}  {multi_m['ari']:>18.4f}  {hier_m['ari']:>20.4f}")
-    print(f"{'Pairwise Merge Precision (Bar 1)':<32} {base_m['merge_P']:>14.4f}  {geo_m['merge_P']:>16.4f}  {multi_m['merge_P']:>18.4f}  {hier_m['merge_P']:>20.4f}")
-    print(f"{'Pairwise Merge Recall (Bar 2)':<32} {base_m['merge_R']:>14.4f}  {geo_m['merge_R']:>16.4f}  {multi_m['merge_R']:>18.4f}  {hier_m['merge_R']:>20.4f}")
-    print(f"{'Frankenmerge Split Rate (Bar 3)':<32} {base_fk:>14.4f}  {geo_fk:>16.4f}  {multi_fk:>18.4f}  {hier_fk:>20.4f}")
-    print("-" * 105)
-    print(f"{'Line Graph Precision (P_line)':<32} {base_lg.pre_only.precision:>14.4f}  {geo_lg.pre_only.precision:>16.4f}  {multi_lg.pre_only.precision:>18.4f}  {hier_lg.pre_only.precision:>20.4f}")
-    print(f"{'Line Graph Recall (R_line)':<32} {base_lg.pre_only.recall:>14.4f}  {geo_lg.pre_only.recall:>16.4f}  {multi_lg.pre_only.recall:>18.4f}  {hier_lg.pre_only.recall:>20.4f}")
-    print(f"{'Line Graph F1 (F1_line)':<32} {base_lg.pre_only.f1:>14.4f}  {geo_lg.pre_only.f1:>16.4f}  {multi_lg.pre_only.f1:>18.4f}  {hier_lg.pre_only.f1:>20.4f}")
-    print(f"{'Line Graph TP Edges':<32} {base_lg.pre_only.tp:>14d}  {geo_lg.pre_only.tp:>16d}  {multi_lg.pre_only.tp:>18d}  {hier_lg.pre_only.tp:>20d}")
-    print(f"{'Line Graph FP Edges':<32} {base_lg.pre_only.fp:>14d}  {geo_lg.pre_only.fp:>16d}  {multi_lg.pre_only.fp:>18d}  {hier_lg.pre_only.fp:>20d}")
-    print(f"{'Line Graph FN Edges':<32} {base_lg.pre_only.fn:>14d}  {geo_lg.pre_only.fn:>16d}  {multi_lg.pre_only.fn:>18d}  {hier_lg.pre_only.fn:>20d}")
-    print("=" * 105)
+    print("\n" + "=" * 110)
+    print("EXACT MEASURED DENSE OUT-OF-SAMPLE BENCHMARK SCORECARD (80 REAL MINNIE65 CELLS)")
+    print("=" * 110)
+    print(f"{'Metric':<32} {'Baseline v117':<16} {'Geometry + DNA':<18} {'Flat Multimodal':<20} {'EXP-018 Hierarchical':<24}")
+    print("-" * 110)
+    print(f"{'Pairwise Out-of-Sample ARI':<32} {base_m['ari']:>14.4f}  {geo_m['ari']:>16.4f}  {multi_m['ari']:>18.4f}  {hier_m['ari']:>22.4f}")
+    print(f"{'Pairwise Merge Precision (Bar 1)':<32} {base_m['merge_P']:>14.4f}  {geo_m['merge_P']:>16.4f}  {multi_m['merge_P']:>18.4f}  {hier_m['merge_P']:>22.4f}")
+    print(f"{'Pairwise Merge Recall (Bar 2)':<32} {base_m['merge_R']:>14.4f}  {geo_m['merge_R']:>16.4f}  {multi_m['merge_R']:>18.4f}  {hier_m['merge_R']:>22.4f}")
+    print(f"{'Frankenmerge Split Rate (Bar 3)':<32} {base_fk:>14.4f}  {geo_fk:>16.4f}  {multi_fk:>18.4f}  {hier_fk:>22.4f}")
+    print("-" * 110)
+    print(f"{'Line Graph Precision (P_line)':<32} {base_lg.pre_only.precision:>14.4f}  {geo_lg.pre_only.precision:>16.4f}  {multi_lg.pre_only.precision:>18.4f}  {hier_lg.pre_only.precision:>22.4f}")
+    print(f"{'Line Graph Recall (R_line)':<32} {base_lg.pre_only.recall:>14.4f}  {geo_lg.pre_only.recall:>16.4f}  {multi_lg.pre_only.recall:>18.4f}  {hier_lg.pre_only.recall:>22.4f}")
+    print(f"{'Line Graph F1 (F1_line)':<32} {base_lg.pre_only.f1:>14.4f}  {geo_lg.pre_only.f1:>16.4f}  {multi_lg.pre_only.f1:>18.4f}  {hier_lg.pre_only.f1:>22.4f}")
+    print(f"{'Line Graph TP Edges':<32} {base_lg.pre_only.tp:>14d}  {geo_lg.pre_only.tp:>16d}  {multi_lg.pre_only.tp:>18d}  {hier_lg.pre_only.tp:>22d}")
+    print(f"{'Line Graph FP Edges':<32} {base_lg.pre_only.fp:>14d}  {geo_lg.pre_only.fp:>16d}  {multi_lg.pre_only.fp:>18d}  {hier_lg.pre_only.fp:>22d}")
+    print(f"{'Line Graph FN Edges':<32} {base_lg.pre_only.fn:>14d}  {geo_lg.pre_only.fn:>16d}  {multi_lg.pre_only.fn:>18d}  {hier_lg.pre_only.fn:>22d}")
+    print("=" * 110)
 
 
 if __name__ == "__main__":
-    run_multimodal_benchmark()
+    run_large_scale_benchmark()
