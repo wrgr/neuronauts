@@ -69,30 +69,49 @@ def compute_edge_weight(
     edge: AssemblyEdge,
     frag1: SegmentFragment,
     frag2: SegmentFragment,
-    bias: float = 0.0
+    bias: float = 0.0,
+    dna_split_threshold: float = 0.60
 ) -> float:
-    """Compute net contractive/repulsive affinity weight for GAEC."""
+    """
+    Compute net contractive/repulsive affinity weight for GAEC.
+    Unified morphological DNA gating: if morphology disagrees (cos < threshold),
+    forces repulsive weight to split frankenmerges and reject false spatial contacts.
+    """
     if edge.is_hard_negative or edge.edge_type == EdgeType.EDIT_SPLIT_HARD_NEG:
         return -10.0  # hard penalty
 
     w = bias
+    has_dna = (frag1.dna_embedding is not None and frag2.dna_embedding is not None)
+    cos_sim = float(np.dot(frag1.dna_embedding, frag2.dna_embedding)) if has_dna else None
+
+    # Global morphological disagreement override
+    if has_dna and cos_sim is not None and cos_sim < dna_split_threshold:
+        return -5.0 * (1.0 - cos_sim)  # active repulsion!
+
     if edge.edge_type == EdgeType.SAME_SEGMENT:
-        w += 1.5
+        if has_dna and cos_sim is not None:
+            w += 2.0 * cos_sim
+        else:
+            w += 1.5
+
     elif edge.edge_type == EdgeType.TANGENT_FLOW:
-        # Collinearity log-odds mapping
         score = max(0.01, min(0.99, edge.collinearity_score))
-        w += float(np.log(score / (1.0 - score + 1e-6)))
+        log_odds = float(np.log(score / (1.0 - score + 1e-6)))
+        if has_dna and cos_sim is not None:
+            w += log_odds + 2.0 * cos_sim
+        else:
+            if score < 0.50:
+                return -2.0
+            w += log_odds
+
     elif edge.edge_type == EdgeType.SPATIAL_KNN:
         dist_decay = float(np.exp(-edge.distance_nm / 10000.0))
-        w += 0.5 * dist_decay
-
-    # DNA similarity bonus if embeddings exist
-    if frag1.dna_embedding is not None and frag2.dna_embedding is not None:
-        cos_sim = float(np.dot(frag1.dna_embedding, frag2.dna_embedding))
-        w += 1.0 * cos_sim
+        if has_dna and cos_sim is not None:
+            w += 0.5 * dist_decay + 1.0 * cos_sim
+        else:
+            w += 0.5 * dist_decay
 
     return w
-
 
 def assemble_global_connectome(
     fragments: List[SegmentFragment],

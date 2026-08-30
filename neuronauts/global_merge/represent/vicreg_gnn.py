@@ -292,3 +292,143 @@ def train_vicreg_skeleton_gnn(
 
     model.eval()
     return history
+
+def train_contrastive_skeleton_gnn(
+    model: VICRegSkeletonModel,
+    fragments,
+    positive_pairs: List[Tuple[int, int]],
+    negative_pairs: List[Tuple[int, int]],
+    *,
+    n_epochs: int = 40,
+    lr: float = 1e-3,
+    batch_size: int = 32,
+    margin_neg: float = 0.40,
+    std_coeff: float = 10.0,
+    device: str = "cpu",
+    log_every: int = 10,
+) -> Dict[str, List[float]]:
+    """
+    Train Skeleton GNN with Contrastive Hard-Negative Loss + Variance Regularization.
+    Forces same-neuron pairs to cos >= 0.85 and cross-neuron frankenmerge pairs to cos <= 0.30.
+    """
+    from neuronauts.represent.skeleton_gnn import fragment_to_tensors
+
+    model.to(device)
+    model.train()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
+
+    # Precompute CPU tensors
+    tensor_cache = [fragment_to_tensors(f, device="cpu") for f in fragments]
+
+    history = {"loss": [], "pos_cos": [], "neg_cos": [], "var": []}
+    n_pos = len(positive_pairs)
+    n_neg = len(negative_pairs)
+    if n_pos == 0:
+        return history
+
+    rng = np.random.default_rng(42)
+
+    for epoch in range(1, n_epochs + 1):
+        perm_pos = rng.permutation(n_pos)
+        perm_neg = rng.permutation(n_neg) if n_neg > 0 else np.zeros(0, dtype=np.int64)
+
+        epoch_loss = []
+        epoch_pos_cos = []
+        epoch_neg_cos = []
+        epoch_var = []
+
+        for start_idx in range(0, n_pos, batch_size):
+            b_pos_idx = perm_pos[start_idx : start_idx + batch_size]
+            if len(b_pos_idx) <= 1:
+                continue
+
+            a_pos = [positive_pairs[idx][0] for idx in b_pos_idx]
+            b_pos = [positive_pairs[idx][1] for idx in b_pos_idx]
+
+            # Forward view A
+            embs_a = []
+            for g_idx in a_pos:
+                nf, es, ed, _ = tensor_cache[g_idx]
+                e_tens = torch.stack([es, ed], dim=1).to(device) if es.size(0) > 0 else torch.empty((0, 2), dtype=torch.long, device=device)
+                h = model.backbone(nf.to(device)[:, :4], e_tens)
+                embs_a.append(h)
+
+            # Forward view B
+            embs_b = []
+            for g_idx in b_pos:
+                nf, es, ed, _ = tensor_cache[g_idx]
+                e_tens = torch.stack([es, ed], dim=1).to(device) if es.size(0) > 0 else torch.empty((0, 2), dtype=torch.long, device=device)
+                h = model.backbone(nf.to(device)[:, :4], e_tens)
+                embs_b.append(h)
+
+            if len(embs_a) <= 1 or len(embs_b) <= 1:
+                continue
+
+            h_a = torch.stack(embs_a, dim=0)
+            h_b = torch.stack(embs_b, dim=0)
+
+            z_a = F.normalize(h_a, p=2, dim=-1)
+            z_b = F.normalize(h_b, p=2, dim=-1)
+
+            # 1. Positive cosine loss (maximize alignment)
+            cos_pos = (z_a * z_b).sum(dim=-1)
+            loss_pos = F.mse_loss(z_a, z_b)
+
+            # 2. Negative cosine loss (push below margin)
+            loss_neg = torch.tensor(0.0, device=device)
+            neg_cos_val = 0.0
+            if n_neg > 0:
+                neg_sample_idxs = rng.choice(n_neg, size=len(b_pos_idx), replace=True)
+                a_neg = [negative_pairs[idx][0] for idx in neg_sample_idxs]
+                b_neg = [negative_pairs[idx][1] for idx in neg_sample_idxs]
+
+                embs_neg_a = []
+                for g_idx in a_neg:
+                    nf, es, ed, _ = tensor_cache[g_idx]
+                    e_tens = torch.stack([es, ed], dim=1).to(device) if es.size(0) > 0 else torch.empty((0, 2), dtype=torch.long, device=device)
+                    embs_neg_a.append(model.backbone(nf.to(device)[:, :4], e_tens))
+
+                embs_neg_b = []
+                for g_idx in b_neg:
+                    nf, es, ed, _ = tensor_cache[g_idx]
+                    e_tens = torch.stack([es, ed], dim=1).to(device) if es.size(0) > 0 else torch.empty((0, 2), dtype=torch.long, device=device)
+                    embs_neg_b.append(model.backbone(nf.to(device)[:, :4], e_tens))
+
+                z_neg_a = F.normalize(torch.stack(embs_neg_a, dim=0), p=2, dim=-1)
+                z_neg_b = F.normalize(torch.stack(embs_neg_b, dim=0), p=2, dim=-1)
+
+                cos_neg = (z_neg_a * z_neg_b).sum(dim=-1)
+                loss_neg = F.relu(cos_neg - margin_neg).pow(2).mean()
+                neg_cos_val = float(cos_neg.mean().item())
+
+            # 3. Variance regularization
+            std_z = torch.sqrt(z_a.var(dim=0) + 1e-4)
+            loss_var = F.relu(1.0 - std_z).mean()
+
+            total_loss = 30.0 * (1.0 - cos_pos).mean() + 45.0 * loss_neg + 10.0 * loss_var
+
+            optimizer.zero_grad()
+            total_loss.backward()
+            optimizer.step()
+
+            epoch_loss.append(float(total_loss.item()))
+            epoch_pos_cos.append(float(cos_pos.mean().item()))
+            epoch_neg_cos.append(neg_cos_val)
+            epoch_var.append(float(std_z.mean().item()))
+
+        if epoch_loss:
+            l_mean = float(np.mean(epoch_loss))
+            p_mean = float(np.mean(epoch_pos_cos))
+            n_mean = float(np.mean(epoch_neg_cos))
+            v_mean = float(np.mean(epoch_var))
+
+            history["loss"].append(l_mean)
+            history["pos_cos"].append(p_mean)
+            history["neg_cos"].append(n_mean)
+            history["var"].append(v_mean)
+
+            if log_every > 0 and (epoch % log_every == 0 or epoch == 1):
+                print(f"  epoch {epoch:3d}: loss={l_mean:.4f}  pos_cos={p_mean:.4f}  neg_cos={n_mean:.4f}  var_std={v_mean:.4f}")
+
+    model.eval()
+    return history

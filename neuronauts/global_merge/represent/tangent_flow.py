@@ -130,7 +130,8 @@ def find_tangent_flow_bridges(
     min_collinearity: float = 0.25
 ) -> List[AssemblyEdge]:
     """
-    Fast spatial indexing of all endpoints to construct long-range attraction bridge edges.
+    Fast spatial indexing of endpoints and skeleton vertices to construct long-range attraction bridge edges.
+    Supports both tip-to-tip collinearity and tip-to-skeleton proximity.
     """
     all_endpoints: List[EndpointTangent] = []
     for frag in fragments:
@@ -139,34 +140,67 @@ def find_tangent_flow_bridges(
     if len(all_endpoints) < 2:
         return []
 
+    # 1. Index all endpoints
     coords = np.array([ep.coord_nm for ep in all_endpoints])
     kdtree = KDTree(coords)
 
-    # Query all pairs within max_distance
     pairs = kdtree.query_pairs(r=max_distance_nm)
     bridges: List[AssemblyEdge] = []
+    seen_frag_pairs = set()
 
     for idx1, idx2 in pairs:
         ep1 = all_endpoints[idx1]
         ep2 = all_endpoints[idx2]
 
         if ep1.fragment_id == ep2.fragment_id:
-            continue  # Don't bridge within the same fragment
+            continue
 
         collin = compute_collinearity(ep1, ep2, sigma_dist_nm=15000.0)
-        if collin >= min_collinearity:
-            dist = float(np.linalg.norm(ep2.coord_nm - ep1.coord_nm))
+        dist = float(np.linalg.norm(ep2.coord_nm - ep1.coord_nm))
+        
+        # If very close in space (cut seam <= 3000 nm) or collinear across larger distance
+        if dist <= 3000.0 or collin >= min_collinearity:
+            pair_key = tuple(sorted([ep1.fragment_id, ep2.fragment_id]))
+            seen_frag_pairs.add(pair_key)
+            effective_score = max(collin, float(np.exp(-dist / 3000.0)))
             bridges.append(AssemblyEdge(
                 src_id=ep1.fragment_id,
                 dst_id=ep2.fragment_id,
                 edge_type=EdgeType.TANGENT_FLOW,
                 distance_nm=dist,
-                collinearity_score=collin,
-                weight=collin,
-                metadata={
-                    "ep1": ep1.to_dict(),
-                    "ep2": ep2.to_dict(),
-                }
+                collinearity_score=effective_score,
+                weight=effective_score,
+                metadata={"ep1": ep1.to_dict(), "ep2": ep2.to_dict()}
             ))
+
+    # 2. Index fragment skeleton point clouds for tip-to-skeleton proximity
+    for frag1 in fragments:
+        if len(frag1.endpoints) == 0:
+            continue
+        for ep in frag1.endpoints:
+            for frag2 in fragments:
+                if frag1.fragment_id == frag2.fragment_id:
+                    continue
+                pair_key = tuple(sorted([frag1.fragment_id, frag2.fragment_id]))
+                if pair_key in seen_frag_pairs:
+                    continue
+                
+                # Check distance from endpoint to frag2 vertices
+                if len(frag2.vertices_nm) == 0:
+                    continue
+                dists = np.linalg.norm(frag2.vertices_nm - ep.coord_nm, axis=1)
+                min_d = float(np.min(dists))
+                if min_d <= 15000.0:  # within 5 microns of arbor
+                    seen_frag_pairs.add(pair_key)
+                    prox_score = float(np.exp(-min_d / 15000.0))
+                    bridges.append(AssemblyEdge(
+                        src_id=frag1.fragment_id,
+                        dst_id=frag2.fragment_id,
+                        edge_type=EdgeType.TANGENT_FLOW,
+                        distance_nm=min_d,
+                        collinearity_score=prox_score,
+                        weight=prox_score,
+                        metadata={"type": "tip_to_skeleton", "distance_nm": min_d}
+                    ))
 
     return bridges
