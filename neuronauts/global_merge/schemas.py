@@ -50,6 +50,8 @@ class SegmentFragment:
     endpoints: List[EndpointTangent] = field(default_factory=list)
     synapse_ids: List[int] = field(default_factory=list)
     synapse_coords_nm: Optional[np.ndarray] = None  # shape (S, 3)
+    synapse_types: Optional[np.ndarray] = None      # shape (S,) 0=pre, 1=post
+    synapse_partner_ids: Optional[np.ndarray] = None# shape (S,) partner root IDs
     point_cloud_nm: Optional[np.ndarray] = None     # shape (P, 3)
     is_soma: bool = False
     soma_confidence: float = 0.0
@@ -79,6 +81,8 @@ class AssemblyEdge:
     distance_nm: float
     collinearity_score: float = 0.0
     dna_similarity: float = 0.0
+    synapse_coassign_score: float = 0.0
+    synapse_polarity_score: float = 0.0
     weight: float = 0.0
     is_hard_negative: bool = False
     metadata: Dict = field(default_factory=dict)

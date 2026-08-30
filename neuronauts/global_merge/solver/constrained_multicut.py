@@ -74,19 +74,46 @@ def compute_edge_weight(
 ) -> float:
     """
     Compute net contractive/repulsive affinity weight for GAEC.
-    Unified morphological DNA gating: if morphology disagrees (cos < threshold),
-    forces repulsive weight to split frankenmerges and reject false spatial contacts.
+    Multimodal fusion:
+      1. Hard negative split enforcement
+      2. Synapse Polarity Invariants (Axon vs Dendrite conflict rejection)
+      3. Morphological Tree-DNA Gating & Active Repulsion
+      4. Synapse Partner Co-Assignment Affinity
+      5. Kinematic Tangent Collinearity
     """
     if edge.is_hard_negative or edge.edge_type == EdgeType.EDIT_SPLIT_HARD_NEG:
         return -10.0  # hard penalty
+
+    # 1. Synapse Polarity Invariant (Axon-to-Dendrite Direct Fusion Rejection)
+    # If one piece is strongly axon (mostly pre) and the other is strongly dendrite (mostly post),
+    # they cannot merge unless connecting via the soma!
+    if frag1.synapse_types is not None and frag2.synapse_types is not None:
+        if len(frag1.synapse_types) >= 3 and len(frag2.synapse_types) >= 3:
+            pre_frac1 = float(np.mean(frag1.synapse_types == 0))
+            pre_frac2 = float(np.mean(frag2.synapse_types == 0))
+            
+            # Direct axon-dendrite cross-merge in dense neuropil
+            if not (frag1.is_soma or frag2.is_soma):
+                if (pre_frac1 > 0.80 and pre_frac2 < 0.20) or (pre_frac1 < 0.20 and pre_frac2 > 0.80):
+                    return -8.0  # Biological polarity conflict repulsion!
 
     w = bias
     has_dna = (frag1.dna_embedding is not None and frag2.dna_embedding is not None)
     cos_sim = float(np.dot(frag1.dna_embedding, frag2.dna_embedding)) if has_dna else None
 
-    # Global morphological disagreement override
+    # 2. Global morphological disagreement override
     if has_dna and cos_sim is not None and cos_sim < dna_split_threshold:
         return -5.0 * (1.0 - cos_sim)  # active repulsion!
+
+    # 3. Synapse Partner Co-Assignment Affinity
+    if frag1.synapse_partner_ids is not None and frag2.synapse_partner_ids is not None:
+        p1 = set(frag1.synapse_partner_ids.tolist())
+        p2 = set(frag2.synapse_partner_ids.tolist())
+        if len(p1) > 0 and len(p2) > 0:
+            shared = len(p1.intersection(p2))
+            coassign = shared / (np.sqrt(len(p1) * len(p2)) + 1e-6)
+            if coassign > 0.05:
+                w += 2.5 * coassign
 
     if edge.edge_type == EdgeType.SAME_SEGMENT:
         if has_dna and cos_sim is not None:
