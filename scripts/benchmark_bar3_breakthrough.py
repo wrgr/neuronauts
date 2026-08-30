@@ -167,11 +167,21 @@ def run_breakthrough_benchmark(
             sf.dna_embedding = f.dna_embedding
         clean_fragments.extend(split_frags)
 
+    # Compute dynamic empirical threshold from training positive & negative distributions
+    true_cos_vals = [float(np.dot(fragments[i].dna_embedding, fragments[j].dna_embedding)) for i, j in pos_pairs if fragments[i].dna_embedding is not None and fragments[j].dna_embedding is not None]
+    neg_cos_vals = [float(np.dot(fragments[i].dna_embedding, fragments[j].dna_embedding)) for i, j in neg_pairs if fragments[i].dna_embedding is not None and fragments[j].dna_embedding is not None]
+
+    mu_pos = float(np.mean(true_cos_vals)) if true_cos_vals else 0.80
+    mu_neg = float(np.mean(neg_cos_vals)) if neg_cos_vals else 0.20
+    dynamic_theta = (mu_pos + mu_neg) / 2.0
+    print(f"\nDynamic Empirical Calibration: mu_pos={mu_pos:.4f} | mu_neg={mu_neg:.4f} => Optimal Boundary theta* = {dynamic_theta:.4f}")
+
     res_gm = assemble_global_connectome(
         clean_fragments,
         enable_tangent_flow=True,
         max_tangent_dist_nm=25000.0,
-        min_collinearity=0.20
+        min_collinearity=0.20,
+        dna_split_threshold=dynamic_theta
     )
 
     pred_gm = {}

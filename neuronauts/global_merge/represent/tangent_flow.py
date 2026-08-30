@@ -189,10 +189,11 @@ def find_tangent_flow_bridges(
                 if len(frag2.vertices_nm) == 0:
                     continue
                 dists = np.linalg.norm(frag2.vertices_nm - ep.coord_nm, axis=1)
-                min_d = float(np.min(dists))
-                if min_d <= 15000.0:  # within 5 microns of arbor
+                min_idx = int(np.argmin(dists))
+                min_d = float(dists[min_idx])
+                if min_d <= 3000.0:  # tight cut seam tolerance (<= 3um)
                     seen_frag_pairs.add(pair_key)
-                    prox_score = float(np.exp(-min_d / 15000.0))
+                    prox_score = float(np.exp(-min_d / 3000.0))
                     bridges.append(AssemblyEdge(
                         src_id=frag1.fragment_id,
                         dst_id=frag2.fragment_id,

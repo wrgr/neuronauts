@@ -119,7 +119,8 @@ def assemble_global_connectome(
     bias: float = 0.0,
     enable_tangent_flow: bool = True,
     max_tangent_dist_nm: float = 25000.0,
-    min_collinearity: float = 0.25
+    min_collinearity: float = 0.25,
+    dna_split_threshold: Optional[float] = None
 ) -> GlobalAssemblyResult:
     """
     Main entry point for Global Merge & Assembly.
