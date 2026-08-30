@@ -101,11 +101,7 @@ def compute_edge_weight(
     has_dna = (frag1.dna_embedding is not None and frag2.dna_embedding is not None)
     cos_sim = float(np.dot(frag1.dna_embedding, frag2.dna_embedding)) if has_dna else None
 
-    # 2. Global morphological disagreement override
-    if has_dna and cos_sim is not None and cos_sim < dna_split_threshold:
-        return -5.0 * (1.0 - cos_sim)  # active repulsion!
-
-    # 3. Synapse Partner Co-Assignment Affinity
+    # 2. Synapse Partner Co-Assignment Affinity
     if frag1.synapse_partner_ids is not None and frag2.synapse_partner_ids is not None:
         p1 = set(frag1.synapse_partner_ids.tolist())
         p2 = set(frag2.synapse_partner_ids.tolist())
@@ -115,21 +111,28 @@ def compute_edge_weight(
             if coassign > 0.05:
                 w += 2.5 * coassign
 
+    # 3. Edge-Specific Gating & Assembly
     if edge.edge_type == EdgeType.SAME_SEGMENT:
         if has_dna and cos_sim is not None:
-            w += 2.0 * cos_sim
+            if cos_sim < dna_split_threshold:
+                return -5.0 * (1.0 - cos_sim)  # Active frankenmerge cleavage repulsion!
+            else:
+                w += 1.5 + 2.0 * cos_sim
         else:
             w += 1.5
 
     elif edge.edge_type == EdgeType.TANGENT_FLOW:
+        # If morphology strongly contradicts (cos < theta - 0.20), actively reject
+        if has_dna and cos_sim is not None and cos_sim < (dna_split_threshold - 0.20):
+            return -4.0 * (1.0 - cos_sim)
+        
         score = max(0.01, min(0.99, edge.collinearity_score))
-        log_odds = float(np.log(score / (1.0 - score + 1e-6)))
+        # Positive contractive weight for collinear tangent alignment
+        kinematic_weight = 2.0 * (score - 0.20)
         if has_dna and cos_sim is not None:
-            w += log_odds + 2.0 * cos_sim
+            w += kinematic_weight + 3.0 * (cos_sim - (dna_split_threshold - 0.20))
         else:
-            if score < 0.50:
-                return -2.0
-            w += log_odds
+            w += kinematic_weight
 
     elif edge.edge_type == EdgeType.SPATIAL_KNN:
         dist_decay = float(np.exp(-edge.distance_nm / 10000.0))
