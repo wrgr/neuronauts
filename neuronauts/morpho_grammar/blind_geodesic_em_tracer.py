@@ -48,10 +48,10 @@ class BlindGeodesicEMTracer:
         t0 = np.array(src_tangent, dtype=np.float32)
         t1 = np.array(dst_tangent, dtype=np.float32)
 
-        # Tangent directional alignments
+        # Tangent directional alignments (bidirectional collinearity on candidate vertex)
         align_src = float(np.dot(t0, v_ray))
-        align_dst = float(np.dot(t1, v_ray))
-        tangent_collinearity = float(np.dot(t0, t1))
+        align_dst = float(max(np.dot(t1, v_ray), np.dot(-t1, v_ray)))
+        tangent_collinearity = float(max(np.dot(t0, t1), np.dot(t0, -t1)))
 
         # Hermite spline trajectory
         n_steps = max(5, int(dist_nm / self.step_size_nm))
