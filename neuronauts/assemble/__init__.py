@@ -14,6 +14,7 @@ from .fragment_graph import (
     build_fragment_graph,
     score_edge,
 )
+from .hungarian_bipartite_assembler import HungarianBipartiteAssembler
 
 __all__ = [
     # Global synapse graph + GNN assembly
@@ -33,4 +34,5 @@ __all__ = [
     "assemble_fragments",
     "build_fragment_graph",
     "score_edge",
+    "HungarianBipartiteAssembler",
 ]

@@ -37,7 +37,6 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-import pandas as pd
 import requests
 
 DEFAULT_TOKEN = "a08cdcba8581846f48d5742a75c53311"
@@ -75,6 +74,8 @@ def load_nucleus_table(cache_path: Optional[str] = None) -> pd.DataFrame:
         Optional path to a gzip'd CSV cache file.  Written on first fetch,
         read on subsequent calls when the file already exists.
     """
+    import pandas as pd
+
     if cache_path is not None:
         p = Path(cache_path)
         if p.exists():
@@ -129,6 +130,8 @@ def load_nucleus_positions(
         Columns: root_id (int64), x_nm (float64), y_nm (float64), z_nm (float64).
         Rows with root_id == 0 or unparseable coordinates are excluded.
     """
+    import pandas as pd
+
     if cache_path is not None:
         p = Path(cache_path)
         if p.exists():
@@ -185,6 +188,8 @@ def load_cell_types(cache_path: Optional[str] = None) -> Optional[pd.DataFrame]:
     cache_path:
         Optional path to a gzip'd CSV cache file.
     """
+    import pandas as pd
+
     if cache_path is not None:
         p = Path(cache_path)
         if p.exists():
