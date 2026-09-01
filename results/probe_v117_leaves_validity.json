@@ -1,0 +1,894 @@
+{
+  "box": "002b1cf087ab2d16.npz",
+  "config": {
+    "box_dir": "data/boxes_v117",
+    "n_roots": 40,
+    "min_syn": 5,
+    "halo_nm": 25000.0,
+    "workers": 8,
+    "seed": 0,
+    "out": "results/probe_v117_leaves_validity.json"
+  },
+  "records": [
+    {
+      "root": 864691135113142425,
+      "n_synapses": 262,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "136599-142849_77954-84204_17678-18928",
+      "bounded_status": 200,
+      "bounded_n_l2": 688,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 9546,
+      "dist_centroid_to_nearest_l2_nm": 29744.014523934056,
+      "l2_cloud_centre_nm": [
+        1150932.0,
+        667600.0,
+        733203.0
+      ],
+      "synapse_centroid_nm": [
+        1117796.0,
+        648636.0,
+        732120.0
+      ]
+    },
+    {
+      "root": 864691135103986509,
+      "n_synapses": 139,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "135212-141462_77796-84046_17557-18807",
+      "bounded_status": 200,
+      "bounded_n_l2": 685,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 15615,
+      "dist_centroid_to_nearest_l2_nm": 27398.33843502193,
+      "l2_cloud_centre_nm": [
+        1048361.0,
+        601661.0,
+        696949.0
+      ],
+      "synapse_centroid_nm": [
+        1106696.0,
+        647374.0,
+        727305.0
+      ]
+    },
+    {
+      "root": 864691136708588918,
+      "n_synapses": 122,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "135531-141781_77076-83326_17474-18724",
+      "bounded_status": 200,
+      "bounded_n_l2": 95,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 8774,
+      "dist_centroid_to_nearest_l2_nm": 45826.75734764571,
+      "l2_cloud_centre_nm": [
+        1020279.0,
+        597780.0,
+        686560.0
+      ],
+      "synapse_centroid_nm": [
+        1109250.0,
+        641609.0,
+        723990.0
+      ]
+    },
+    {
+      "root": 864691136187351116,
+      "n_synapses": 98,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "137154-143404_77698-83948_17418-18668",
+      "bounded_status": 200,
+      "bounded_n_l2": 89,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 228,
+      "dist_centroid_to_nearest_l2_nm": 210.2997860198626,
+      "l2_cloud_centre_nm": [
+        1138244.0,
+        661515.0,
+        715812.0
+      ],
+      "synapse_centroid_nm": [
+        1122235.0,
+        646584.0,
+        721725.0
+      ]
+    },
+    {
+      "root": 864691136370801544,
+      "n_synapses": 87,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "135765-142015_76545-82795_17881-19131",
+      "bounded_status": 200,
+      "bounded_n_l2": 358,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 3974,
+      "dist_centroid_to_nearest_l2_nm": 6763.429455535113,
+      "l2_cloud_centre_nm": [
+        1159921.0,
+        607273.0,
+        771148.0
+      ],
+      "synapse_centroid_nm": [
+        1111127.0,
+        637360.0,
+        740245.0
+      ]
+    },
+    {
+      "root": 864691136378763733,
+      "n_synapses": 58,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "134421-140671_77536-83786_17287-18537",
+      "bounded_status": 200,
+      "bounded_n_l2": 335,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 5391,
+      "dist_centroid_to_nearest_l2_nm": 26007.62228655284,
+      "l2_cloud_centre_nm": [
+        1010754.0,
+        649380.0,
+        720279.0
+      ],
+      "synapse_centroid_nm": [
+        1100370.0,
+        645293.0,
+        716510.0
+      ]
+    },
+    {
+      "root": 864691136925345866,
+      "n_synapses": 55,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "136042-142292_77462-83712_17651-18901",
+      "bounded_status": 200,
+      "bounded_n_l2": 116,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 7142,
+      "dist_centroid_to_nearest_l2_nm": 2720.1472386619075,
+      "l2_cloud_centre_nm": [
+        1110458.0,
+        639476.0,
+        672948.0
+      ],
+      "synapse_centroid_nm": [
+        1113340.0,
+        644697.0,
+        731040.0
+      ]
+    },
+    {
+      "root": 864691136907219310,
+      "n_synapses": 52,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "134778-141028_76670-82920_17612-18862",
+      "bounded_status": 200,
+      "bounded_n_l2": 69,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 3688,
+      "dist_centroid_to_nearest_l2_nm": 5205.628492314833,
+      "l2_cloud_centre_nm": [
+        1030220.0,
+        709958.0,
+        710562.0
+      ],
+      "synapse_centroid_nm": [
+        1103230.0,
+        638360.0,
+        729510.0
+      ]
+    },
+    {
+      "root": 864691135664733892,
+      "n_synapses": 30,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "134382-140632_76193-82443_17434-18684",
+      "bounded_status": 200,
+      "bounded_n_l2": 507,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 14249,
+      "dist_centroid_to_nearest_l2_nm": 16023.2727618299,
+      "l2_cloud_centre_nm": [
+        1117006.0,
+        548388.0,
+        773396.0
+      ],
+      "synapse_centroid_nm": [
+        1100058.0,
+        634551.0,
+        722385.0
+      ]
+    },
+    {
+      "root": 864691136964197404,
+      "n_synapses": 30,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "135011-141261_76499-82749_17613-18863",
+      "bounded_status": 200,
+      "bounded_n_l2": 194,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 1667,
+      "dist_centroid_to_nearest_l2_nm": 7178.858544364835,
+      "l2_cloud_centre_nm": [
+        1146884.0,
+        659712.0,
+        727118.0
+      ],
+      "synapse_centroid_nm": [
+        1105088.0,
+        636999.0,
+        729525.0
+      ]
+    },
+    {
+      "root": 864691135943616970,
+      "n_synapses": 20,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "137422-143672_77361-83611_18121-19371",
+      "bounded_status": 200,
+      "bounded_n_l2": 124,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 3389,
+      "dist_centroid_to_nearest_l2_nm": 1580.863371705474,
+      "l2_cloud_centre_nm": [
+        1221163.0,
+        654633.0,
+        739234.0
+      ],
+      "synapse_centroid_nm": [
+        1124379.0,
+        643892.0,
+        749840.0
+      ]
+    },
+    {
+      "root": 864691135382911467,
+      "n_synapses": 19,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "137251-143501_78602-84852_18127-19377",
+      "bounded_status": 200,
+      "bounded_n_l2": 294,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 11629,
+      "dist_centroid_to_nearest_l2_nm": 17402.100131880634,
+      "l2_cloud_centre_nm": [
+        1081810.0,
+        614955.0,
+        834874.0
+      ],
+      "synapse_centroid_nm": [
+        1123010.0,
+        653818.0,
+        750115.0
+      ]
+    },
+    {
+      "root": 864691135463345733,
+      "n_synapses": 18,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "135562-141812_78983-85233_17489-18739",
+      "bounded_status": 200,
+      "bounded_n_l2": 123,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 251,
+      "dist_centroid_to_nearest_l2_nm": 1477.0301283318495,
+      "l2_cloud_centre_nm": [
+        1103859.0,
+        670270.0,
+        749018.0
+      ],
+      "synapse_centroid_nm": [
+        1109499.0,
+        656868.0,
+        724595.0
+      ]
+    },
+    {
+      "root": 864691136966039068,
+      "n_synapses": 17,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "133832-140082_77552-83802_17998-19248",
+      "bounded_status": 200,
+      "bounded_n_l2": 100,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 107,
+      "dist_centroid_to_nearest_l2_nm": 938.0031982887905,
+      "l2_cloud_centre_nm": [
+        1091778.0,
+        642031.0,
+        742962.0
+      ],
+      "synapse_centroid_nm": [
+        1095660.0,
+        645417.0,
+        744955.0
+      ]
+    },
+    {
+      "root": 864691135663850167,
+      "n_synapses": 13,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "136072-142322_79035-85285_17602-18852",
+      "bounded_status": 200,
+      "bounded_n_l2": 115,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 538,
+      "dist_centroid_to_nearest_l2_nm": 5065.5750907473475,
+      "l2_cloud_centre_nm": [
+        1092718.0,
+        663828.0,
+        712568.0
+      ],
+      "synapse_centroid_nm": [
+        1113579.0,
+        657287.0,
+        729085.0
+      ]
+    },
+    {
+      "root": 864691136571967138,
+      "n_synapses": 12,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "133718-139968_76157-82407_17588-18838",
+      "bounded_status": 200,
+      "bounded_n_l2": 103,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 1423,
+      "dist_centroid_to_nearest_l2_nm": 2858.9499820738383,
+      "l2_cloud_centre_nm": [
+        1188360.0,
+        588191.0,
+        754062.0
+      ],
+      "synapse_centroid_nm": [
+        1094751.0,
+        634259.0,
+        728535.0
+      ]
+    },
+    {
+      "root": 864691135564633155,
+      "n_synapses": 10,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "137505-143755_76594-82844_18027-19277",
+      "bounded_status": 200,
+      "bounded_n_l2": 375,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 1319,
+      "dist_centroid_to_nearest_l2_nm": 688.4889251106367,
+      "l2_cloud_centre_nm": [
+        1072691.0,
+        688352.0,
+        798782.0
+      ],
+      "synapse_centroid_nm": [
+        1125044.0,
+        637756.0,
+        746105.0
+      ]
+    },
+    {
+      "root": 864691135536932338,
+      "n_synapses": 10,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "135816-142066_78685-84935_17785-19035",
+      "bounded_status": 200,
+      "bounded_n_l2": 184,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 2296,
+      "dist_centroid_to_nearest_l2_nm": 11408.030548696826,
+      "l2_cloud_centre_nm": [
+        1185426.0,
+        602995.0,
+        753392.0
+      ],
+      "synapse_centroid_nm": [
+        1111534.0,
+        654487.0,
+        736410.0
+      ]
+    },
+    {
+      "root": 864691135674841028,
+      "n_synapses": 10,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "134743-140993_78603-84853_17613-18863",
+      "bounded_status": 200,
+      "bounded_n_l2": 78,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 1269,
+      "dist_centroid_to_nearest_l2_nm": 8989.892268542488,
+      "l2_cloud_centre_nm": [
+        1024569.0,
+        682000.0,
+        754776.0
+      ],
+      "synapse_centroid_nm": [
+        1102951.0,
+        653827.0,
+        729555.0
+      ]
+    },
+    {
+      "root": 864691136574522908,
+      "n_synapses": 9,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "135883-142133_75869-82119_17427-18677",
+      "bounded_status": 200,
+      "bounded_n_l2": 47,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 62,
+      "dist_centroid_to_nearest_l2_nm": 3000.987837362891,
+      "l2_cloud_centre_nm": [
+        1113440.0,
+        644552.0,
+        711471.0
+      ],
+      "synapse_centroid_nm": [
+        1112070.0,
+        631958.0,
+        722080.0
+      ]
+    },
+    {
+      "root": 864691135664808631,
+      "n_synapses": 9,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "135850-142100_75793-82043_17993-19243",
+      "bounded_status": 200,
+      "bounded_n_l2": 54,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 59,
+      "dist_centroid_to_nearest_l2_nm": 1934.8369440343029,
+      "l2_cloud_centre_nm": [
+        1105439.0,
+        625371.0,
+        732856.0
+      ],
+      "synapse_centroid_nm": [
+        1111805.0,
+        631351.0,
+        744740.0
+      ]
+    },
+    {
+      "root": 864691136194269260,
+      "n_synapses": 9,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "137500-143750_76478-82728_17766-19016",
+      "bounded_status": 200,
+      "bounded_n_l2": 50,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 209,
+      "dist_centroid_to_nearest_l2_nm": 749.0527351261726,
+      "l2_cloud_centre_nm": [
+        1121775.0,
+        601179.0,
+        726204.0
+      ],
+      "synapse_centroid_nm": [
+        1125006.0,
+        636828.0,
+        735650.0
+      ]
+    },
+    {
+      "root": 864691136961762588,
+      "n_synapses": 9,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "136967-143217_77977-84227_18067-19317",
+      "bounded_status": 200,
+      "bounded_n_l2": 180,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 1439,
+      "dist_centroid_to_nearest_l2_nm": 4889.7193170978635,
+      "l2_cloud_centre_nm": [
+        1152689.0,
+        644107.0,
+        795948.0
+      ],
+      "synapse_centroid_nm": [
+        1120737.0,
+        648821.0,
+        747695.0
+      ]
+    },
+    {
+      "root": 864691135490454002,
+      "n_synapses": 8,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "136773-143023_76141-82391_17265-18515",
+      "bounded_status": 200,
+      "bounded_n_l2": 85,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 720,
+      "dist_centroid_to_nearest_l2_nm": 608.230219571504,
+      "l2_cloud_centre_nm": [
+        1055379.0,
+        674408.0,
+        724244.0
+      ],
+      "synapse_centroid_nm": [
+        1119188.0,
+        634134.0,
+        715610.0
+      ]
+    },
+    {
+      "root": 864691136591936149,
+      "n_synapses": 8,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "134646-140896_76345-82595_17339-18589",
+      "bounded_status": 200,
+      "bounded_n_l2": 38,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 38,
+      "dist_centroid_to_nearest_l2_nm": 1030.939377461158,
+      "l2_cloud_centre_nm": [
+        1103220.0,
+        639476.0,
+        709942.0
+      ],
+      "synapse_centroid_nm": [
+        1102172.0,
+        635762.0,
+        718560.0
+      ]
+    },
+    {
+      "root": 864691135526093659,
+      "n_synapses": 8,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "133889-140139_78028-84278_17238-18488",
+      "bounded_status": 200,
+      "bounded_n_l2": 144,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 8777,
+      "dist_centroid_to_nearest_l2_nm": 27918.453431377606,
+      "l2_cloud_centre_nm": [
+        1026301.0,
+        664052.0,
+        661142.0
+      ],
+      "synapse_centroid_nm": [
+        1096112.0,
+        649231.0,
+        714525.0
+      ]
+    },
+    {
+      "root": 864691136644642076,
+      "n_synapses": 7,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "137269-143519_78169-84419_17297-18547",
+      "bounded_status": 200,
+      "bounded_n_l2": 72,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 101,
+      "dist_centroid_to_nearest_l2_nm": 2552.146371594051,
+      "l2_cloud_centre_nm": [
+        1134205.0,
+        643013.0,
+        710833.0
+      ],
+      "synapse_centroid_nm": [
+        1123155.0,
+        650359.0,
+        716891.0
+      ]
+    },
+    {
+      "root": 864691136191873612,
+      "n_synapses": 7,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "135161-141411_76654-82904_17782-19032",
+      "bounded_status": 200,
+      "bounded_n_l2": 68,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 68,
+      "dist_centroid_to_nearest_l2_nm": 1515.8374798461148,
+      "l2_cloud_centre_nm": [
+        1114062.0,
+        639854.0,
+        753948.0
+      ],
+      "synapse_centroid_nm": [
+        1106294.0,
+        638237.0,
+        736280.0
+      ]
+    },
+    {
+      "root": 864691135662470467,
+      "n_synapses": 7,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "136819-143069_79371-85621_17258-18508",
+      "bounded_status": 200,
+      "bounded_n_l2": 77,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 2196,
+      "dist_centroid_to_nearest_l2_nm": 1136.833267260882,
+      "l2_cloud_centre_nm": [
+        1093098.0,
+        525763.0,
+        658141.0
+      ],
+      "synapse_centroid_nm": [
+        1119558.0,
+        659973.0,
+        715349.0
+      ]
+    },
+    {
+      "root": 864691135783211319,
+      "n_synapses": 6,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "136532-142782_75168-81418_17545-18795",
+      "bounded_status": 200,
+      "bounded_n_l2": 36,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 36,
+      "dist_centroid_to_nearest_l2_nm": 726.730272445698,
+      "l2_cloud_centre_nm": [
+        1117309.0,
+        618445.0,
+        711199.0
+      ],
+      "synapse_centroid_nm": [
+        1117257.0,
+        626349.0,
+        726800.0
+      ]
+    },
+    {
+      "root": 864691136589223061,
+      "n_synapses": 6,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "136221-142471_76720-82970_17423-18673",
+      "bounded_status": 200,
+      "bounded_n_l2": 52,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 52,
+      "dist_centroid_to_nearest_l2_nm": 320.2054895774353,
+      "l2_cloud_centre_nm": [
+        1111275.0,
+        644660.0,
+        721047.0
+      ],
+      "synapse_centroid_nm": [
+        1114772.0,
+        638761.0,
+        721933.0
+      ]
+    },
+    {
+      "root": 864691136969217820,
+      "n_synapses": 6,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "134344-140594_75326-81576_17998-19248",
+      "bounded_status": 200,
+      "bounded_n_l2": 50,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 437,
+      "dist_centroid_to_nearest_l2_nm": 1043.4549449891294,
+      "l2_cloud_centre_nm": [
+        1114147.0,
+        578632.0,
+        705134.0
+      ],
+      "synapse_centroid_nm": [
+        1099757.0,
+        627612.0,
+        744933.0
+      ]
+    },
+    {
+      "root": 864691135677143875,
+      "n_synapses": 6,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "137472-143722_76152-82402_17478-18728",
+      "bounded_status": 200,
+      "bounded_n_l2": 94,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 434,
+      "dist_centroid_to_nearest_l2_nm": 1546.0579261823043,
+      "l2_cloud_centre_nm": [
+        1121002.0,
+        579268.0,
+        681484.0
+      ],
+      "synapse_centroid_nm": [
+        1124780.0,
+        634219.0,
+        724120.0
+      ]
+    },
+    {
+      "root": 864691135589215077,
+      "n_synapses": 6,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "137695-143945_78474-84724_18153-19403",
+      "bounded_status": 200,
+      "bounded_n_l2": 94,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 135,
+      "dist_centroid_to_nearest_l2_nm": 786.4915059229237,
+      "l2_cloud_centre_nm": [
+        1105564.0,
+        665125.0,
+        769677.0
+      ],
+      "synapse_centroid_nm": [
+        1126564.0,
+        652795.0,
+        751133.0
+      ]
+    },
+    {
+      "root": 864691136910215534,
+      "n_synapses": 6,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "135057-141307_79369-85619_17563-18813",
+      "bounded_status": 200,
+      "bounded_n_l2": 48,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 8130,
+      "dist_centroid_to_nearest_l2_nm": 39167.82182693681,
+      "l2_cloud_centre_nm": [
+        1165685.0,
+        740513.0,
+        868778.0
+      ],
+      "synapse_centroid_nm": [
+        1105461.0,
+        659957.0,
+        727553.0
+      ]
+    },
+    {
+      "root": 864691135984532872,
+      "n_synapses": 5,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "136976-143226_76992-83242_17903-19153",
+      "bounded_status": 200,
+      "bounded_n_l2": 117,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 417,
+      "dist_centroid_to_nearest_l2_nm": 8361.94549611507,
+      "l2_cloud_centre_nm": [
+        1117533.0,
+        641983.0,
+        773122.0
+      ],
+      "synapse_centroid_nm": [
+        1120813.0,
+        640939.0,
+        741152.0
+      ]
+    },
+    {
+      "root": 864691136907831662,
+      "n_synapses": 5,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "135336-141586_77538-83788_17886-19136",
+      "bounded_status": 200,
+      "bounded_n_l2": 69,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 1696,
+      "dist_centroid_to_nearest_l2_nm": 12786.328198509464,
+      "l2_cloud_centre_nm": [
+        1266477.0,
+        482652.0,
+        641808.0
+      ],
+      "synapse_centroid_nm": [
+        1107694.0,
+        645307.0,
+        740464.0
+      ]
+    },
+    {
+      "root": 864691135191468074,
+      "n_synapses": 5,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "134134-140384_75882-82132_17986-19236",
+      "bounded_status": 200,
+      "bounded_n_l2": 12,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 12,
+      "dist_centroid_to_nearest_l2_nm": 1139.7066289180973,
+      "l2_cloud_centre_nm": [
+        1097547.0,
+        632435.0,
+        746097.0
+      ],
+      "synapse_centroid_nm": [
+        1098078.0,
+        632061.0,
+        744464.0
+      ]
+    },
+    {
+      "root": 864691135099662846,
+      "n_synapses": 5,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "134814-141064_75457-81707_17550-18800",
+      "bounded_status": 200,
+      "bounded_n_l2": 12,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 12,
+      "dist_centroid_to_nearest_l2_nm": 768.7496341462544,
+      "l2_cloud_centre_nm": [
+        1106919.0,
+        630033.0,
+        726863.0
+      ],
+      "synapse_centroid_nm": [
+        1103512.0,
+        628656.0,
+        727024.0
+      ]
+    },
+    {
+      "root": 864691135443906629,
+      "n_synapses": 5,
+      "root_status": 200,
+      "is_current_root": true,
+      "bounds": "135427-141677_75341-81591_18123-19373",
+      "bounded_status": 200,
+      "bounded_n_l2": 86,
+      "unbounded_status": 200,
+      "unbounded_n_l2": 113,
+      "dist_centroid_to_nearest_l2_nm": 941.1455147849767,
+      "l2_cloud_centre_nm": [
+        1111877.0,
+        628021.0,
+        749769.0
+      ],
+      "synapse_centroid_nm": [
+        1108419.0,
+        627731.0,
+        749928.0
+      ]
+    }
+  ]
+}

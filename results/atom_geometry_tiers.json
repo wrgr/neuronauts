@@ -1,0 +1,20 @@
+[
+  {
+    "k": 10,
+    "n_atoms": 20826,
+    "n_with_geom": 20826,
+    "total_l2_nodes": 18519922,
+    "coord_coverage": 0.9999872569657691,
+    "caliber_coverage": 0.9999872569657691,
+    "elapsed_min": 2.531695016225179
+  },
+  {
+    "k": 5,
+    "n_atoms": 40109,
+    "n_with_geom": 40109,
+    "total_l2_nodes": 20956855,
+    "coord_coverage": 0.9999870686703706,
+    "caliber_coverage": 0.9999870686703706,
+    "elapsed_min": 2.5060460607210797
+  }
+]

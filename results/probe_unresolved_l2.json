@@ -1,0 +1,16 @@
+{
+  "n_l2": 38431,
+  "n_unresolved": 1368,
+  "unresolved": {
+    "n": 29,
+    "median_frac": 1.0,
+    "mean_frac": 1.0,
+    "frac_nodes_majority_resolved": 1.0
+  },
+  "control": {
+    "n": 45,
+    "median_frac": 1.0,
+    "mean_frac": 1.0,
+    "frac_nodes_majority_resolved": 1.0
+  }
+}

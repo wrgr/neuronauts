@@ -1,0 +1,63 @@
+{
+  "meta": {
+    "box": "002b1cf087ab2d16.npz",
+    "n_synapses": 58483,
+    "n_roots_total": 23329,
+    "n_roots_eligible": 2158
+  },
+  "roots": [
+    864691136040982102,
+    864691135937361717,
+    864691137196941889,
+    864691136051339400,
+    864691136266437108,
+    864691135505403378,
+    864691135683952311,
+    864691136418639255,
+    864691135586056178,
+    864691135403754990,
+    864691135490226023,
+    864691135113142425
+  ],
+  "results": [
+    {
+      "route": "A_current_serial",
+      "seconds": 122.3310968875885,
+      "n_roots": 12,
+      "ok": 12,
+      "vertices": 23992,
+      "sec_per_root": 10.194258073965708
+    },
+    {
+      "route": "B_caveclient_per_root",
+      "seconds": 4.814648151397705,
+      "n_roots": 12,
+      "ok": 0,
+      "vertices": 0,
+      "sec_per_root": 0.4012206792831421
+    },
+    {
+      "route": "C_pooled_threaded",
+      "seconds": 30.772430181503296,
+      "n_roots": 12,
+      "ok": 12,
+      "vertices": 161682,
+      "sec_per_root": 2.564369181791941,
+      "pooled_l2_ids": 161682,
+      "n_attr_requests": 81,
+      "t_root_leaves": 5.372838258743286,
+      "t_attributes": 25.368784189224243,
+      "errors": []
+    }
+  ],
+  "config": {
+    "box_dir": "data/boxes_v117",
+    "n_roots": 12,
+    "min_syn": 10,
+    "leaf_workers": 16,
+    "attr_workers": 8,
+    "attr_batch": 2000,
+    "routes": "A,B,C",
+    "out": "results/probe_l2_throughput.json"
+  }
+}

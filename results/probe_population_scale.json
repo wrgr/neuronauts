@@ -1,0 +1,35 @@
+{
+  "centre_um": [
+    663,
+    591,
+    860
+  ],
+  "rate_sv_per_s": 5831.577979241212,
+  "resolve_fraction": 1.0,
+  "rows": [
+    {
+      "side_um": 60,
+      "n_synapses": 198892,
+      "n_unique_sv": 395478,
+      "est_v117_map_min": 1.1302772634547948
+    },
+    {
+      "side_um": 100,
+      "n_synapses": 901498,
+      "n_unique_sv": 1792309,
+      "est_v117_map_min": 5.122424286016921
+    },
+    {
+      "side_um": 150,
+      "n_synapses": 3084646,
+      "n_unique_sv": 6131190,
+      "est_v117_map_min": 17.522958685240148
+    },
+    {
+      "side_um": 200,
+      "n_synapses": 7514814,
+      "n_unique_sv": 14933676,
+      "est_v117_map_min": 42.68048903504253
+    }
+  ]
+}

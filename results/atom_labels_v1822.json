@@ -1,0 +1,14 @@
+{
+  "n_atoms": 279075,
+  "n_pure": 276171,
+  "n_mixed": 2444,
+  "n_mixed_proofread": 56,
+  "n_pure_gold": 2357,
+  "n_pure_silver": 2445,
+  "n_pure_unproofread": 271369,
+  "n_owner_roots_gold": 474,
+  "n_owner_roots_silver": 781,
+  "n_owner_roots_proofread": 1255,
+  "target_version": 1822,
+  "n_population_atoms": 279075
+}
