@@ -41,6 +41,7 @@ from neuronauts.report.provenance import repo_root
 TOPOLOGY_K10 = "data/substrate/topology/k10.npz"
 POPULATION = "data/substrate/c100um/population.npz"
 LABELS = "results/atom_labels_v1822.json"
+LABELS_NPZ = "data/substrate/c100um/labels_v1822.npz"
 
 
 @dataclass
@@ -82,7 +83,7 @@ REGISTRY: list[Entry] = [
                  "ground truth, and where?",
         criterion="at least 30% of synapse mass on single-lineage atoms with a "
                   "proofread owner; else widen the tier before proceeding",
-        requires=[], inputs=[POPULATION, TOPOLOGY_K10],
+        requires=[], inputs=[POPULATION, LABELS_NPZ],
         flags={"synthetic_fallback": False,
                "labels_used_only_for_evaluation": True}),
         module="neuronauts.experiments.exp057_gt_overlay",

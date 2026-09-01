@@ -1,0 +1,133 @@
+{
+  "elapsed_min": 0.0016180674235026042,
+  "id": "EXP-057",
+  "note": "16.2% of synapse mass on proofread-owned single-lineage atoms (bar 30%); 56 usable seam positives -- below the 150 at which this repo's seam GNN was net-negative, so EXP-062/063 are data-starved until EXP-057B lands",
+  "observed": {
+    "mass_frac_pure_gold": 0.06158,
+    "mass_frac_pure_proofread": 0.161914,
+    "n_pure_proofread_atoms": 4802,
+    "n_seam_positives": 56
+  },
+  "population": {
+    "n_atoms": 279075,
+    "n_atoms_with_label_row": 279075,
+    "n_mixed": 2444,
+    "n_mixed_proofread": 56,
+    "n_owner_roots_gold": 474,
+    "n_owner_roots_proofread": 1255,
+    "n_owner_roots_silver": 781,
+    "n_pure": 276171,
+    "n_pure_gold": 2357,
+    "n_pure_silver": 2445,
+    "n_pure_unproofread": 271369,
+    "n_synapse_sides": 1802996,
+    "target_version": 1822
+  },
+  "provenance": {
+    "argv": [
+      "/Users/wgray13/projects/neuronauts/neuronauts/experiments/exp057_gt_overlay.py"
+    ],
+    "cwd": "/Users/wgray13/projects/neuronauts",
+    "git_branch": "feat/global-merge-assembly",
+    "git_commit": "06e8b44a6d852fbba57ea84a33a6148e73b982d9",
+    "git_dirty": true,
+    "git_modified_files": [
+      "euronauts/experiments/registry.py"
+    ],
+    "git_untracked_count": 2,
+    "hostname": "DXJ5G9L3W1-ML",
+    "inputs": [
+      {
+        "algo": "quick-sha256",
+        "bytes": 19923218,
+        "hash": "137f812cd57dadc7732ad23cc472c830b01088b79ad15b9e4e58cb6eb208d48f",
+        "mtime_utc": "2026-09-01T19:58:07+00:00",
+        "path": "data/substrate/c100um/population.npz"
+      },
+      {
+        "algo": "sha256",
+        "bytes": 1321376,
+        "hash": "64f436a008bd0b5b027c28bb1d074eac972dda5acc6194f6e463c88f65a0635a",
+        "mtime_utc": "2026-09-01T22:57:45+00:00",
+        "path": "data/substrate/c100um/labels_v1822.npz"
+      }
+    ],
+    "labels_used_only_for_evaluation": true,
+    "packages": {
+      "caveclient": "8.0.1",
+      "matplotlib": "3.10.8",
+      "networkx": "3.6.1",
+      "neuroglancer": "2.41.2",
+      "numpy": "2.4.3",
+      "pandas": "2.3.3",
+      "scipy": "1.17.1",
+      "torch": "2.10.0"
+    },
+    "params": {
+      "split_axis": 0,
+      "split_buffer_nm": 20000.0,
+      "target_version": 1822
+    },
+    "platform": "macOS-15.7.9-arm64-arm-64bit-Mach-O",
+    "python": "3.14.2",
+    "synthetic_fallback": false,
+    "timestamp_utc": "2026-09-01T23:47:31+00:00"
+  },
+  "question": "What fraction of atoms and synapse mass carry unambiguous ground truth, and where?",
+  "requires": [],
+  "status": "failed",
+  "success_criterion": "at least 30% of synapse mass on single-lineage atoms with a proofread owner; else widen the tier before proceeding",
+  "tables": {
+    "seam_sample_size": {
+      "observed": {
+        "n": 56
+      },
+      "seam_gnn_cleared_zero_at": {
+        "n": 513
+      },
+      "seam_gnn_net_negative_at": {
+        "n": 150
+      }
+    },
+    "spatial_split": {
+      "all_atoms": {
+        "n_buffer": 53628,
+        "n_train": 112279,
+        "n_val": 113168
+      },
+      "pure_proofread_atoms": {
+        "n_buffer": 898,
+        "n_train": 1157,
+        "n_val": 2747
+      },
+      "seam_positives": {
+        "n_buffer": 19,
+        "n_train": 15,
+        "n_val": 22
+      }
+    },
+    "synapse_mass": {
+      "mixed": {
+        "fraction": 0.108134,
+        "synapses": 194966
+      },
+      "mixed_proofread": {
+        "fraction": 0.002529,
+        "synapses": 4559
+      },
+      "pure_gold": {
+        "fraction": 0.06158,
+        "synapses": 111028
+      },
+      "pure_proofread": {
+        "fraction": 0.161914,
+        "synapses": 291931
+      },
+      "unlabelled": {
+        "fraction": 0.0,
+        "synapses": 0
+      }
+    }
+  },
+  "title": "GT overlay and spatial split"
+}
