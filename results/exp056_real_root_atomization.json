@@ -1,0 +1,328 @@
+{
+  "atomic_baseline": {
+    "cross_lineage_split_recall": 0.0,
+    "macro_root_pair_f1": 0.8118299166228321,
+    "median_components_per_root": 1.0,
+    "pair_counts": {
+      "fn": 0,
+      "fp": 27280,
+      "tn": 0,
+      "tp": 145014
+    },
+    "pair_f1": 0.9140267500346666,
+    "pair_precision": 0.8416659895295251,
+    "pair_recall": 1.0,
+    "perfect_root_fraction": 0.0,
+    "perfect_roots": 0
+  },
+  "best_rule_with_pair_recall_at_least_0.9": {
+    "cross_lineage_split_recall": 0.22840909090909092,
+    "macro_root_pair_f1": 0.8090263432844753,
+    "median_components_per_root": 2.0,
+    "pair_counts": {
+      "fn": 8589,
+      "fp": 21049,
+      "tn": 6231,
+      "tp": 136425
+    },
+    "pair_f1": 0.9020192536563434,
+    "pair_precision": 0.8663334899729479,
+    "pair_recall": 0.9407712358806736,
+    "perfect_root_fraction": 0.11206896551724138,
+    "perfect_roots": 13,
+    "rule": "absolute_10um"
+  },
+  "elapsed_seconds": 186.39439964294434,
+  "experiment": "EXP-056 real-root atomization",
+  "population": {
+    "evaluated_roots": 116,
+    "max_observations_per_root": 512,
+    "min_observations": 10,
+    "mixed_lineage_roots": 116
+  },
+  "provenance": {
+    "bbox_nm": [
+      [
+        844776.0,
+        700136.0,
+        875040.0
+      ],
+      [
+        874776.0,
+        730136.0,
+        905040.0
+      ]
+    ],
+    "cut_inference_used_target_lineage": false,
+    "git_commit": "48718a8a469686ba96ec67296c7f2be9f0dfb0af",
+    "labels_used_only_for_evaluation": true,
+    "substrate": "real pre/post synapse endpoint observations",
+    "sweep_is_post_hoc": true,
+    "synthetic_fallback": false,
+    "target_timestamp": 1745921401,
+    "target_version": 1412
+  },
+  "success_criterion": {
+    "passed": false,
+    "required_cross_lineage_split_recall": 0.5,
+    "required_pair_recall": 0.9
+  },
+  "sweep": {
+    "absolute_0.25um": {
+      "cross_lineage_split_recall": 1.0,
+      "macro_root_pair_f1": 0.0032564203814201918,
+      "median_components_per_root": 24.5,
+      "pair_counts": {
+        "fn": 144891,
+        "fp": 0,
+        "tn": 27280,
+        "tp": 123
+      },
+      "pair_f1": 0.0016949502883482504,
+      "pair_precision": 1.0,
+      "pair_recall": 0.000848193967479002,
+      "perfect_root_fraction": 0.0,
+      "perfect_roots": 0
+    },
+    "absolute_0.5um": {
+      "cross_lineage_split_recall": 0.9999266862170088,
+      "macro_root_pair_f1": 0.021559769017863353,
+      "median_components_per_root": 23.5,
+      "pair_counts": {
+        "fn": 144398,
+        "fp": 2,
+        "tn": 27278,
+        "tp": 616
+      },
+      "pair_f1": 0.008459679191386509,
+      "pair_precision": 0.9967637540453075,
+      "pair_recall": 0.004247865723309474,
+      "perfect_root_fraction": 0.0,
+      "perfect_roots": 0
+    },
+    "absolute_10um": {
+      "cross_lineage_split_recall": 0.22840909090909092,
+      "macro_root_pair_f1": 0.8090263432844753,
+      "median_components_per_root": 2.0,
+      "pair_counts": {
+        "fn": 8589,
+        "fp": 21049,
+        "tn": 6231,
+        "tp": 136425
+      },
+      "pair_f1": 0.9020192536563434,
+      "pair_precision": 0.8663334899729479,
+      "pair_recall": 0.9407712358806736,
+      "perfect_root_fraction": 0.11206896551724138,
+      "perfect_roots": 13
+    },
+    "absolute_1um": {
+      "cross_lineage_split_recall": 0.9996700879765396,
+      "macro_root_pair_f1": 0.06673377757306778,
+      "median_components_per_root": 20.5,
+      "pair_counts": {
+        "fn": 142301,
+        "fp": 9,
+        "tn": 27271,
+        "tp": 2713
+      },
+      "pair_f1": 0.03672767639573293,
+      "pair_precision": 0.9966936076414401,
+      "pair_recall": 0.01870853848593929,
+      "perfect_root_fraction": 0.0,
+      "perfect_roots": 0
+    },
+    "absolute_2um": {
+      "cross_lineage_split_recall": 0.9833944281524927,
+      "macro_root_pair_f1": 0.21573355154345114,
+      "median_components_per_root": 13.0,
+      "pair_counts": {
+        "fn": 126379,
+        "fp": 453,
+        "tn": 26827,
+        "tp": 18635
+      },
+      "pair_f1": 0.22711484320727351,
+      "pair_precision": 0.9762678122380554,
+      "pair_recall": 0.12850483401602603,
+      "perfect_root_fraction": 0.008620689655172414,
+      "perfect_roots": 1
+    },
+    "absolute_5um": {
+      "cross_lineage_split_recall": 0.6522360703812317,
+      "macro_root_pair_f1": 0.6828241460962577,
+      "median_components_per_root": 4.0,
+      "pair_counts": {
+        "fn": 53647,
+        "fp": 9487,
+        "tn": 17793,
+        "tp": 91367
+      },
+      "pair_f1": 0.743219939154343,
+      "pair_precision": 0.905933329367204,
+      "pair_recall": 0.6300564083467803,
+      "perfect_root_fraction": 0.06896551724137931,
+      "perfect_roots": 8
+    },
+    "atomic": {
+      "cross_lineage_split_recall": 0.0,
+      "macro_root_pair_f1": 0.8118299166228321,
+      "median_components_per_root": 1.0,
+      "pair_counts": {
+        "fn": 0,
+        "fp": 27280,
+        "tn": 0,
+        "tp": 145014
+      },
+      "pair_f1": 0.9140267500346666,
+      "pair_precision": 0.8416659895295251,
+      "pair_recall": 1.0,
+      "perfect_root_fraction": 0.0,
+      "perfect_roots": 0
+    },
+    "quantile_0.5": {
+      "cross_lineage_split_recall": 0.9928152492668622,
+      "macro_root_pair_f1": 0.2096810101837266,
+      "median_components_per_root": 13.0,
+      "pair_counts": {
+        "fn": 140057,
+        "fp": 196,
+        "tn": 27084,
+        "tp": 4957
+      },
+      "pair_f1": 0.0660198312545366,
+      "pair_precision": 0.9619639045216379,
+      "pair_recall": 0.034182906477995226,
+      "perfect_root_fraction": 0.0,
+      "perfect_roots": 0
+    },
+    "quantile_0.75": {
+      "cross_lineage_split_recall": 0.9718841642228739,
+      "macro_root_pair_f1": 0.423678237967036,
+      "median_components_per_root": 7.0,
+      "pair_counts": {
+        "fn": 128310,
+        "fp": 767,
+        "tn": 26513,
+        "tp": 16704
+      },
+      "pair_f1": 0.2056066713850509,
+      "pair_precision": 0.9560986778089405,
+      "pair_recall": 0.11518887831519715,
+      "perfect_root_fraction": 0.008620689655172414,
+      "perfect_roots": 1
+    },
+    "quantile_0.9": {
+      "cross_lineage_split_recall": 0.8667155425219941,
+      "macro_root_pair_f1": 0.6436673295219073,
+      "median_components_per_root": 4.0,
+      "pair_counts": {
+        "fn": 94848,
+        "fp": 3636,
+        "tn": 23644,
+        "tp": 50166
+      },
+      "pair_f1": 0.5046475132786093,
+      "pair_precision": 0.9324188691870191,
+      "pair_recall": 0.34593901278497247,
+      "perfect_root_fraction": 0.034482758620689655,
+      "perfect_roots": 4
+    },
+    "quantile_0.95": {
+      "cross_lineage_split_recall": 0.7322214076246334,
+      "macro_root_pair_f1": 0.7307792873715138,
+      "median_components_per_root": 3.0,
+      "pair_counts": {
+        "fn": 67269,
+        "fp": 7305,
+        "tn": 19975,
+        "tp": 77745
+      },
+      "pair_f1": 0.6758554141456291,
+      "pair_precision": 0.9141093474426808,
+      "pair_recall": 0.5361206504199595,
+      "perfect_root_fraction": 0.11206896551724138,
+      "perfect_roots": 13
+    },
+    "quantile_0.99": {
+      "cross_lineage_split_recall": 0.4528225806451613,
+      "macro_root_pair_f1": 0.7949935122446983,
+      "median_components_per_root": 2.0,
+      "pair_counts": {
+        "fn": 31511,
+        "fp": 14927,
+        "tn": 12353,
+        "tp": 113503
+      },
+      "pair_f1": 0.8301736370152574,
+      "pair_precision": 0.88377326169898,
+      "pair_recall": 0.7827037389493429,
+      "perfect_root_fraction": 0.21551724137931033,
+      "perfect_roots": 25
+    },
+    "robust_z2": {
+      "cross_lineage_split_recall": 0.811033724340176,
+      "macro_root_pair_f1": 0.6739607273533266,
+      "median_components_per_root": 3.5,
+      "pair_counts": {
+        "fn": 90931,
+        "fp": 5155,
+        "tn": 22125,
+        "tp": 54083
+      },
+      "pair_f1": 0.5295713138671836,
+      "pair_precision": 0.9129781559134339,
+      "pair_recall": 0.37295019791192574,
+      "perfect_root_fraction": 0.034482758620689655,
+      "perfect_roots": 4
+    },
+    "robust_z3": {
+      "cross_lineage_split_recall": 0.6765762463343109,
+      "macro_root_pair_f1": 0.7413525285830687,
+      "median_components_per_root": 2.0,
+      "pair_counts": {
+        "fn": 69244,
+        "fp": 8823,
+        "tn": 18457,
+        "tp": 75770
+      },
+      "pair_f1": 0.6599972997338932,
+      "pair_precision": 0.8957005898833237,
+      "pair_recall": 0.5225012757388942,
+      "perfect_root_fraction": 0.06896551724137931,
+      "perfect_roots": 8
+    },
+    "robust_z4": {
+      "cross_lineage_split_recall": 0.5988636363636364,
+      "macro_root_pair_f1": 0.7806580668330498,
+      "median_components_per_root": 2.0,
+      "pair_counts": {
+        "fn": 51561,
+        "fp": 10943,
+        "tn": 16337,
+        "tp": 93453
+      },
+      "pair_f1": 0.7493925664568382,
+      "pair_precision": 0.8951779761676693,
+      "pair_recall": 0.6444412263643511,
+      "perfect_root_fraction": 0.12931034482758622,
+      "perfect_roots": 15
+    },
+    "robust_z6": {
+      "cross_lineage_split_recall": 0.46462609970674484,
+      "macro_root_pair_f1": 0.8046418039669526,
+      "median_components_per_root": 1.0,
+      "pair_counts": {
+        "fn": 36306,
+        "fp": 14605,
+        "tn": 12675,
+        "tp": 108708
+      },
+      "pair_f1": 0.8102650870020535,
+      "pair_precision": 0.881561554742809,
+      "pair_recall": 0.7496379659894906,
+      "perfect_root_fraction": 0.10344827586206896,
+      "perfect_roots": 12
+    }
+  }
+}
