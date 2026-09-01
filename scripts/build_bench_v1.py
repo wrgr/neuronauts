@@ -278,10 +278,13 @@ def main() -> int:
     ap.add_argument("--seam-buffer-nm", type=float, default=DEFAULT_SEAM_BUFFER_NM)
     ap.add_argument("--limit", type=int, default=20_000,
                     help="per-region row cap (or per-tile cap with --tiled). "
-                         "Measured on this endpoint: limit=20,000 returns in "
-                         "~51s, limit=200,000 exceeds lineage.py's own 300s "
-                         "request timeout and returns nothing. Raise only with "
-                         "--tiled and narrow --tile-x-nm.")
+                         "Observed here: limit=20,000 returns in ~51s, "
+                         "limit=50,000 in ~261s, limit=200,000 exceeds "
+                         "lineage.py's own 300s timeout. Long requests are also "
+                         "unreliable through the egress proxy "
+                         "(ProxyError/RemoteDisconnected), and the cause of the "
+                         "latency is not isolated - 20,000 is simply what "
+                         "completes reliably. Raise it only if you verify it.")
     ap.add_argument("--side", default="pre", choices=["pre", "post"])
     ap.add_argument(
         "--min-syn-per-fragment", type=int, default=1,

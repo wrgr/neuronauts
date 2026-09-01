@@ -70,21 +70,35 @@ numbers were the optimistic ones.
 
 ## Honest limitations
 
-- **This is a 20,000-synapse sample per region, not full coverage, and the
-  sampled fraction is small.** Using EXP-052's documented density (~0.9 pre-side
-  synapses/µm³), P1c's 541,670 µm³ would hold on the order of 10⁵ synapses, so
-  20,000 covers only a few percent. (A direct density probe timed out, so that
-  is an inference from a documented figure, not a measurement.) The real
-  confuser population is therefore larger still and every precision figure is
-  optimistic. The clean fix for `bench_v2` is to size regions to the fetch
-  budget — a ~30 µm box where one ~20k fetch *is* the whole population, as
-  EXP-052 used — rather than sampling a large box. Counts here are lower bounds.
-- **Why the cap is 20,000.** Measured on this endpoint: `limit=20,000` returns
-  in ~51s, `limit=50,000` in ~261s, and `limit=200,000` exceeds `lineage.py`'s
-  own 300s request timeout and returns nothing. Response time tracks `limit`,
-  not bbox size — a *narrower* 10 µm tile at limit 50,000 timed out while a
-  20 µm tile succeeded. Deeper coverage needs many narrow tiles at ~20k each, or
-  a raised timeout.
+- **This is a 20,000-synapse sample per region, not full coverage.** Using
+  EXP-052's documented density (~0.9 pre-side synapses/µm³), P1c's 541,670 µm³
+  would hold on the order of 10⁵ synapses, so 20,000 would cover only a few
+  percent. **This remains an inference from a documented figure, not a
+  measurement** — every attempt to measure density directly (10 µm, 15 µm and
+  30 µm probe boxes) failed against the proxy behaviour described below, so the
+  sampled fraction is unverified. Either way the counts here are lower bounds
+  and every precision figure is optimistic, because a larger confuser population
+  can only hurt precision. Sizing regions to the fetch budget — a ~30 µm box
+  where one fetch *is* the whole population, as EXP-052 used — is the natural
+  `bench_v2` design, but note it is not yet demonstrated that such a box fetches
+  reliably here: the small-box probes are exactly the ones that failed.
+- **Why the cap is 20,000 — and what is NOT established.** Observed on this
+  endpoint: `limit=20,000` returned in ~51s, `limit=50,000` in ~261s, and
+  `limit=200,000` exceeded `lineage.py`'s 300s request timeout. I earlier wrote
+  that "response time tracks `limit`, not bbox size"; **that claim was wrong**,
+  generalised from two observations and contradicted by a 10 µm cube failing at
+  `limit=20,000` while a 40 µm-wide tile succeeded at the same limit.
+  Investigating further, a raw request for that same small box returned HTTP 200
+  in 85.6s, and a later attempt died with
+  `ProxyError(RemoteDisconnected)` — long-running requests are unreliable
+  through this session's egress proxy (the proxy itself reports healthy, with no
+  recent relay failures, so these are transient disconnects).
+  **The driver of latency and failure is not isolated.** What is established
+  empirically is only that `limit=20,000` is what completes reliably here, which
+  is what this dataset uses. Note also that `fetch_region_synapses` collapses
+  every failure mode — non-200, parse error, proxy disconnect — into `None`, so
+  a caller cannot distinguish "empty region" from "request died"; the builder
+  fails closed on `None` for exactly that reason.
 - **Merge-pair counts are sampling-density dependent.** Each P1 z-third sampled
   at 20,000 synapses yields as many or more pairs (16/32/22) than all of P1
   sampled at 20,000 (16), because a fixed sample of a smaller volume is denser.

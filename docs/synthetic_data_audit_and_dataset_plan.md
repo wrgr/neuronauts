@@ -388,13 +388,23 @@ and now has a dataset to run on.
   `[117, 943, 1300, 1507, 1621, 1718, 1822]`. The code only *warned* about this;
   it is now enforced by `verify_version_contract()`. A newer 1822 exists and is
   the natural `bench_v2` bump.
-- **The 20 µm operating point is a measured constraint, not a preference.**
+- **The 20,000 operating point is empirical; its cause is NOT isolated.**
   Same bbox: `limit=20,000` → 20,000 rows in 50.7s; `limit=50,000` → 260.9s;
-  `limit=200,000` → nothing, exceeding `lineage.py`'s own 300s timeout. Request
-  time tracks `limit`, not bbox size — a *narrower* 10 µm tile at limit 50,000
-  timed out while a 20 µm tile succeeded. This was our misconfiguration (the
-  tiled fetch defaults to `per_tile_limit=200_000`, incompatible with the
-  module's own timeout), not a server fault.
+  `limit=200,000` → nothing, exceeding `lineage.py`'s own 300s timeout. The
+  tiled fetch defaulting to `per_tile_limit=200_000` is therefore incompatible
+  with the module's own timeout — that part was our misconfiguration, not a
+  server fault, and it is fixed.
+  **Correction:** I initially wrote that "request time tracks `limit`, not bbox
+  size". That was generalised from two observations and is wrong — a 10 µm cube
+  later failed at `limit=20,000` while a 40 µm-wide tile succeeded at the same
+  limit. A raw request for that small box returned HTTP 200 in 85.6s on one
+  attempt and died with `ProxyError(RemoteDisconnected)` on another: long
+  requests are unreliable through this session's egress proxy, which itself
+  reports healthy with no recent relay failures. What is established is only
+  that `limit=20,000` completes reliably here. A related hazard:
+  `fetch_region_synapses` collapses non-200s, parse errors and proxy
+  disconnects alike into `None`, so callers cannot tell "empty region" from
+  "request died" — which is why the builder fails closed on `None`.
 - **Merge-pair counts are sampling-density dependent.** Each P1 z-third sampled
   at 20,000 synapses yields as many or more true merge pairs (16 / 32 / 22) than
   all of P1 sampled at 20,000 (16). A pair is observable only when *both*
