@@ -58,6 +58,7 @@ SELF_REFERENTIAL = {
     "treestitch/synthetic.py",  # declared synthetic world generator
     "treestitch/worldbuild.py", # defines frankenmerge_adjacent
     "tests/test_worldbuild.py", # unit tests for the generator itself
+    "tests/test_provenance_guardrails.py",  # asserts each rule fires
 }
 
 # Encoder-representation ablations: bisection is the stated task, not a
@@ -120,8 +121,16 @@ def iter_files(paths: list[str] | None) -> list[Path]:
     return sorted(out)
 
 
+def _rel(path: Path) -> str:
+    """Repo-relative path, or the absolute path for files outside the repo."""
+    try:
+        return path.relative_to(REPO).as_posix()
+    except ValueError:
+        return str(path)
+
+
 def lint_file(path: Path) -> list[tuple[int, str, str]]:
-    rel = path.relative_to(REPO).as_posix()
+    rel = _rel(path)
     if rel in SELF_REFERENTIAL:
         return []
     try:
@@ -167,8 +176,7 @@ def main() -> int:
     total = 0
     for f in iter_files(args.paths):
         for lineno, code, message in lint_file(f):
-            rel = f.relative_to(REPO).as_posix() if f.is_relative_to(REPO) else str(f)
-            print(f"{rel}:{lineno}: {code}: {message}")
+            print(f"{_rel(f)}:{lineno}: {code}: {message}")
             total += 1
 
     if total:
