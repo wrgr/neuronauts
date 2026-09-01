@@ -598,6 +598,8 @@ def fragment_completeness(
     the v117 root and the v1718 root are already identical — no merging with
     other fragments is needed, and it isn't a frankenmerge that needs splitting.
 
+    Delegates to :func:`neuronauts.metrics.completeness.fragment_completeness`.
+
     Parameters
     ----------
     root_label_map:
@@ -610,23 +612,9 @@ def fragment_completeness(
         ``True``  → fragment already correct, no edit needed.
         ``False`` → fragment needs merging with others, or is a frankenmerge.
     """
-    # Invert: v1718 → all v117 roots that map to it
-    v1718_to_v117s: dict[int, list[int]] = {}
-    for v117, v1718s in root_label_map.items():
-        for v1718 in v1718s:
-            v1718_to_v117s.setdefault(v1718, []).append(v117)
+    from neuronauts.metrics.completeness import fragment_completeness as _fc
 
-    result: dict[int, bool] = {}
-    for v117, v1718s in root_label_map.items():
-        if len(v1718s) != 1:
-            # frankenmerge: straddles two v1718 neurons → needs splitting
-            result[v117] = False
-            continue
-        (v1718,) = v1718s
-        # complete only if this is the sole contributor to the v1718 neuron
-        result[v117] = len(v1718_to_v117s[v1718]) == 1
-
-    return result
+    return _fc(root_label_map)
 
 
 def pred_fragment_completeness(
@@ -642,6 +630,8 @@ def pred_fragment_completeness(
     fragment.  Matches the semantics of ``fragment_completeness`` so the two dicts
     can be compared by ``completeness_metrics``.
 
+    Delegates to :func:`neuronauts.metrics.completeness.pred_fragment_completeness`.
+
     Parameters
     ----------
     fragment_id:
@@ -655,17 +645,9 @@ def pred_fragment_completeness(
     dict[int, bool]
         ``{v117_root: is_predicted_complete}``
     """
-    frag_clusters: dict[int, set] = {}
-    cluster_frags: dict[int, set] = {}
-    for f, c in zip(fragment_id.tolist(), pred_labels.tolist()):
-        if int(c) == ignore_label:
-            continue
-        frag_clusters.setdefault(int(f), set()).add(int(c))
-        cluster_frags.setdefault(int(c), set()).add(int(f))
-    return {
-        f: (len(cs) == 1 and len(cluster_frags[next(iter(cs))]) == 1)
-        for f, cs in frag_clusters.items()
-    }
+    from neuronauts.metrics.completeness import pred_fragment_completeness as _pfc
+
+    return _pfc(fragment_id, pred_labels, ignore_label=ignore_label)
 
 
 def completeness_metrics(
@@ -673,6 +655,10 @@ def completeness_metrics(
     pred_completeness: dict[int, bool],
 ) -> dict:
     """Precision / recall / F1 for completeness prediction.
+
+    Delegates to :func:`neuronauts.metrics.completeness.completeness_metrics`,
+    with the ``tp_complete``/``fp_complete``/``fn_complete``/``tn_complete``
+    key names this module has historically used.
 
     Parameters
     ----------
@@ -683,37 +669,9 @@ def completeness_metrics(
 
     Returns
     -------
-    dict with keys: precision, recall, f1, accuracy, n_complete_gt, n_fragments.
+    dict with keys: precision, recall, f1, accuracy, n_complete_gt, n_fragments,
+    tp_complete, fp_complete, fn_complete, tn_complete.
     """
-    gt = fragment_completeness(root_label_map)
-    common = [f for f in gt if f in pred_completeness]
-    if not common:
-        return {"precision": float("nan"), "recall": float("nan"),
-                "f1": float("nan"), "accuracy": float("nan"),
-                "n_complete_gt": sum(gt.values()), "n_fragments": len(gt)}
+    from neuronauts.metrics.completeness import completeness_metrics as _cm
 
-    y_true = np.array([gt[f] for f in common], dtype=bool)
-    y_pred = np.array([pred_completeness[f] for f in common], dtype=bool)
-
-    tp = int((y_true & y_pred).sum())
-    fp = int((~y_true & y_pred).sum())
-    fn = int((y_true & ~y_pred).sum())
-    acc = float((y_true == y_pred).mean())
-    prec = tp / (tp + fp) if (tp + fp) > 0 else float("nan")
-    rec  = tp / (tp + fn) if (tp + fn) > 0 else float("nan")
-    f1   = (2 * prec * rec / (prec + rec)
-            if prec + rec > 0 else float("nan"))
-
-    tn = int((~y_true & ~y_pred).sum())
-    return {
-        "precision": prec,
-        "recall": rec,
-        "f1": f1,
-        "accuracy": acc,
-        "n_complete_gt": int(y_true.sum()),
-        "n_fragments": len(common),
-        "tp_complete": tp,
-        "fp_complete": fp,
-        "fn_complete": fn,
-        "tn_complete": tn,
-    }
+    return _cm(root_label_map, pred_completeness)

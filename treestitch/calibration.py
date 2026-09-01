@@ -23,8 +23,6 @@ Guo et al. (2017) "On Calibration of Modern Neural Networks", ICML.
 
 from __future__ import annotations
 
-import math
-
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -194,11 +192,10 @@ def reliability_diagram(
 
 
 def expected_calibration_error(diag: dict) -> float:
-    """Weighted mean absolute calibration error (ECE) from a reliability diagram."""
-    total = diag["counts"].sum()
-    if total == 0:
-        return float("nan")
-    valid = ~np.isnan(diag["frac_pos"])
-    ece = (np.abs(diag["frac_pos"][valid] - diag["mean_conf"][valid])
-           * diag["counts"][valid]).sum() / total
-    return float(ece)
+    """Weighted mean absolute calibration error (ECE) from a reliability diagram.
+
+    Delegates to :func:`neuronauts.metrics.calibration.expected_calibration_error`.
+    """
+    from neuronauts.metrics.calibration import expected_calibration_error as _ece
+
+    return _ece(diag)
