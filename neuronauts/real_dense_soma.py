@@ -7,6 +7,7 @@ trained grammar model.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from heapq import heappop, heappush
@@ -39,6 +40,16 @@ class CandidateEdge:
     grammar_logit: float
     tangent_alignment: float
     score: float
+
+
+def true_merge_pair_count(fragments: Iterable[Fragment]) -> int:
+    """Count labeled v117 fragment pairs that should join at the target version."""
+    counts = Counter(
+        int(fragment.gt_label)
+        for fragment in fragments
+        if int(fragment.gt_label) > 0
+    )
+    return int(sum(count * (count - 1) // 2 for count in counts.values()))
 
 
 def assert_real_root_ids(root_ids: Iterable[int]) -> None:

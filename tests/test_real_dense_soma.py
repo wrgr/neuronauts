@@ -8,6 +8,7 @@ from neuronauts.real_dense_soma import (
     partition_metrics,
     single_soma_compliance,
     soma_seeded_assemble,
+    true_merge_pair_count,
 )
 
 
@@ -54,3 +55,15 @@ def test_unknown_truth_is_retained_but_excluded_from_metrics():
     metrics = partition_metrics(fragments, prediction)
     assert metrics["n_labeled_fragments"] == 2
     assert metrics["ari"] == pytest.approx(1.0)
+
+
+def test_true_merge_pair_count_ignores_unknown_labels():
+    base = 1 << 50
+    fragments = [
+        fragment(base + 1, truth=11),
+        fragment(base + 2, truth=11),
+        fragment(base + 3, truth=11),
+        fragment(base + 4, truth=22),
+        fragment(base + 5, truth=0),
+    ]
+    assert true_merge_pair_count(fragments) == 3
