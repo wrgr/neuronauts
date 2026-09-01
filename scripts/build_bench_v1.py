@@ -215,9 +215,25 @@ def load_region(
     if not keep.any():
         raise SystemExit(f"[{name}] no fragment reached min_syn_per_fragment.")
 
+    # Report exactly what the sliver filter costs. A filter that removes most
+    # of the candidate population makes the benchmark easier than the task;
+    # that must never be a silent default again.
+    pre = region_stats(base_roots, label_roots)
+    post = region_stats(base_roots[keep], label_roots[keep])
+    if pre["n_base_roots"] != post["n_base_roots"]:
+        pr, po = pre["n_base_roots"], post["n_base_roots"]
+        tr, to = pre["n_true_merge_pairs"], post["n_true_merge_pairs"]
+        print(f"    [filter] min_syn>={min_syn_per_fragment} keeps "
+              f"{po:,}/{pr:,} v117 roots ({100*po/max(1,pr):.1f}%) and "
+              f"{to:,}/{tr:,} true merge pairs ({100*to/max(1,tr):.1f}%) — "
+              f"discarding {pr-po:,} candidate roots and {tr-to:,} positives",
+              flush=True)
+
     return {
         "region": name,
         "bbox_nm": bbox,
+        "population_unfiltered": pre,
+        "min_syn_per_fragment": min_syn_per_fragment,
         "positions_nm": positions[keep],
         "supervoxel_ids": svids[keep],
         "synapse_ids": syn_ids[keep],
@@ -267,7 +283,15 @@ def main() -> int:
                          "request timeout and returns nothing. Raise only with "
                          "--tiled and narrow --tile-x-nm.")
     ap.add_argument("--side", default="pre", choices=["pre", "post"])
-    ap.add_argument("--min-syn-per-fragment", type=int, default=3)
+    ap.add_argument(
+        "--min-syn-per-fragment", type=int, default=1,
+        help="Keep v117 roots with at least this many synapses. DEFAULT 1 = "
+             "keep everything. Raising it silently removes the sliver/"
+             "singleton population that IS the confuser set (EXP-052: 10,218 "
+             "singleton confusers vs 1,023 usable roots), and removes true "
+             "positives with it. Measured on P1c: min_syn=3 kept 13.2% of "
+             "roots and only 32% of true merge pairs. The build reports the "
+             "cost of whatever you choose.")
     ap.add_argument("--tiled", action="store_true", default=False,
                     help="fetch by x-tiles for fuller coverage. Off by "
                          "default: a wide tile at a high --limit exceeds the "
@@ -462,6 +486,7 @@ def main() -> int:
                     "stats": loaded[n]["stats"],
                     "limit_reached": loaded[n]["limit_reached"],
                     "n_dropped_by_dedup": loaded[n].get("n_dropped_by_dedup", 0),
+                    "population_unfiltered": loaded[n]["population_unfiltered"],
                 }
                 for n in names
             },

@@ -213,7 +213,11 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=20_000,
                     help="max synapses fetched per region")
     ap.add_argument("--side", default="pre", choices=["pre", "post"])
-    ap.add_argument("--min-syn-per-fragment", type=int, default=3)
+    ap.add_argument("--min-syn-per-fragment", type=int, default=1,
+                    help="Keep roots with at least this many synapses. "
+                         "DEFAULT 1 = keep everything. Raising it hides "
+                         "the sliver/singleton confuser population and "
+                         "the true positives that involve it.")
     ap.add_argument("--label-version", type=int, default=LABEL_VERSION)
     ap.add_argument("--base-version", type=int, default=BASE_VERSION)
     ap.add_argument("--out-json", default="results/region_inventory.json")
