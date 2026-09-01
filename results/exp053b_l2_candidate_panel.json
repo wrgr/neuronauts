@@ -1,0 +1,386 @@
+{
+  "best_recall_configuration": {
+    "candidate_pairs": 0,
+    "cone_degrees": 30.0,
+    "panel_size": {
+      "max": 0,
+      "median": 0.0,
+      "p90": 0.0
+    },
+    "radius_um": 0.5,
+    "recall_all_true_pairs": 0.0,
+    "recall_l2_covered_true_pairs": 0.0,
+    "true_pairs_recovered": 0
+  },
+  "elapsed_seconds": 593.0351946353912,
+  "experiment": "EXP-053B real-L2 candidate-panel recall",
+  "grid": {
+    "r0.5_cone180": {
+      "candidate_pairs": 5,
+      "panel_size": {
+        "max": 1,
+        "median": 0.0,
+        "p90": 0.0
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r0.5_cone30": {
+      "candidate_pairs": 0,
+      "panel_size": {
+        "max": 0,
+        "median": 0.0,
+        "p90": 0.0
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r0.5_cone45": {
+      "candidate_pairs": 0,
+      "panel_size": {
+        "max": 0,
+        "median": 0.0,
+        "p90": 0.0
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r0.5_cone60": {
+      "candidate_pairs": 1,
+      "panel_size": {
+        "max": 1,
+        "median": 0.0,
+        "p90": 0.0
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r0.5_cone90": {
+      "candidate_pairs": 2,
+      "panel_size": {
+        "max": 1,
+        "median": 0.0,
+        "p90": 0.0
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r10_cone180": {
+      "candidate_pairs": 15292,
+      "panel_size": {
+        "max": 186,
+        "median": 106.0,
+        "p90": 146.70000000000002
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r10_cone30": {
+      "candidate_pairs": 199,
+      "panel_size": {
+        "max": 8,
+        "median": 1.0,
+        "p90": 3.0
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r10_cone45": {
+      "candidate_pairs": 859,
+      "panel_size": {
+        "max": 19,
+        "median": 6.0,
+        "p90": 11.0
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r10_cone60": {
+      "candidate_pairs": 2309,
+      "panel_size": {
+        "max": 37,
+        "median": 16.0,
+        "p90": 24.700000000000017
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r10_cone90": {
+      "candidate_pairs": 7405,
+      "panel_size": {
+        "max": 89,
+        "median": 53.0,
+        "p90": 69.0
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r1_cone180": {
+      "candidate_pairs": 38,
+      "panel_size": {
+        "max": 3,
+        "median": 0.0,
+        "p90": 1.0
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r1_cone30": {
+      "candidate_pairs": 0,
+      "panel_size": {
+        "max": 0,
+        "median": 0.0,
+        "p90": 0.0
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r1_cone45": {
+      "candidate_pairs": 3,
+      "panel_size": {
+        "max": 1,
+        "median": 0.0,
+        "p90": 0.0
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r1_cone60": {
+      "candidate_pairs": 5,
+      "panel_size": {
+        "max": 2,
+        "median": 0.0,
+        "p90": 0.0
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r1_cone90": {
+      "candidate_pairs": 15,
+      "panel_size": {
+        "max": 2,
+        "median": 0.0,
+        "p90": 0.700000000000017
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r2.5_cone180": {
+      "candidate_pairs": 412,
+      "panel_size": {
+        "max": 11,
+        "median": 3.0,
+        "p90": 5.0
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r2.5_cone30": {
+      "candidate_pairs": 4,
+      "panel_size": {
+        "max": 1,
+        "median": 0.0,
+        "p90": 0.0
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r2.5_cone45": {
+      "candidate_pairs": 16,
+      "panel_size": {
+        "max": 2,
+        "median": 0.0,
+        "p90": 1.0
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r2.5_cone60": {
+      "candidate_pairs": 50,
+      "panel_size": {
+        "max": 2,
+        "median": 0.0,
+        "p90": 1.0
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r2.5_cone90": {
+      "candidate_pairs": 202,
+      "panel_size": {
+        "max": 5,
+        "median": 1.0,
+        "p90": 3.0
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r2_cone180": {
+      "candidate_pairs": 230,
+      "panel_size": {
+        "max": 6,
+        "median": 1.0,
+        "p90": 3.0
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r2_cone30": {
+      "candidate_pairs": 2,
+      "panel_size": {
+        "max": 1,
+        "median": 0.0,
+        "p90": 0.0
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r2_cone45": {
+      "candidate_pairs": 10,
+      "panel_size": {
+        "max": 1,
+        "median": 0.0,
+        "p90": 0.0
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r2_cone60": {
+      "candidate_pairs": 25,
+      "panel_size": {
+        "max": 2,
+        "median": 0.0,
+        "p90": 1.0
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r2_cone90": {
+      "candidate_pairs": 113,
+      "panel_size": {
+        "max": 4,
+        "median": 1.0,
+        "p90": 2.0
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r5_cone180": {
+      "candidate_pairs": 2373,
+      "panel_size": {
+        "max": 35,
+        "median": 16.0,
+        "p90": 26.0
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r5_cone30": {
+      "candidate_pairs": 34,
+      "panel_size": {
+        "max": 3,
+        "median": 0.0,
+        "p90": 1.0
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r5_cone45": {
+      "candidate_pairs": 128,
+      "panel_size": {
+        "max": 5,
+        "median": 1.0,
+        "p90": 2.0
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r5_cone60": {
+      "candidate_pairs": 358,
+      "panel_size": {
+        "max": 9,
+        "median": 2.0,
+        "p90": 5.0
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    },
+    "r5_cone90": {
+      "candidate_pairs": 1207,
+      "panel_size": {
+        "max": 18,
+        "median": 8.0,
+        "p90": 13.0
+      },
+      "recall_all_true_pairs": 0.0,
+      "recall_l2_covered_true_pairs": 0.0,
+      "true_pairs_recovered": 0
+    }
+  },
+  "population": {
+    "eligible_roots": 1023,
+    "endpoint_paths": 2178,
+    "l2_covered_roots": 284,
+    "l2_covered_true_pairs": 1,
+    "raw_pairs_within_max_radius": 15292,
+    "synapses": 24573,
+    "true_merge_pairs": 14
+  },
+  "provenance": {
+    "bbox_nm": [
+      [
+        844776.0,
+        700136.0,
+        875040.0
+      ],
+      [
+        874776.0,
+        730136.0,
+        905040.0
+      ]
+    ],
+    "candidate_generation_used_target_lineage": false,
+    "geometry_halo_nm": 10000.0,
+    "git_commit": "13a7e28642281fa8b636e11339fdd766e30a4c6e",
+    "l2_topology": "MST over real bounded L2 rep_coord_nm points",
+    "labels_used_only_for_evaluation": true,
+    "root_selection": "synapse-table v117 roots with >=10 observations, plus soma roots",
+    "synthetic_fallback": false,
+    "target_timestamp": 1745921401,
+    "target_version": 1412
+  },
+  "success_criterion": {
+    "max_median_panel_size": 20,
+    "passed": false,
+    "required_recall": 0.9
+  }
+}

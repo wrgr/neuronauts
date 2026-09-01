@@ -33,6 +33,7 @@ from neuronauts.real_dense_soma import (
     single_soma_compliance,
     skeleton_from_observed_points,
     soma_seeded_assemble,
+    true_merge_pair_count,
 )
 from neuronauts.shared_grammar_model import load_shared_grammar_model
 from treestitch.realworld import _load_nucleus_somas
@@ -43,6 +44,13 @@ def parse_bbox(value: str) -> tuple:
     if len(values) != 6:
         raise argparse.ArgumentTypeError("bbox requires x0,y0,z0,x1,y1,z1")
     return values[:3], values[3:]
+
+
+def parse_point(value: str) -> tuple[float, float, float]:
+    values = tuple(float(item) for item in value.split(","))
+    if len(values) != 3:
+        raise argparse.ArgumentTypeError("point requires x,y,z")
+    return values
 
 
 def sha256(path: Path) -> str:
@@ -122,16 +130,34 @@ def fetch_candidates(
     return point_map, label_map, context
 
 
-def exact_soma_counts(bbox: tuple, *, token: str) -> dict[int, int]:
+def exact_soma_lineage(
+    bbox: tuple,
+    *,
+    target_timestamp: int,
+    token: str,
+) -> tuple[dict[int, int], dict[int, int]]:
+    """Return exact v117 and target-version soma-root counts in ``bbox``."""
     somas = _load_nucleus_somas()
     lower, upper = np.asarray(bbox[0]), np.asarray(bbox[1])
     positions = np.stack(
         [somas["x_nm"], somas["y_nm"], somas["z_nm"]], axis=1)
     inside = np.all((positions >= lower) & (positions < upper), axis=1)
-    roots = L.roots_at(somas["sv"][inside], L.V117_TIMESTAMP, token=token)
-    if roots is None:
-        raise RuntimeError("exact nucleus-supervoxel to v117 mapping failed")
-    return dict(Counter(int(root) for root in roots if int(root) > 0))
+    supervoxels = somas["sv"][inside]
+    v117_roots = L.roots_at(supervoxels, L.V117_TIMESTAMP, token=token)
+    target_roots = L.roots_at(supervoxels, target_timestamp, token=token)
+    if v117_roots is None or target_roots is None:
+        raise RuntimeError("exact nucleus-supervoxel lineage mapping failed")
+    return (
+        dict(Counter(int(root) for root in v117_roots if int(root) > 0)),
+        dict(Counter(int(root) for root in target_roots if int(root) > 0)),
+    )
+
+
+def exact_soma_counts(bbox: tuple, *, token: str) -> dict[int, int]:
+    """Backward-compatible v117-only soma count helper."""
+    counts, _ = exact_soma_lineage(
+        bbox, target_timestamp=L.V117_TIMESTAMP, token=token)
+    return counts
 
 
 def circuit_f1(context: dict, prediction: dict[int, int]) -> dict:
@@ -187,6 +213,15 @@ def main() -> int:
     parser.add_argument("--max-distance-nm", type=float, default=2500.0)
     parser.add_argument("--min-score", type=float, default=0.0)
     parser.add_argument("--score-sweep", default="0,1,2,3,4,5,6")
+    parser.add_argument("--experiment-id", default="EXP-051")
+    parser.add_argument("--anchor-soma-nm", type=parse_point)
+    parser.add_argument("--anchor-target-root", type=int, default=0)
+    parser.add_argument(
+        "--min-true-merge-pairs", type=int, default=0,
+        help=("fail before grammar inference unless the active evaluation "
+              "population contains at least this many v117 fragment pairs "
+              "that share a target root"),
+    )
     parser.add_argument("--max-fragments", type=int, default=0,
                         help="debug-only cap; zero uses every eligible root")
     parser.add_argument("--token-stdin", action="store_true")
@@ -205,6 +240,13 @@ def main() -> int:
         raise SystemExit("target timestamp unavailable; refusing label substitution")
     if not args.checkpoint.is_file():
         raise SystemExit(f"trained grammar checkpoint missing: {args.checkpoint}")
+    if args.min_true_merge_pairs < 0:
+        raise SystemExit("--min-true-merge-pairs must be nonnegative")
+    if args.anchor_soma_nm is not None:
+        center = 0.5 * (
+            np.asarray(args.bbox_nm[0]) + np.asarray(args.bbox_nm[1]))
+        if not np.allclose(center, np.asarray(args.anchor_soma_nm), atol=1.0):
+            raise SystemExit("bbox is not centered on --anchor-soma-nm")
 
     print("[1/6] fetching real synapses and exact endpoint lineage", flush=True)
     point_map, label_map, context = fetch_candidates(
@@ -214,12 +256,17 @@ def main() -> int:
     print(f"      synapses={len(context['synapse_ids'])}; roots={len(all_roots)}", flush=True)
 
     print("[2/6] resolving exact soma seeds", flush=True)
-    soma_counts = exact_soma_counts(args.bbox_nm, token=token)
+    soma_counts, target_soma_counts = exact_soma_lineage(
+        args.bbox_nm, target_timestamp=target_timestamp, token=token)
     seeds = sorted(set(all_roots) & set(soma_counts))
     if not seeds:
         raise SystemExit("no exact soma seed intersects the candidate population")
     if any(soma_counts[root] > 1 for root in seeds):
         raise SystemExit("multi-soma v117 root cannot be assembled atomically")
+    if (args.anchor_target_root
+            and args.anchor_target_root not in target_soma_counts):
+        raise SystemExit(
+            "declared proofread anchor root is not a nucleus root in bbox")
 
     selected = sorted(
         {root for root in all_roots
@@ -246,6 +293,19 @@ def main() -> int:
             root, vertices, edges, soma_counts.get(root, 0), label, purity))
     if not (set(seeds) & {fragment.root_id for fragment in fragments}):
         raise SystemExit("no soma seed has enough real observations for a path")
+
+    target_counts = Counter(
+        fragment.gt_label for fragment in fragments if fragment.gt_label > 0)
+    true_merge_pairs = true_merge_pair_count(fragments)
+    print(
+        f"      pre-inference recovery signal: true merge pairs={true_merge_pairs}; "
+        f"mixed-lineage roots={contaminated}",
+        flush=True,
+    )
+    if true_merge_pairs < args.min_true_merge_pairs:
+        raise SystemExit(
+            "insufficient real merge opportunities before inference: "
+            f"found {true_merge_pairs}, require {args.min_true_merge_pairs}")
 
     print("[4/6] scoring joins with the trained grammar", flush=True)
     grammar = load_shared_grammar_model(args.checkpoint)
@@ -280,16 +340,14 @@ def main() -> int:
             fragments, edges, min_score=threshold))
         sweep[str(threshold)] = partition_metrics(fragments, sweep_prediction)
 
-    target_counts = Counter(
-        fragment.gt_label for fragment in fragments if fragment.gt_label > 0)
-    true_merge_pairs = int(sum(
-        count * (count - 1) // 2 for count in target_counts.values()))
     side_um = (np.asarray(args.bbox_nm[1]) - np.asarray(args.bbox_nm[0])) / 1000.0
     volume_um3 = float(np.prod(side_um))
     commit = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     result = {
-        "experiment": "EXP-051 real synapse-dense v117 soma-seeded grammar",
+        "experiment": (
+            f"{args.experiment_id} real synapse-dense v117 "
+            "soma-seeded grammar"),
         "provenance": {
             "git_commit": commit,
             "bbox_nm": [list(args.bbox_nm[0]), list(args.bbox_nm[1])],
@@ -308,6 +366,16 @@ def main() -> int:
             "ground_truth_used_during_inference": False,
             "synthetic_fallback": False,
             "score_sweep_is_post_hoc": True,
+            "benchmark_selection_used_target_lineage": bool(
+                args.anchor_target_root or args.min_true_merge_pairs),
+            "ground_truth_signal_checked_before_inference": bool(
+                args.min_true_merge_pairs),
+            "minimum_true_merge_pairs_required": args.min_true_merge_pairs,
+            "anchor_soma_nm": (
+                list(args.anchor_soma_nm)
+                if args.anchor_soma_nm is not None else None),
+            "anchor_target_root": (
+                args.anchor_target_root if args.anchor_target_root else None),
         },
         "population": {
             "volume_um3": volume_um3,

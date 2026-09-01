@@ -1,0 +1,22 @@
+{
+  "experiment": "EXP-054 fixed-panel scorer bake-off",
+  "interpretation": "No scorer comparison was run because a panel without sufficient positive coverage cannot estimate discrimination or calibration.",
+  "prerequisite_gate": {
+    "failures": [
+      "covered positives 1 < 10",
+      "candidate recall 0.000 < 0.900"
+    ],
+    "observed_candidate_recall": 0.0,
+    "observed_covered_positives": 1,
+    "passed": false,
+    "required_candidate_recall": 0.9,
+    "required_covered_positives": 10
+  },
+  "provenance": {
+    "git_commit": "32e41a032994d5617361ef2aa6d6d0c1e9c0058d",
+    "input": "results/exp053b_l2_candidate_panel.json",
+    "synthetic_fallback": false
+  },
+  "scorer_metrics": {},
+  "status": "prerequisite_failed"
+}
