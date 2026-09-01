@@ -296,7 +296,8 @@ def render_text(root: Optional[Path] = None, *, show_experiments: bool = True) -
     total = sum(p.total for p in phases)
 
     out = ["", "=" * 72,
-           f" neuronauts status   consolidation {done}/{total} checks", "=" * 72]
+           f" ConnectomeForge status   consolidation {done}/{total} checks",
+           "=" * 72]
     for ph in phases:
         out.append(f"\n {_BOX[ph.state]} Phase {ph.key} - {ph.title}"
                    f"   ({ph.done}/{ph.total})")
@@ -326,7 +327,7 @@ def render_markdown(root: Optional[Path] = None) -> str:
     total = sum(p.total for p in phases)
     s = summary(root)
 
-    md = [f"# Status\n",
+    md = [f"# ConnectomeForge status\n",
           f"Derived from the repository, not hand-maintained "
           f"(`scripts/status.py`).\n",
           f"**Consolidation:** {done}/{total} checks. "
@@ -383,7 +384,7 @@ def write_json(path: str | Path, root: Optional[Path] = None) -> Path:
 # shareable board
 # ---------------------------------------------------------------------------
 
-_HTML_HEAD = """<title>Neuronauts Progress</title>
+_HTML_HEAD = """<title>ConnectomeForge Progress</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
 <style>
@@ -460,7 +461,7 @@ def render_html(root: Optional[Path] = None) -> str:
     out = [_HTML_HEAD, '<div class="wrap">',
            '<div style="font-family:\'IBM Plex Mono\',monospace;font-size:12px;'
            'letter-spacing:.08em;text-transform:uppercase;color:var(--muted)">'
-           'neuronauts</div>',
+           'connectomeforge</div>',
            "<h1>Progress</h1>",
            '<p class="sub">Every line is read from the repository. A phase is '
            'done when the thing it promised is on disk; an experiment has a '

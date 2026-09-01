@@ -187,8 +187,8 @@ def test_checks_are_derived_from_disk_not_asserted(tmp_path):
 
 def test_rendering_does_not_crash_on_an_empty_tree(tmp_path):
     tracker._cache["collect"] = (-1, 0)
-    assert "neuronauts status" in tracker.render_text(tmp_path,
-                                                      show_experiments=False)
+    assert "ConnectomeForge status" in tracker.render_text(
+        tmp_path, show_experiments=False)
     assert "| Phase |" in tracker.render_markdown(tmp_path)
     d = tracker.as_dict(tmp_path)
     assert {"consolidation", "experiments", "summary", "repo"} <= set(d)

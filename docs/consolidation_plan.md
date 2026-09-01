@@ -7,6 +7,34 @@
 > live hypothesis against one substrate, one metric package, and one baseline
 > ladder. Companion HTML version published as an artifact.
 
+## 0a. The name: ConnectomeForge
+
+The thing being built here — the label-blind v117 atom substrate, its ground-
+truth overlay, the fixed candidate panels, the one metric package, and the
+registered experiment program that runs against them — is **ConnectomeForge**.
+
+Naming it matters because it is a benchmark suite and the field's obvious names
+are taken: *ConnectomeBench* and *ConnectomeBench2* are existing published
+benchmarks (the latter is the 716,485-decision corpus this plan proposes to
+import in EXP-057B), and "bench" is crowded generally. Citing someone else's
+benchmark while our own suite has no name of its own is how the two get
+conflated in a paper.
+
+*Forge* is the right register for what this is: not a leaderboard, but the
+place the substrate is made and tested. Where this document says "the harness",
+read ConnectomeForge.
+
+Scope of the name, so it does not sprawl:
+
+| Is ConnectomeForge | Is not |
+|---|---|
+| `neuronauts/harness/` — population, geometry, topology, labels, split, panels | `neuronauts/metrics/` — a general metric package, usable outside it |
+| The EXP-057…069 program and its registry | `neuronauts/report/`, `neuronauts/meshing/` — general tooling |
+| `results/RESULTS.md` and the per-experiment records | The retired `attic/` line |
+
+The Python package stays `neuronauts.harness` for now; renaming it is a
+separate, mechanical change and should not ride along with research work.
+
 ## 0. What this plan asserts
 
 1. The repo is ~116k lines of Python carrying **three architectural regimes**
