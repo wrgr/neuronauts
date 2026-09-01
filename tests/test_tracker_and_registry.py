@@ -33,12 +33,13 @@ def test_ids_are_unique():
 def test_every_prerequisite_is_a_registered_experiment():
     known = {e.id for e in reg.REGISTRY}
     for e in reg.REGISTRY:
-        for dep in e.spec.requires:
+        for dep in list(e.spec.requires) + list(e.spec.requires_ran):
             assert dep in known, f"{e.id} requires unregistered {dep}"
 
 
 def test_the_dependency_graph_is_acyclic():
-    dep = {e.id: set(e.spec.requires) for e in reg.REGISTRY}
+    dep = {e.id: set(e.spec.requires) | set(e.spec.requires_ran)
+           for e in reg.REGISTRY}
     resolved: set[str] = set()
     for _ in range(len(dep) + 1):
         step = {k for k, v in dep.items() if v <= resolved}
@@ -52,7 +53,7 @@ def test_prerequisites_come_earlier_in_program_order():
     """Reading the registry top to bottom must be a runnable order."""
     seen: set[str] = set()
     for e in reg.REGISTRY:
-        for d in e.spec.requires:
+        for d in list(e.spec.requires) + list(e.spec.requires_ran):
             assert d in seen, f"{e.id} requires {d}, which is listed later"
         seen.add(e.id)
 
@@ -73,34 +74,71 @@ def test_state_reads_a_passing_result_from_disk(tmp_path):
     assert reg.state(reg.by_id("EXP-057"), tmp_path)[0] == "passed"
 
 
-def test_next_runnable_unlocks_as_upstream_results_land(tmp_path):
-    """The autonomy primitive: satisfy a prerequisite, more becomes ready."""
-    for name in ("population.npz",):
-        (tmp_path / "data" / "substrate" / "c100um").mkdir(parents=True,
-                                                           exist_ok=True)
-        (tmp_path / "data" / "substrate" / "c100um" / name).write_bytes(b"0")
-    (tmp_path / "data" / "substrate" / "topology").mkdir(parents=True)
+def _substrate(tmp_path):
+    """The files series A declares as inputs."""
+    (tmp_path / "data" / "substrate" / "c100um").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "data" / "substrate" / "c100um" / "population.npz").write_bytes(b"0")
+    (tmp_path / "data" / "substrate" / "c100um" / "labels_v1822.npz").write_bytes(b"0")
+    (tmp_path / "data" / "substrate" / "topology").mkdir(parents=True, exist_ok=True)
     (tmp_path / "data" / "substrate" / "topology" / "k10.npz").write_bytes(b"0")
     (tmp_path / "results").mkdir(exist_ok=True)
     (tmp_path / "results" / "atom_labels_v1822.json").write_text("{}")
 
+
+def _put(tmp_path, exp_id, status):
+    d = tmp_path / "results" / exp_id
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "result.json").write_text(json.dumps({"status": status}))
+
+
+def test_next_runnable_is_the_autonomy_primitive(tmp_path):
+    """Run one, ask again: what has run leaves the set, what it unlocks joins.
+
+    A completed experiment is no longer "ready" -- it has a status -- so the
+    ready set is what to do next, not a backlog.
+    """
+    _substrate(tmp_path)
     before = {e.id for e in reg.next_runnable(tmp_path)}
-    d = tmp_path / "results" / "EXP-057"
-    d.mkdir(parents=True)
-    (d / "result.json").write_text(json.dumps({"status": "passed"}))
+    assert "EXP-057" in before, "the substrate experiment should start ready"
+
+    _put(tmp_path, "EXP-057", "passed")
     after = {e.id for e in reg.next_runnable(tmp_path)}
-    assert after >= before
-    # EXP-058 depends only on EXP-057 and the two files above
-    assert "EXP-058" in after or reg.by_id("EXP-058").module is None
+    assert "EXP-057" not in after, "a finished experiment is not still 'ready'"
+    assert reg.state(reg.by_id("EXP-057"), tmp_path)[0] == "passed"
+
+    # Anything that joined must depend on EXP-057; nothing unlocks by accident.
+    for eid in after - before:
+        e = reg.by_id(eid)
+        assert "EXP-057" in list(e.spec.requires) + list(e.spec.requires_ran)
 
 
-def test_a_failed_upstream_does_not_unlock_downstream(tmp_path):
-    d = tmp_path / "results" / "EXP-057"
-    d.mkdir(parents=True)
-    (d / "result.json").write_text(json.dumps({"status": "failed"}))
-    state, why = reg.state(reg.by_id("EXP-058"), tmp_path)
+def test_a_failed_upstream_blocks_a_strict_dependent(tmp_path):
+    """EXP-062 needs EXP-057 to have *passed*: it is what the failure blocks."""
+    _substrate(tmp_path)
+    _put(tmp_path, "EXP-057", "failed")
+    state, why = reg.state(reg.by_id("EXP-062"), tmp_path)
     assert state == "blocked"
     assert any("EXP-057" in w for w in why)
+
+
+def test_a_failed_upstream_does_not_block_a_ran_dependent(tmp_path):
+    """EXP-060 needs the overlay EXP-057 produced, not the bar it missed.
+
+    This is the whole point of the distinction: one badly-scoped bar must not
+    halt the paths its failure does not touch.
+    """
+    _substrate(tmp_path)
+    _put(tmp_path, "EXP-057", "failed")
+    state, why = reg.state(reg.by_id("EXP-060"), tmp_path)
+    assert state != "blocked", why
+    assert "EXP-057" in reg.by_id("EXP-060").spec.requires_ran
+
+
+def test_a_ran_dependent_is_still_blocked_before_upstream_runs(tmp_path):
+    _substrate(tmp_path)
+    state, why = reg.state(reg.by_id("EXP-060"), tmp_path)
+    assert state == "blocked"
+    assert any("has not run" in w for w in why)
 
 
 def test_summary_counts_every_entry(tmp_path):

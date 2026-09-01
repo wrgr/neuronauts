@@ -179,3 +179,57 @@ def test_check_prerequisites_reports_every_unmet_dependency(tmp_path):
         spec(requires=["EXP-A", "EXP-B", "EXP-C"]), tmp_path)
     assert len(problems) == 2
     assert any("EXP-B" in p for p in problems) and any("EXP-C" in p for p in problems)
+
+
+# ---------------------------------------------------------------------------
+# "must have passed" vs "must have run"
+# ---------------------------------------------------------------------------
+
+def test_requires_ran_is_satisfied_by_a_failed_upstream(tmp_path):
+    """A failed bar must not halt a path its failure does not touch.
+
+    EXP-057 failed a bar about label *density*. Candidate generation needs the
+    overlay it produced, not the density it measured.
+    """
+    write_upstream(tmp_path, "EXP-057", STATUS_FAILED)
+    payload = run_experiment(spec(requires_ran=["EXP-057"]), ok,
+                             root=tmp_path, verbose=False)
+    assert payload["status"] == STATUS_PASSED
+
+
+def test_requires_ran_still_blocks_when_upstream_never_ran(tmp_path):
+    payload = run_experiment(spec(requires_ran=["EXP-057"]), ok,
+                             root=tmp_path, verbose=False)
+    assert payload["status"] == STATUS_PREREQ
+    assert "has not run" in payload["prerequisite_gate"]["unmet"][0]
+
+
+def test_requires_ran_blocks_when_upstream_produced_no_artifact(tmp_path):
+    """Blocked or errored upstream means there is nothing to build on."""
+    for status in (STATUS_PREREQ, STATUS_ERROR):
+        write_upstream(tmp_path, "EXP-057", status)
+        payload = run_experiment(spec(requires_ran=["EXP-057"]), ok,
+                                 root=tmp_path, verbose=False)
+        assert payload["status"] == STATUS_PREREQ, status
+
+
+def test_requires_and_requires_ran_are_both_enforced(tmp_path):
+    write_upstream(tmp_path, "EXP-A", STATUS_FAILED)
+    write_upstream(tmp_path, "EXP-B", STATUS_PASSED)
+    # strict dep failed -> blocked
+    p = run_experiment(spec(requires=["EXP-A"], requires_ran=["EXP-B"]), ok,
+                       root=tmp_path, verbose=False)
+    assert p["status"] == STATUS_PREREQ
+    # swap: strict dep passed, ran-dep failed -> allowed
+    p = run_experiment(spec(requires=["EXP-B"], requires_ran=["EXP-A"]), ok,
+                       root=tmp_path, verbose=False)
+    assert p["status"] == STATUS_PASSED
+
+
+def test_upstream_results_include_ran_dependencies(tmp_path):
+    write_upstream(tmp_path, "EXP-057", STATUS_FAILED)
+    seen = {}
+    run_experiment(spec(requires_ran=["EXP-057"]),
+                   lambda c: (seen.update(c.upstream), ok(c))[1],
+                   root=tmp_path, verbose=False)
+    assert seen["EXP-057"]["status"] == STATUS_FAILED

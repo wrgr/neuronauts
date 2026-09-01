@@ -75,7 +75,17 @@ class Spec:
     title: str
     question: str
     criterion: str
+    #: Upstream experiments that must have **passed their bar**.
     requires: list[str] = field(default_factory=list)
+    #: Upstream experiments that must merely have **run and produced their
+    #: artifact**, pass or fail.
+    #:
+    #: The distinction earns its keep: EXP-057 failed a bar about label
+    #: *density*, which makes the seam experiments unrunnable but says nothing
+    #: about candidate generation, which needs the overlay it produced rather
+    #: than the density it measured. Without this, one badly-scoped bar halts
+    #: every downstream path, including the ones its failure does not touch.
+    requires_ran: list[str] = field(default_factory=list)
     inputs: list[str] = field(default_factory=list)
     params: dict = field(default_factory=dict)
     flags: dict = field(default_factory=dict)
@@ -133,6 +143,14 @@ def check_prerequisites(spec: Spec, root: Path) -> list[str]:
         elif res.get("status") not in _SATISFIES:
             problems.append(f"{dep}: status={res.get('status')!r}, needs "
                             f"one of {sorted(_SATISFIES)}")
+    for dep in spec.requires_ran:
+        res = load_result(dep, root)
+        if res is None:
+            problems.append(f"{dep}: has not run (no result at "
+                            f"{result_path(dep, root)})")
+        elif res.get("status") in (STATUS_PREREQ, STATUS_ERROR):
+            problems.append(f"{dep}: status={res.get('status')!r}, so it "
+                            f"produced no artifact to build on")
     return problems
 
 
@@ -188,6 +206,7 @@ def run_experiment(spec: Spec, run: Callable[[Context], Outcome], *,
     payload: dict[str, Any] = {
         "id": spec.id, "title": spec.title, "question": spec.question,
         "success_criterion": spec.criterion, "requires": list(spec.requires),
+        "requires_ran": list(spec.requires_ran),
         "elapsed_min": 0.0,
     }
 
@@ -215,7 +234,8 @@ def run_experiment(spec: Spec, run: Callable[[Context], Outcome], *,
                       prerequisite_gate={"missing_inputs": missing},
                       note=f"missing inputs: {', '.join(missing)}")
 
-    upstream = {d: load_result(d, root) or {} for d in spec.requires}
+    upstream = {d: load_result(d, root) or {}
+                for d in list(spec.requires) + list(spec.requires_ran)}
     ctx = Context(spec=spec, out_dir=out_dir, root=root, upstream=upstream)
     out_dir.mkdir(parents=True, exist_ok=True)
 

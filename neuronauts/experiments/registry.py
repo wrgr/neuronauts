@@ -120,12 +120,14 @@ REGISTRY: list[Entry] = [
         question="What are the floor and the ceiling on this substrate?",
         criterion="publishes every ladder rung on one substrate through "
                   "neuronauts.metrics; later experiments must beat proximity",
-        requires=["EXP-057"], inputs=[TOPOLOGY_K10, LABELS],
+        requires_ran=["EXP-057"], inputs=[TOPOLOGY_K10, LABELS_NPZ],
         flags={"synthetic_fallback": False}),
         note="Rungs: untouched v117, random at matched count, proximity "
              "union-find at 1/2/5 um, current checkpoints, GT-lineage oracle. "
              "Comparison methods (published approaches) are a separate axis and "
-             "are paused; see plan section 7.2."),
+             "are paused; see plan section 7.2. Scoped to EXP-057's labelled "
+             "subset (16.2% of synapse mass), which every rung shares, so the "
+             "comparison between rungs is still fair."),
 
     Entry(series="A", est_minutes=15, spec=_s(
         id="EXP-059", title="Metric agreement",
@@ -143,17 +145,20 @@ REGISTRY: list[Entry] = [
                  "than spines?",
         criterion="at least 90% recall of true continuation pairs at a median "
                   "panel size of at most 20; and at most 1% of endpoints kept",
-        requires=["EXP-057"], inputs=[TOPOLOGY_K10, LABELS],
+        requires_ran=["EXP-057"], inputs=[TOPOLOGY_K10, LABELS_NPZ],
         flags={"synthetic_fallback": False}),
-        note="Redo of EXP-053B on a substrate that has coverage. The tighter "
-             "bar is adopted verbatim from the PCFG report's E4."),
+        note="Redo of EXP-053B on a substrate that has coverage. Bar adopted "
+             "verbatim from the PCFG report's E4. Needs EXP-057's overlay, not "
+             "its density bar: continuation pairs come from the 4,802 "
+             "proofread-owned single-lineage atoms, which EXP-057 confirmed "
+             "exist even as it failed."),
 
     Entry(series="B", est_minutes=45, spec=_s(
         id="EXP-061", title="Proximity vs cone, by compartment",
         question="Does the axon proximity failure hold for dendrites too?",
         criterion="the direction cone improves precision at equal recall on "
                   "axons; report dendrites separately",
-        requires=["EXP-060"], inputs=[TOPOLOGY_K10, LABELS]),
+        requires_ran=["EXP-060"], inputs=[TOPOLOGY_K10, LABELS_NPZ]),
         note="Stratify by the polarity compartment signal (H1), which is free."),
 
     # --- C. cuts and frankenmerge detection ---------------------------------
@@ -163,18 +168,22 @@ REGISTRY: list[Entry] = [
                  "we pick the right edge?",
         criterion="at least 90% same-lineage pair recall AND at least 50% "
                   "cross-lineage split recall; seam top-1 above 25%",
-        requires=["EXP-057"], inputs=[TOPOLOGY_K10, LABELS],
+        requires=["EXP-057"], requires_ran=["EXP-057B"],
+        inputs=[TOPOLOGY_K10, LABELS_NPZ],
         flags={"synthetic_fallback": False}),
         note="Merges the plan's 062 with the PCFG report's E2/E3. EXP-056 "
-             "falsified every single global edge-length threshold. Only 56 "
-             "trustworthy positives until EXP-057B lands."),
+             "falsified every single global edge-length threshold. Correctly "
+             "blocked: EXP-057 measured 56 trustworthy seam positives, 15 of "
+             "them in train, against a seam GNN that was net-negative at 150. "
+             "EXP-057B is the unblock."),
 
     Entry(series="C", est_minutes=45, spec=_s(
         id="EXP-063", title="Frankenmerge detection",
         question="Does mixed polarity, or a grammar, flag a false merge?",
         criterion="AUC at least 0.875 and precision at top 2% at least 0.41, "
                   "beating the global-shape baseline; Bar 3 above 0.5",
-        requires=["EXP-057"], inputs=[TOPOLOGY_K10, LABELS]),
+        requires=["EXP-057"], requires_ran=["EXP-057B"],
+        inputs=[TOPOLOGY_K10, LABELS_NPZ]),
         note="Bar adopted from the PCFG report's E1, which is stronger than the "
              "polarity-only bar first drafted. Polarity is the cheap baseline "
              "in the same run. Bar 3 has been 0.000 in every real run to date."),
