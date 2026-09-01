@@ -29,6 +29,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--markdown", action="store_true")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--html", action="store_true",
+                    help="a shareable status board")
     ap.add_argument("--next", action="store_true",
                     help="list experiments whose prerequisites are met")
     ap.add_argument("--no-experiments", action="store_true")
@@ -55,14 +57,17 @@ def main() -> int:
                 print(f"  {e.id}  {why[0]}")
         return 0
 
-    if args.json:
+    if args.html:
+        text = tracker.render_html()
+    elif args.json:
         text = json.dumps(tracker.as_dict(), indent=2)
     elif args.markdown:
         text = tracker.render_markdown()
     else:
         text = tracker.render_text(show_experiments=not args.no_experiments)
 
-    print(text)
+    if not (args.html and args.out):
+        print(text)
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.out).write_text(text if text.endswith("\n") else text + "\n")

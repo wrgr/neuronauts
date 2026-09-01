@@ -377,3 +377,146 @@ def write_json(path: str | Path, root: Optional[Path] = None) -> Path:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(as_dict(root), indent=2) + "\n")
     return p
+
+
+# ---------------------------------------------------------------------------
+# shareable board
+# ---------------------------------------------------------------------------
+
+_HTML_HEAD = """<title>Neuronauts Progress</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+:root{--bg:#F7F7F5;--panel:#FFF;--ink:#16191C;--ink2:#4C555C;--muted:#7C868D;
+--rule:#DFE2DE;--accent:#1F6F6B;--accent2:#C25E00;--ok:#2E7D4F;--okbg:#E3F0E7;
+--no:#8A9299;--nobg:#EDEFEE;--warn:#B4541C;--warnbg:#F8E6D9;--shadow:0 1px 2px rgba(22,25,28,.05)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+--bg:#111416;--panel:#191D20;--ink:#E6E9E7;--ink2:#AEB7B3;--muted:#7E8688;
+--rule:#272D30;--accent:#5FB8B2;--accent2:#E08A45;--ok:#63BC8A;--okbg:#152C20;
+--no:#8B9399;--nobg:#20262A;--warn:#DE8A4E;--warnbg:#34210F;--shadow:none}}
+:root[data-theme="dark"]{--bg:#111416;--panel:#191D20;--ink:#E6E9E7;--ink2:#AEB7B3;
+--muted:#7E8688;--rule:#272D30;--accent:#5FB8B2;--accent2:#E08A45;--ok:#63BC8A;
+--okbg:#152C20;--no:#8B9399;--nobg:#20262A;--warn:#DE8A4E;--warnbg:#34210F;--shadow:none}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"IBM Plex Sans",system-ui,sans-serif;
+font-size:15px;line-height:1.5;font-variant-numeric:tabular-nums}
+.wrap{max-width:1060px;margin:0 auto;padding:36px 22px 80px}
+h1{font-size:29px;font-weight:700;letter-spacing:-.015em;margin:8px 0 6px;text-wrap:balance}
+.sub{color:var(--ink2);margin:0 0 6px;max-width:64ch}
+.stamp{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--muted);margin-top:12px}
+h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.09em;
+color:var(--muted);margin:38px 0 12px;padding-bottom:7px;border-bottom:1px solid var(--rule)}
+.bars{display:grid;gap:9px;margin-bottom:6px}
+.row{display:grid;grid-template-columns:210px 1fr 74px;gap:14px;align-items:center;
+background:var(--panel);border:1px solid var(--rule);border-radius:5px;padding:11px 14px;box-shadow:var(--shadow)}
+.row .name{font-weight:600;font-size:14px}
+.row .name small{display:block;font-weight:400;color:var(--muted);font-size:12px;margin-top:1px}
+.track{height:7px;background:var(--nobg);border-radius:4px;overflow:hidden}
+.fill{height:100%;background:var(--accent);border-radius:4px}
+.frac{font-family:"IBM Plex Mono",monospace;font-size:13px;color:var(--ink2);text-align:right}
+.checks{margin:6px 0 20px 0;display:grid;gap:3px}
+.chk{display:grid;grid-template-columns:20px 1fr;gap:8px;font-size:13.5px;
+padding:3px 14px;color:var(--ink2)}
+.chk .m{font-family:"IBM Plex Mono",monospace;font-weight:600}
+.chk.on .m{color:var(--ok)} .chk.off .m{color:var(--no)} .chk.unk .m{color:var(--warn)}
+.chk .d{color:var(--muted);font-size:12.5px}
+table{width:100%;border-collapse:collapse;font-size:13.5px;background:var(--panel);
+border:1px solid var(--rule);border-radius:5px;overflow:hidden;box-shadow:var(--shadow)}
+th{text-align:left;font-size:11.5px;text-transform:uppercase;letter-spacing:.07em;
+color:var(--muted);font-weight:600;padding:9px 12px;border-bottom:1px solid var(--rule)}
+td{padding:8px 12px;border-bottom:1px solid var(--rule);vertical-align:top}
+tr:last-child td{border-bottom:none}
+.pill{display:inline-block;font-family:"IBM Plex Mono",monospace;font-size:11px;
+font-weight:600;padding:2px 7px;border-radius:3px;text-transform:uppercase;letter-spacing:.04em}
+.p-passed{background:var(--okbg);color:var(--ok)}
+.p-blocked{background:var(--nobg);color:var(--no)}
+.p-ready{background:var(--okbg);color:var(--ok);outline:1px solid var(--ok)}
+.p-todo{background:var(--warnbg);color:var(--warn)}
+.p-failed{background:var(--warnbg);color:var(--warn)}
+.crit{color:var(--muted);font-size:12.5px;max-width:44ch}
+.why{color:var(--muted);font-size:12px;font-family:"IBM Plex Mono",monospace}
+.ser{font-family:"IBM Plex Mono",monospace;color:var(--accent2);font-weight:600}
+.id{font-family:"IBM Plex Mono",monospace;font-weight:600;white-space:nowrap}
+.foot{margin-top:34px;padding-top:14px;border-top:1px solid var(--rule);
+color:var(--muted);font-size:12.5px}
+code{font-family:"IBM Plex Mono",monospace;background:var(--nobg);padding:1px 5px;border-radius:3px;font-size:.9em}
+@media(max-width:640px){.row{grid-template-columns:1fr;gap:7px}}
+</style>
+"""
+
+
+def render_html(root: Optional[Path] = None) -> str:
+    """A shareable board, generated from the same derived data as the CLI."""
+    import datetime as _dt
+    import html as _h
+
+    root = root or repo_root()
+    d = as_dict(root)
+    phases, exps, s, repo = (d["consolidation"], d["experiments"],
+                             d["summary"], d["repo"])
+    cdone = sum(p["done"] for p in phases)
+    ctot = sum(p["total"] for p in phases)
+
+    out = [_HTML_HEAD, '<div class="wrap">',
+           '<div style="font-family:\'IBM Plex Mono\',monospace;font-size:12px;'
+           'letter-spacing:.08em;text-transform:uppercase;color:var(--muted)">'
+           'neuronauts</div>',
+           "<h1>Progress</h1>",
+           '<p class="sub">Every line is read from the repository. A phase is '
+           'done when the thing it promised is on disk; an experiment has a '
+           'state because its result file says so. Nothing here is asserted by '
+           'hand and then trusted.</p>',
+           f'<p class="stamp">consolidation {cdone}/{ctot} checks &nbsp;·&nbsp; '
+           f'experiments {s["passed"]}/{s["total"]} passed &nbsp;·&nbsp; '
+           f'{repo["tests_collected"]} tests, {repo["collection_errors"]} '
+           f'collection errors &nbsp;·&nbsp; {repo["broken_links"]} broken links'
+           f' &nbsp;·&nbsp; generated '
+           f'{_dt.datetime.now().strftime("%Y-%m-%d %H:%M")}</p>',
+           "<h2>Consolidation</h2>", '<div class="bars">']
+
+    for p in phases:
+        pct = 100 * p["done"] / max(p["total"], 1)
+        out.append(
+            f'<div class="row"><div class="name">Phase {p["phase"]} · '
+            f'{_h.escape(p["title"])}<small>{p["state"]}</small></div>'
+            f'<div class="track"><div class="fill" style="width:{pct:.0f}%"></div></div>'
+            f'<div class="frac">{p["done"]}/{p["total"]}</div></div>')
+        rows = []
+        for c in p["checks"]:
+            cls, m = ({True: ("on", "&check;"), False: ("off", "·"),
+                       None: ("unk", "?")}[c["done"]])
+            det = (f' <span class="d">— {_h.escape(c["detail"])}</span>'
+                   if c["detail"] else "")
+            rows.append(f'<div class="chk {cls}"><span class="m">{m}</span>'
+                        f'<span>{_h.escape(c["label"])}{det}</span></div>')
+        out.append('<div class="checks">' + "".join(rows) + "</div>")
+    out.append("</div>")
+
+    out += ["<h2>Experiment program</h2>",
+            "<table><thead><tr><th>ID</th><th>Experiment</th><th>Series</th>"
+            "<th>State</th><th>Bar it must clear</th></tr></thead><tbody>"]
+    pill = {"passed": "p-passed", "ready": "p-ready", "blocked": "p-blocked",
+            "not_implemented": "p-todo", "failed": "p-failed",
+            "prerequisite_failed": "p-blocked", "error": "p-failed"}
+    for e in exps:
+        why = ""
+        if e["state"] in ("blocked", "not_implemented") and e["reasons"]:
+            why = f'<div class="why">{_h.escape(e["reasons"][0][:96])}</div>'
+        label = "todo" if e["state"] == "not_implemented" else e["state"]
+        out.append(
+            f'<tr><td class="id">{_h.escape(e["id"])}</td>'
+            f'<td>{_h.escape(e["title"])}{why}</td>'
+            f'<td class="ser">{_h.escape(e["series"])}</td>'
+            f'<td><span class="pill {pill.get(e["state"], "p-blocked")}">'
+            f'{_h.escape(label)}</span></td>'
+            f'<td class="crit">{_h.escape(e["criterion"])}</td></tr>')
+    out.append("</tbody></table>")
+
+    out.append('<p class="foot">Regenerate with '
+               '<code>uv run python scripts/status.py --html --out FILE</code>. '
+               'Series A substrate · B candidates · C cuts · D scoring · '
+               'E assembly · F re-derivation; order is a strict dependency '
+               'chain, which is why running them out of order is how EXP-053B, '
+               '054 and 055 all died on prerequisites.</p>')
+    out.append("</div>")
+    return "\n".join(out)
