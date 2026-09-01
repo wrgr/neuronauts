@@ -1,5 +1,36 @@
 # Connectomics Global Merge & Assembly — Live Executive Experiment Log
 
+> ## ⚠️ SUPERSEDED — 2026-09-01
+>
+> **Every number on this page is measured on synthetically damaged data and
+> must not be quoted.** Verified by direct inspection of the scripts, not
+> inferred:
+>
+> - The benchmarks behind sections 1–3 (`benchmark_exp021`–`benchmark_exp050`,
+>   now in [`attic/benchmarks_semi_synthetic/`](attic/benchmarks_semi_synthetic/))
+>   each import `treestitch.worldbuild.frankenmerge_adjacent` and apply it at
+>   **45%** to real proofread skeletons that were themselves **synthetically
+>   cut**. EXP-035 — the "restored SOTA" quoted in `docs/paper/walkthrough.md` —
+>   is `frankenmerge_adjacent(pieces_rec, 0.45, rng, radius_nm=9500.0)`.
+> - **15 of the 26** engines in `neuronauts/morpho_grammar/` (now in
+>   [`attic/morpho_grammar/`](attic/morpho_grammar/)) draw random numbers at
+>   runtime and **none** contains a `torch.load` or a checkpoint path. The
+>   reported scores are those of untrained models.
+> - `results/exp051_evaluation.md` reached the same conclusion independently
+>   for EXP-049 (unconditional dense fallback) and for the SANTIAGO infiller
+>   ("initializes random matrices at runtime rather than loading a trained
+>   real-data grammar checkpoint").
+>
+> The "Direct Comparison Against Published SOTA" table in section 3 therefore
+> compares untrained engines on synthetic damage against published methods on
+> real data. It is retained **only** as a record of what was claimed.
+>
+> **What replaces it:** the fail-closed real-data series EXP-051–056 in
+> `results/`, and the re-derivation program in
+> [`docs/consolidation_plan.md`](docs/consolidation_plan.md) §6. Any engine
+> here may earn its numbers back through EXP-069, which runs it on the real
+> harness substrate under the EXP-064 protocol with a trained grammar.
+
 > Real Minnie65 Electron Microscopy Benchmark Suite  
 > Continuous tracking of morphological DNA, tangent flow assembly, lifted multicut constraints, line graph metrics, selective micro-EM ablation, and confidence threshold sweeps under strict 3-way inductive protocol (Train 60% / Val 20% / Held-Out Test 20%).
 

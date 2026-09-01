@@ -9,9 +9,22 @@ F1 is computed.
 import unittest
 
 import numpy as np
+import pytest
 
-from neuronauts.fetch import SynapseTable
-from neuronauts.line_graph import (
+# The implementation this file tests is not in main. `SynapseTable.filter_clutter`
+# and `line_graph._clutter_keep_indices` live only on the unmerged branch
+# `claude/remove-connectome-clutter-CkKag` (see experiments/README.md, "Needs a
+# decision"), but the test was merged without them -- so collecting this module
+# has been raising ImportError and aborting a bare `pytest` run. Skip honestly
+# rather than delete: un-skip when that branch lands or the feature is dropped.
+pytest.skip(
+    "SynapseTable.filter_clutter / line_graph._clutter_keep_indices were never "
+    "merged to main; test came from branch claude/remove-connectome-clutter-CkKag",
+    allow_module_level=True,
+)
+
+from neuronauts.fetch import SynapseTable  # noqa: E402
+from neuronauts.line_graph import (  # noqa: E402
     _clutter_keep_indices,
     evaluate,
     evaluate_from_root_ids,
