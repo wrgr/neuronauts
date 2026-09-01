@@ -275,8 +275,16 @@ _ROOTS_BATCH = 4000    # max supervoxels per roots_binary POST
 _version_ts_cache: dict[int, int] = {117: V117_TIMESTAMP}
 
 
-def _headers(token: str) -> dict:
-    return {"Authorization": f"Bearer {token}"}
+def _headers(token: Optional[str]) -> dict:
+    """Build the auth header, resolving a missing token from the environment.
+
+    Raises MissingCaveToken rather than sending "Bearer None", so an
+    unauthenticated fetch fails loudly instead of returning empty results
+    that downstream code could mistake for data.
+    """
+    from neuronauts.data.auth import cave_token
+
+    return {"Authorization": f"Bearer {token or cave_token()}"}
 
 
 # ---------------------------------------------------------------------------

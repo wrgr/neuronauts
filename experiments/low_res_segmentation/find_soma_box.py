@@ -20,7 +20,7 @@ def main():
     from caveclient import CAVEclient
     from cloudvolume import CloudVolume
 
-    token = os.environ.get("CAVE_TOKEN", "a08cdcba8581846f48d5742a75c53311")
+    token = os.environ.get("CAVE_TOKEN")
     client = CAVEclient(DATASTACK, server_address=SERVER, auth_token=token)
 
     # Find nucleus tables

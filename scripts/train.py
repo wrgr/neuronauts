@@ -565,7 +565,26 @@ def cmd_train(args: argparse.Namespace) -> int:  # noqa: C901
             f"(currently {args.base_version})."
         )
 
+    if not getattr(args, "allow_random_split", False):
+        raise SystemExit(
+            "Refusing to build a random box split.\n\n"
+            "A flat shuffle over box records puts the SAME NEURON in train and "
+            "val: a cortical arbor spans hundreds of microns and therefore many "
+            "boxes, so box-level randomisation does not separate neurons. There "
+            "is also no test set on this path.\n\n"
+            "Use a spatially disjoint, seam-buffered split instead (see "
+            "docs/synthetic_data_audit_and_dataset_plan.md and "
+            "scripts/build_bench_v1.py). To run this legacy path anyway for a "
+            "smoke test whose numbers will NOT be reported, pass "
+            "--allow-random-split."
+        )
+    print(
+        "[W] --allow-random-split: neurons leak across train/val on this path; "
+        "these numbers must not be reported.",
+        flush=True,
+    )
     rng = np.random.default_rng(args.seed)
+    # provenance-lint: allow SPLIT001 - gated behind --allow-random-split above
     rng.shuffle(all_records)  # type: ignore[arg-type]
     n_val = max(1, int(len(all_records) * args.val_fraction))
     val_records = all_records[:n_val]
@@ -614,7 +633,8 @@ def cmd_train(args: argparse.Namespace) -> int:  # noqa: C901
         epoch_topo_accs: list[float] = []
         epoch_gat_f1s: list[float] = []
 
-        order = rng.permutation(len(train_records))
+        # provenance-lint: allow SPLIT001 - batch ordering within train, not a split
+    order = rng.permutation(len(train_records))
         for idx in order:
             record = train_records[idx]
             try:
@@ -2398,6 +2418,11 @@ def parse_args(argv=None) -> argparse.Namespace:
     p_run.add_argument("--epochs",              type=int,   default=30)
     p_run.add_argument("--lr",                  type=float, default=3e-4)
     p_run.add_argument("--val-fraction",        type=float, default=0.15)
+    p_run.add_argument(
+        "--allow-random-split", action="store_true",
+        help="Opt in to the legacy random box split. It leaks neurons across "
+             "train/val (arbors span many boxes), so it may not produce a "
+             "reported number. Prefer the bench_v1 region splits.")
     p_run.add_argument("--max-merge-per-box",   type=int,   default=256)
     p_run.add_argument("--max-topo-per-box",    type=int,   default=128)
     p_run.add_argument("--max-negative-pairs-per-role", type=int, default=64)

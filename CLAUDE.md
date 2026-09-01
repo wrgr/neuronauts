@@ -51,6 +51,34 @@ default explanation.
 Before you write "the problem is <external thing>", ask: *"Have I proven my own
 code is correct here, with a check I could show?"* If no, don't write it.
 
+## 0b. Data provenance (added after the synthetic-data incident)
+
+A quality incident in this repo produced ~34 experiments and two paper drafts
+whose headline numbers came from manufactured fragments, fabricated synapses
+whose partner IDs encoded the ground-truth neuron, a "micro-EM verifier" that
+took the label as an argument, and an untrained random-matrix model — evaluated
+against a validation set that does not exist in code. See
+`docs/synthetic_data_audit_and_dataset_plan.md`.
+
+Standing rules:
+
+- **Synthetic data is opt-in and labeled.** Never a fallback, never a default.
+  A fetch failure must raise, not generate. Every artifact touched by generated
+  data says so, in the artifact itself — not only in a commit message or doc.
+- **Never pass a ground-truth label into inference.** Scorers, verifiers,
+  rerankers and infillers may not receive `is_same_cell`, `gt_target_id`,
+  `is_true_continuation`, or equivalents. Evaluation functions may.
+- **Split by neuron or region, never by box or at random.** A cortical arbor
+  spans many boxes, so box-level randomisation puts the same neuron in train
+  and eval. Use seam buffers and root dedup.
+- **Every reported number carries provenance.** Use
+  `neuronauts.results_schema.ResultsRecord`: dataset manifest hash, base and
+  label versions, checkpoint SHA, and an explicit `synthetic` bool.
+- **The test set is locked.** Model selection and threshold calibration happen
+  on val. Editing a locked test manifest means creating `bench_v2`.
+- `make lint-provenance` enforces the mechanical parts; CI runs it and
+  self-tests that the rules still fire.
+
 ## 1. Other standing habits
 - Don't present unverified results as results. Label estimates, partial runs,
   and unproven claims as such.

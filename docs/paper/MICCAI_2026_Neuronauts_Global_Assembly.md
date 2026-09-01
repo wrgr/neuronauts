@@ -1,3 +1,8 @@
+> # ⚠️ RETRACTED — see [RETRACTED.md](RETRACTED.md)
+>
+> Results here are synthetic-derived with ground-truth leakage and a
+> validation set that does not exist in code. Do not cite.
+
 # Active Micro-Volumetric Inference and Contrastive Morphological DNA for Global Connectome Proofreading
 
 **Anonymous MICCAI 2026 Submission**  

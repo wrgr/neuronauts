@@ -27,7 +27,8 @@ import requests
 # ---------------------------------------------------------------------------
 # Constants (mirrors neuronauts/data/loaders.py + fetch.py)
 # ---------------------------------------------------------------------------
-TOKEN = "a08cdcba8581846f48d5742a75c53311"
+from neuronauts.data.auth import cave_token  # token must come from the environment
+TOKEN = cave_token()
 DATASTACK = "minnie65_public"
 GLOBAL_SERVER = "https://global.daf-apis.com"
 

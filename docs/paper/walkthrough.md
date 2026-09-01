@@ -1,3 +1,8 @@
+> # ⚠️ RETRACTED — see [RETRACTED.md](RETRACTED.md)
+>
+> Results here are synthetic-derived with ground-truth leakage and a
+> validation set that does not exist in code. Do not cite.
+
 # Walkthrough: Restored Peak Performance (EXP-035) & Full Confusion Matrices
 
 ## 1. Metric Recovery & Side-by-Side Progression

@@ -1,3 +1,17 @@
+> # ⚠️ RETRACTED — SYNTHETIC-DERIVED RESULTS, DO NOT CITE
+>
+> Every quantitative claim in this document was produced by a pipeline that
+> manufactured its own fragments and synapses, fed ground-truth labels into its
+> own scorers, and evaluated against a validation set that does not exist in
+> code. The numbers do not measure performance on real data.
+>
+> See [`docs/synthetic_data_audit_and_dataset_plan.md`](docs/synthetic_data_audit_and_dataset_plan.md)
+> for the full audit, and [`quarantine/README.md`](quarantine/README.md)
+> for the defective code, which is now frozen.
+>
+> Retained as a record of the incident. Honest results will be re-derived on the
+> `neuronauts-bench v1` dataset.
+
 # Connectomics Global Merge & Assembly — Live Executive Experiment Log
 
 > Real Minnie65 Electron Microscopy Benchmark Suite  

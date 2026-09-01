@@ -59,7 +59,8 @@ SKELETON_CACHE_BASE = (
     "https://minnie.microns-daf.com/skeletoncache/api/v1/"
     "minnie65_public/precomputed/skeleton"
 )
-TOKEN = "a08cdcba8581846f48d5742a75c53311"
+from neuronauts.data.auth import cave_token  # token must come from the environment
+TOKEN = cave_token()
 
 
 # ---------------------------------------------------------------------------

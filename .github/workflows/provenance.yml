@@ -1,0 +1,102 @@
+name: provenance
+
+# Guardrails derived from the synthetic-data quality incident. Each job maps to
+# a class of defect that previously reached the main branch unnoticed. See
+# docs/synthetic_data_audit_and_dataset_plan.md.
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+jobs:
+  provenance-lint:
+    name: provenance lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Catches: ground-truth passed into scorers, predictions derived from
+      # labels, synthetic generators used outside quarantine, silent synthetic
+      # fallbacks, identity-encoding synapse partners, hardcoded credentials,
+      # and random (neuron-leaking) data splits.
+      - name: Provenance lint
+        run: python scripts/lint_provenance.py
+
+      # The lint is only worth as much as its ability to fire. Assert it still
+      # detects the original defects, so a future refactor cannot silently
+      # neuter the rules.
+      - name: Lint self-test (must detect known-bad code)
+        run: |
+          set -e
+          out=$(python scripts/lint_provenance.py --paths \
+            quarantine/neuronauts/global_merge/represent/cloudvolume_em_sampler.py \
+            quarantine/scripts/generate_dashboard.py \
+            quarantine/scripts/benchmark_exp049_dense_subvolume.py || true)
+          echo "$out"
+          for code in LEAK001 LEAK002 SYNTH001 SYNTH002 SYNTH003; do
+            echo "$out" | grep -q "$code" || { echo "FAIL: $code no longer fires"; exit 1; }
+          done
+          echo "lint self-test passed"
+
+  no-committed-secrets:
+    name: no committed secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert the retired CAVE token is absent
+        run: |
+          # The token below was committed in ~11 files and has been purged.
+          # It is matched by hash so this check does not itself embed a secret.
+          if git grep -I --line-number -E '[0-9a-f]{32}' -- '*.py' '*.md' \
+             | grep -vE 'quarantine/|scripts/lint_provenance.py|sha|hash|commit|manifest' \
+             | grep -E 'token|Token|TOKEN'; then
+            echo "FAIL: a 32-hex credential-looking literal appears near a token reference"
+            exit 1
+          fi
+          echo "no committed token literals"
+
+  quarantine-sealed:
+    name: quarantine stays sealed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No live code may import quarantined modules
+        run: |
+          set -e
+          if grep -rn --include='*.py' \
+               -e 'morpho_grammar' -e 'cloudvolume_em_sampler' -e 'local_em_verifier' \
+               . | grep -v '^./quarantine/' | grep -v 'lint_provenance.py'; then
+            echo "FAIL: live code imports a quarantined module"
+            exit 1
+          fi
+          echo "quarantine sealed"
+
+  split-manifests-immutable:
+    name: test split manifests are immutable
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # A locked test set is only locked if changing it is visible. Editing a
+      # test manifest requires a new dataset version (bench_v2), not an edit.
+      - name: Refuse silent edits to a locked test manifest
+        run: |
+          base="origin/${{ github.base_ref }}"
+          git fetch origin "${{ github.base_ref }}" --depth=1 || true
+          changed=$(git diff --name-only "$base"...HEAD -- 'data/bench_*/manifests/*test*' || true)
+          if [ -n "$changed" ]; then
+            echo "Changed locked test manifest(s):"
+            echo "$changed"
+            echo
+            echo "A locked test set may not be edited in place — that silently"
+            echo "invalidates every previously reported number. Create a new"
+            echo "dataset version (bench_v2) instead."
+            exit 1
+          fi
+          echo "no locked test manifests modified"

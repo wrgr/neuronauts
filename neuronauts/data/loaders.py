@@ -13,7 +13,8 @@ Data sources
        aibs_soma_coarse_type.csv
 
 - **Skeleton cache**: neuroglancer precomputed binary format from the CAVE
-  skeleton cache.  Requires a bearer token (see DEFAULT_TOKEN).
+  skeleton cache.  Requires a bearer token from the environment
+  (see neuronauts.data.auth.cave_token; never hardcode one).
   URL: https://minnie.microns-daf.com/skeletoncache/api/v1/
        minnie65_public/precomputed/skeleton/{root_id}
 
@@ -40,7 +41,14 @@ import numpy as np
 import pandas as pd
 import requests
 
-DEFAULT_TOKEN = "a08cdcba8581846f48d5742a75c53311"
+# Token comes from the environment; never hardcode one here. Callers pass
+# token=None and it is resolved at call time by neuronauts.data.auth.
+from neuronauts.data.auth import cave_token
+
+# Backwards-compatible module constant: resolved from the environment at
+# import time, or None when unset. Request paths call cave_token() so a
+# missing token raises loudly instead of silently sending 'Bearer None'.
+DEFAULT_TOKEN = cave_token(required=False)
 
 _NUCLEUS_URL = (
     "https://storage.googleapis.com/mat_dbs/public/minnie65_phase3_v1/"
@@ -223,7 +231,7 @@ def load_cell_types(cache_path: Optional[str] = None) -> Optional[pd.DataFrame]:
 
 def load_skeleton(
     root_id: int,
-    token: str = DEFAULT_TOKEN,
+    token: Optional[str] = None,
 ) -> Optional[dict]:
     """Fetch one skeleton from the CAVE skeleton cache.
 
@@ -232,7 +240,8 @@ def load_skeleton(
     root_id:
         Proofread neuron root ID at v1412.
     token:
-        CAVE bearer auth token.
+        CAVE bearer auth token.  ``None`` (default) resolves it from the
+        environment via :func:`neuronauts.data.auth.cave_token`.
 
     Returns
     -------
@@ -248,7 +257,7 @@ def load_skeleton(
     try:
         resp = requests.get(
             url,
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"Authorization": f"Bearer {token or cave_token()}"},
             timeout=30,
         )
         if resp.status_code != 200:
@@ -294,7 +303,7 @@ def load_skeleton(
 
 def load_skeletons(
     root_ids: list[int],
-    token: str = DEFAULT_TOKEN,
+    token: Optional[str] = None,
     *,
     max_workers: int = 4,
     progress: bool = True,
@@ -309,7 +318,8 @@ def load_skeletons(
     root_ids:
         List of v1412 root IDs to fetch.
     token:
-        CAVE bearer auth token.
+        CAVE bearer auth token.  ``None`` (default) resolves it from the
+        environment via :func:`neuronauts.data.auth.cave_token`.
     max_workers:
         Thread-pool size.
     progress:
@@ -327,7 +337,7 @@ def load_skeletons(
         _wrap = lambda x, **kw: x  # noqa: E731
 
     def _fetch(rid: int) -> tuple[int, Optional[dict]]:
-        result = load_skeleton(rid, token)
+        result = load_skeleton(rid, token or cave_token())
         time.sleep(_INTER_REQUEST_DELAY)
         return rid, result
 

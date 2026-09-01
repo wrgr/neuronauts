@@ -98,7 +98,18 @@ def _split_skeleton_n_pieces(
     n_pieces: int,
     min_verts: int = 8,
 ) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
-    """Recursively bisect a skeleton tree into up to n_pieces sub-trees."""
+    """Recursively bisect a skeleton tree into up to n_pieces sub-trees.
+
+    .. warning::
+       **Synthetic generator.** This manufactures fragments by bisecting a
+       real skeleton; the pieces are NOT real v117 segments. Real v117
+       structure is "one trunk + slivers" (88% of somata are already a
+       single v117 root), so equal-thirds bisection does not model it.
+       Never use this to produce a reported assembly/connectome metric.
+       Use real lineage via ``neuronauts.data.lineage`` instead. Enforced
+       by ``scripts/lint_provenance.py``.
+    """
+
     if n_pieces <= 1 or len(verts) < min_verts * 2 or len(edges) == 0 or len(verts) < 4:
         return [(verts, edges, radii)]
 

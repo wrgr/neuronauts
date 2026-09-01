@@ -376,7 +376,8 @@ class BoxCache:
         if shuffle:
             if rng is None:
                 rng = np.random.default_rng()
-            order = rng.permutation(len(records))
+            # provenance-lint: allow SPLIT001 - iteration order for iter_records(shuffle=True), not a split
+        order = rng.permutation(len(records))
             records = [records[i] for i in order]
         yield from records
 
