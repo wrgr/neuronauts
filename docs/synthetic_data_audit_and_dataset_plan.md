@@ -363,3 +363,125 @@ Decisions needed from the project owner:
    repo.
 4. **Compute/storage budget** for the unbounded L2 precompute if the coverage
    gate fails on bounded retrieval (EXP-053B suggests it will).
+
+---
+
+## Part 3 — Execution record (2026-09-01)
+
+Steps 0, 1, 2, 3 and 5 are done. Step 4 (honest re-baseline) is the next task
+and now has a dataset to run on.
+
+### What shipped
+
+| Step | Status | Artifacts |
+|---|---|---|
+| 0 — freeze & quarantine | **done** | `quarantine/` (40 scripts + `morpho_grammar/` + 2 EM-oracle modules), retraction notices on `EXPERIMENT_LOG.md`, both manuscripts, LaTeX sources, whitepaper, slides, `dashboard/`, `viz/`; CAVE token purged from 11 files |
+| 1 — version contract | **done** | `neuronauts/data/versions.py`, verified live |
+| 2 — region survey | **done** | `scripts/survey_regions.py`, `docs/region_inventory.md`, `results/region_inventory.json` |
+| 3 — dataset build | **done** | `scripts/build_bench_v1.py`, `scripts/verify_split.py`, `data/bench_v1/` |
+| 5 — guardrails | **done** | `scripts/lint_provenance.py`, `neuronauts/results_schema.py`, `.github/workflows/provenance.yml`, 27 tests |
+| 4 — re-baseline | **next** | — |
+
+### Verified facts established during execution
+
+- **v1412 is genuinely gone.** The server reports
+  `[117, 943, 1300, 1507, 1621, 1718, 1822]`. The code only *warned* about this;
+  it is now enforced by `verify_version_contract()`. A newer 1822 exists and is
+  the natural `bench_v2` bump.
+- **The 20 µm operating point is a measured constraint, not a preference.**
+  Same bbox: `limit=20,000` → 20,000 rows in 50.7s; `limit=50,000` → 260.9s;
+  `limit=200,000` → nothing, exceeding `lineage.py`'s own 300s timeout. Request
+  time tracks `limit`, not bbox size — a *narrower* 10 µm tile at limit 50,000
+  timed out while a 20 µm tile succeeded. This was our misconfiguration (the
+  tiled fetch defaults to `per_tile_limit=200_000`, incompatible with the
+  module's own timeout), not a server fault.
+- **Merge-pair counts are sampling-density dependent.** Each P1 z-third sampled
+  at 20,000 synapses yields as many or more true merge pairs (16 / 32 / 22) than
+  all of P1 sampled at 20,000 (16). A pair is observable only when *both*
+  fragments land in the sample. **Therefore the zeros in
+  `docs/region_inventory.md` (B, C, D, T1) are not evidence of absent signal** —
+  they are consistent with under-sampling, and must not be cited as "this region
+  has no edit signal".
+- **OOC3 is not signal-free and should not carry pseudo-labels.** Measured at a
+  20,000-synapse sample: **33 true merge pairs and 173 frankenmerges** — the
+  richest region surveyed. `STATUS.md` Phase 2.12 noted "19 frankenmerges
+  (partial proofreading)" and an elevated over-merge rate of 0.045 there. The
+  out-of-column protocol builds pseudo-ground-truth on "each v117 root = one
+  neuron", which those frankenmerges violate by construction. **The elevated
+  OOC3 over-merge rate is therefore better explained as a label artifact than as
+  a model failure.** OOC1 (4 frankenmerges, 0 pairs) is roughly consistent with
+  the assumption; OOC3 is not. In `bench_v1`, OOC3 is used with *real* labels, as
+  a training region.
+- **Frankenmerges outnumber true merge pairs 5-10x in every region measured.**
+  The dominant real v117→v1718 error is a merge needing a split. Much of the
+  prior work emphasised the opposite direction.
+
+### Corrections to my own work, recorded
+
+- I initially transcribed **T3 and T4 with region E's x-range**. Their real
+  extent is x = 1,150-1,350k (`scripts/spatial_variance.py:308-331`). The
+  identical E/T4 statistics this produced looked like a train/test leak in the
+  existing code; it was my transcription error. Corrected and re-surveyed.
+- Two waiver comments I inserted were indented to match a *suffix* of the target
+  line, silently de-indenting it and breaking `neuronauts/dataset_builder.py`
+  and `scripts/train.py`. Caught by the test suite: baseline is 6 failed / 949
+  passed / 1 error; the broken tree was 52 failed / 825 passed / 4 errors. Fixed,
+  and every file in the repo now parses.
+- `scripts/lint_provenance.py` crashed on paths outside the repo, so linting a
+  file by absolute path silently failed. Fixed and covered by a test.
+
+### Two findings about existing live code
+
+- **`scripts/train.py` built a flat random split** over box records with no test
+  set at all (`rng.shuffle(all_records)`). Because a cortical arbor spans many
+  boxes, this puts the same neuron in train and val. It now fails closed behind
+  `--allow-random-split`, which prints a warning that its numbers may not be
+  reported.
+- **Region B, a training region throughout Phases 2.7-2.12, showed 0 true merge
+  pairs** at a 20,000-synapse sample (C and D likewise). Given the sampling
+  caveat above this is not proof of absence, but it does mean the merge signal
+  those phases trained on was far thinner than the region count suggests.
+
+### The dataset
+
+`data/bench_v1/` — see its README for the full contract.
+
+| Split | Regions | Observations | v117 roots | True merge pairs | Frankenmerges |
+|---|---|---:|---:|---:|---:|
+| train | OOC3, P1a, A, E | 22,369 | 4,946 | 43 | 505 |
+| val | P1b | 5,741 | 1,311 | 17 | 177 |
+| test | P1c | 7,483 | 1,617 | **49** | 154 |
+
+Root-disjoint (dedup removed 289 roots from train, 317 from val), every
+cross-split seam ≥ 25,000 nm, independently verified by `scripts/verify_split.py`.
+Manifest sha256 `f4185886e9137c61c0fde2ed26f14a76171d8c8e3a57d2cc7d40b895311c5c87`.
+
+**The gates are not decorative.** The first build attempt put OOC3 in test and
+left train with 11 merge pairs against a required 20; it aborted rather than
+write the dataset. Moving OOC3 to train fixed the assignment — and incidentally
+made train→test a genuine cross-region test, since OOC3 sits ~140 µm from P1c.
+
+### Step 4 — what to run next
+
+1. Trivial baselines first, to establish the floor: untouched-v117 (predict no
+   merges), spatial-proximity union-find, same-L2-component.
+2. Then the clean-track models (EdgePartitionGNN + edge_cc at the Phase 2.11
+   configuration), trained on train, calibrated on **val only**, one run on test.
+3. Stamp every number with `neuronauts.results_schema.ResultsRecord` carrying
+   the manifest hash above.
+4. Rewrite `EXPERIMENT_LOG.md` from those results; move the old log to
+   `docs/history/experiment_log_retracted.md`.
+
+Optional and costed, not blocking: deepen coverage beyond the 20,000-synapse
+sample using many narrow tiles at ~20k each (~17 min/region), or raise the 300s
+timeout in `lineage.py`.
+
+### Open decisions for the project owner
+
+1. **Token rotation.** The committed token is purged from source, but the value
+   in the environment is the same one. Rotate it outside this repo.
+2. **External correction.** Noted that the bad results were caught internally and
+   not read by anyone outside, so no external correction appears necessary; the
+   retraction notices stand as the internal record.
+3. **`bench_v2` scope** — whether to move to label version 1822 and/or full
+   synapse coverage.

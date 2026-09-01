@@ -78,7 +78,15 @@ scratchpad_bulk_synapses.py
 !models/cell_gnn_real.pt
 !models/cell_gnn_real.metrics.json
 
-# neuronauts-bench datasets: manifests are committed (they define the splits
-# and lock the test set); the bulk region NPZs are local-only and rebuildable
-# with scripts/build_bench_v1.py.
+# neuronauts-bench datasets. /data is ignored above, so re-admit exactly the
+# small files that DEFINE a dataset: the split manifests (root id lists, bboxes,
+# stats) and the README. The bulk region NPZs stay local-only and are
+# rebuildable with scripts/build_bench_v1.py.
+!/data/
+/data/*
+!/data/bench_v1/
+/data/bench_v1/*
+!/data/bench_v1/README.md
+!/data/bench_v1/manifests/
+!/data/bench_v1/manifests/*.json
 data/**/regions/*.npz

@@ -1,0 +1,572 @@
+{
+  "provenance": {
+    "datastack": "minnie65_public",
+    "synapse_table": "synapses_pni_2",
+    "base_version": 117,
+    "label_version": 1718,
+    "base_timestamp": 1623399000,
+    "label_timestamp": 1772871001,
+    "available_versions": [
+      117,
+      943,
+      1300,
+      1507,
+      1621,
+      1718,
+      1822
+    ],
+    "synapse_voxel_nm": [
+      4.0,
+      4.0,
+      40.0
+    ]
+  },
+  "survey_params": {
+    "limit": 20000,
+    "side": "pre",
+    "min_syn_per_fragment": 3
+  },
+  "synthetic": false,
+  "regions": [
+    {
+      "region": "P1",
+      "bbox_nm": [
+        [
+          818500,
+          685000,
+          794000
+        ],
+        [
+          918500,
+          785000,
+          994000
+        ]
+      ],
+      "side": "pre",
+      "limit": 20000,
+      "min_syn_per_fragment": 3,
+      "volume_um3": 2000000.0,
+      "n_synapses": 20000,
+      "limit_reached": true,
+      "n_unresolved": 0,
+      "n_observations_kept": 4029,
+      "status": "ok",
+      "n_base_roots": 990,
+      "n_label_roots": 1156,
+      "n_multi_fragment_label_roots": 14,
+      "n_true_merge_pairs": 16,
+      "n_mixed_lineage_base_roots": 138,
+      "frankenmerge_rate": 0.13939,
+      "merge_pairs_per_1k_synapses": 3.971,
+      "max_fragments_per_label_root": 3
+    },
+    {
+      "region": "P1a",
+      "bbox_nm": [
+        [
+          818500,
+          685000,
+          794000
+        ],
+        [
+          918500,
+          785000,
+          860667
+        ]
+      ],
+      "side": "pre",
+      "limit": 20000,
+      "min_syn_per_fragment": 3,
+      "volume_um3": 666670.0,
+      "n_synapses": 20000,
+      "limit_reached": true,
+      "n_unresolved": 0,
+      "n_observations_kept": 5148,
+      "status": "ok",
+      "n_base_roots": 1220,
+      "n_label_roots": 1388,
+      "n_multi_fragment_label_roots": 12,
+      "n_true_merge_pairs": 16,
+      "n_mixed_lineage_base_roots": 136,
+      "frankenmerge_rate": 0.11148,
+      "merge_pairs_per_1k_synapses": 3.108,
+      "max_fragments_per_label_root": 3
+    },
+    {
+      "region": "P1b",
+      "bbox_nm": [
+        [
+          818500,
+          685000,
+          860667
+        ],
+        [
+          918500,
+          785000,
+          927333
+        ]
+      ],
+      "side": "pre",
+      "limit": 20000,
+      "min_syn_per_fragment": 3,
+      "volume_um3": 666660.0,
+      "n_synapses": 20000,
+      "limit_reached": true,
+      "n_unresolved": 0,
+      "n_observations_kept": 5880,
+      "status": "ok",
+      "n_base_roots": 1333,
+      "n_label_roots": 1560,
+      "n_multi_fragment_label_roots": 20,
+      "n_true_merge_pairs": 32,
+      "n_mixed_lineage_base_roots": 184,
+      "frankenmerge_rate": 0.13803,
+      "merge_pairs_per_1k_synapses": 5.442,
+      "max_fragments_per_label_root": 3
+    },
+    {
+      "region": "P1c",
+      "bbox_nm": [
+        [
+          818500,
+          685000,
+          927333
+        ],
+        [
+          918500,
+          785000,
+          994000
+        ]
+      ],
+      "side": "pre",
+      "limit": 20000,
+      "min_syn_per_fragment": 3,
+      "volume_um3": 666670.0,
+      "n_synapses": 20000,
+      "limit_reached": true,
+      "n_unresolved": 0,
+      "n_observations_kept": 7207,
+      "status": "ok",
+      "n_base_roots": 1574,
+      "n_label_roots": 1765,
+      "n_multi_fragment_label_roots": 6,
+      "n_true_merge_pairs": 22,
+      "n_mixed_lineage_base_roots": 148,
+      "frankenmerge_rate": 0.09403,
+      "merge_pairs_per_1k_synapses": 3.053,
+      "max_fragments_per_label_root": 6
+    },
+    {
+      "region": "A",
+      "bbox_nm": [
+        [
+          750000,
+          930000,
+          780000
+        ],
+        [
+          950000,
+          1000000,
+          880000
+        ]
+      ],
+      "side": "pre",
+      "limit": 20000,
+      "min_syn_per_fragment": 3,
+      "volume_um3": 1400000.0,
+      "n_synapses": 20000,
+      "limit_reached": true,
+      "n_unresolved": 0,
+      "n_observations_kept": 4079,
+      "status": "ok",
+      "n_base_roots": 1041,
+      "n_label_roots": 1152,
+      "n_multi_fragment_label_roots": 5,
+      "n_true_merge_pairs": 5,
+      "n_mixed_lineage_base_roots": 84,
+      "frankenmerge_rate": 0.08069,
+      "merge_pairs_per_1k_synapses": 1.226,
+      "max_fragments_per_label_root": 2
+    },
+    {
+      "region": "B",
+      "bbox_nm": [
+        [
+          950000,
+          930000,
+          780000
+        ],
+        [
+          1100000,
+          1000000,
+          880000
+        ]
+      ],
+      "side": "pre",
+      "limit": 20000,
+      "min_syn_per_fragment": 3,
+      "volume_um3": 1050000.0,
+      "n_synapses": 20000,
+      "limit_reached": true,
+      "n_unresolved": 0,
+      "n_observations_kept": 5669,
+      "status": "ok",
+      "n_base_roots": 1356,
+      "n_label_roots": 1432,
+      "n_multi_fragment_label_roots": 0,
+      "n_true_merge_pairs": 0,
+      "n_mixed_lineage_base_roots": 54,
+      "frankenmerge_rate": 0.03982,
+      "merge_pairs_per_1k_synapses": 0.0,
+      "max_fragments_per_label_root": 1
+    },
+    {
+      "region": "C",
+      "bbox_nm": [
+        [
+          1400000,
+          930000,
+          780000
+        ],
+        [
+          1550000,
+          1000000,
+          880000
+        ]
+      ],
+      "side": "pre",
+      "limit": 20000,
+      "min_syn_per_fragment": 3,
+      "volume_um3": 1050000.0,
+      "n_synapses": 20000,
+      "limit_reached": true,
+      "n_unresolved": 0,
+      "n_observations_kept": 3910,
+      "status": "ok",
+      "n_base_roots": 927,
+      "n_label_roots": 979,
+      "n_multi_fragment_label_roots": 0,
+      "n_true_merge_pairs": 0,
+      "n_mixed_lineage_base_roots": 38,
+      "frankenmerge_rate": 0.04099,
+      "merge_pairs_per_1k_synapses": 0.0,
+      "max_fragments_per_label_root": 1
+    },
+    {
+      "region": "D",
+      "bbox_nm": [
+        [
+          1600000,
+          930000,
+          875000
+        ],
+        [
+          1750000,
+          1000000,
+          1100000
+        ]
+      ],
+      "side": "pre",
+      "limit": 20000,
+      "min_syn_per_fragment": 3,
+      "volume_um3": 2362500.0,
+      "n_synapses": 20000,
+      "limit_reached": true,
+      "n_unresolved": 0,
+      "n_observations_kept": 1033,
+      "status": "ok",
+      "n_base_roots": 214,
+      "n_label_roots": 214,
+      "n_multi_fragment_label_roots": 0,
+      "n_true_merge_pairs": 0,
+      "n_mixed_lineage_base_roots": 0,
+      "frankenmerge_rate": 0.0,
+      "merge_pairs_per_1k_synapses": 0.0,
+      "max_fragments_per_label_root": 1
+    },
+    {
+      "region": "E",
+      "bbox_nm": [
+        [
+          750000,
+          1000000,
+          780000
+        ],
+        [
+          950000,
+          1070000,
+          880000
+        ]
+      ],
+      "side": "pre",
+      "limit": 20000,
+      "min_syn_per_fragment": 3,
+      "volume_um3": 1400000.0,
+      "n_synapses": 20000,
+      "limit_reached": true,
+      "n_unresolved": 0,
+      "n_observations_kept": 8814,
+      "status": "ok",
+      "n_base_roots": 1812,
+      "n_label_roots": 2056,
+      "n_multi_fragment_label_roots": 1,
+      "n_true_merge_pairs": 1,
+      "n_mixed_lineage_base_roots": 155,
+      "frankenmerge_rate": 0.08554,
+      "merge_pairs_per_1k_synapses": 0.113,
+      "max_fragments_per_label_root": 2
+    },
+    {
+      "region": "T1",
+      "bbox_nm": [
+        [
+          1150000,
+          930000,
+          780000
+        ],
+        [
+          1350000,
+          1000000,
+          880000
+        ]
+      ],
+      "side": "pre",
+      "limit": 20000,
+      "min_syn_per_fragment": 3,
+      "volume_um3": 1400000.0,
+      "n_synapses": 20000,
+      "limit_reached": true,
+      "n_unresolved": 0,
+      "n_observations_kept": 4688,
+      "status": "ok",
+      "n_base_roots": 1166,
+      "n_label_roots": 1249,
+      "n_multi_fragment_label_roots": 0,
+      "n_true_merge_pairs": 0,
+      "n_mixed_lineage_base_roots": 62,
+      "frankenmerge_rate": 0.05317,
+      "merge_pairs_per_1k_synapses": 0.0,
+      "max_fragments_per_label_root": 1
+    },
+    {
+      "region": "T2",
+      "bbox_nm": [
+        [
+          550000,
+          930000,
+          780000
+        ],
+        [
+          750000,
+          1000000,
+          880000
+        ]
+      ],
+      "side": "pre",
+      "limit": 20000,
+      "min_syn_per_fragment": 3,
+      "volume_um3": 1400000.0,
+      "n_synapses": 20000,
+      "limit_reached": true,
+      "status": "base_lineage_resolution_failed"
+    },
+    {
+      "region": "T3",
+      "bbox_nm": [
+        [
+          1150000,
+          870000,
+          780000
+        ],
+        [
+          1350000,
+          940000,
+          880000
+        ]
+      ],
+      "side": "pre",
+      "limit": 20000,
+      "min_syn_per_fragment": 3,
+      "volume_um3": 1400000.0,
+      "n_synapses": 20000,
+      "limit_reached": true,
+      "n_unresolved": 0,
+      "n_observations_kept": 3008,
+      "status": "ok",
+      "n_base_roots": 794,
+      "n_label_roots": 826,
+      "n_multi_fragment_label_roots": 1,
+      "n_true_merge_pairs": 1,
+      "n_mixed_lineage_base_roots": 24,
+      "frankenmerge_rate": 0.03023,
+      "merge_pairs_per_1k_synapses": 0.332,
+      "max_fragments_per_label_root": 2
+    },
+    {
+      "region": "T4",
+      "bbox_nm": [
+        [
+          1150000,
+          1000000,
+          780000
+        ],
+        [
+          1350000,
+          1070000,
+          880000
+        ]
+      ],
+      "side": "pre",
+      "limit": 20000,
+      "min_syn_per_fragment": 3,
+      "volume_um3": 1400000.0,
+      "n_synapses": 20000,
+      "limit_reached": true,
+      "n_unresolved": 1,
+      "n_observations_kept": 10719,
+      "status": "ok",
+      "n_base_roots": 1810,
+      "n_label_roots": 1977,
+      "n_multi_fragment_label_roots": 2,
+      "n_true_merge_pairs": 2,
+      "n_mixed_lineage_base_roots": 95,
+      "frankenmerge_rate": 0.05249,
+      "merge_pairs_per_1k_synapses": 0.187,
+      "max_fragments_per_label_root": 2
+    },
+    {
+      "region": "OOC1",
+      "bbox_nm": [
+        [
+          200000,
+          500000,
+          700000
+        ],
+        [
+          400000,
+          570000,
+          800000
+        ]
+      ],
+      "side": "pre",
+      "limit": 20000,
+      "min_syn_per_fragment": 3,
+      "volume_um3": 1400000.0,
+      "n_synapses": 20000,
+      "limit_reached": true,
+      "n_unresolved": 0,
+      "n_observations_kept": 2761,
+      "status": "ok",
+      "n_base_roots": 666,
+      "n_label_roots": 670,
+      "n_multi_fragment_label_roots": 0,
+      "n_true_merge_pairs": 0,
+      "n_mixed_lineage_base_roots": 4,
+      "frankenmerge_rate": 0.00601,
+      "merge_pairs_per_1k_synapses": 0.0,
+      "max_fragments_per_label_root": 1
+    },
+    {
+      "region": "OOC2",
+      "bbox_nm": [
+        [
+          1200000,
+          400000,
+          700000
+        ],
+        [
+          1400000,
+          470000,
+          800000
+        ]
+      ],
+      "side": "pre",
+      "limit": 20000,
+      "min_syn_per_fragment": 3,
+      "volume_um3": 1400000.0,
+      "n_synapses": 20000,
+      "limit_reached": true,
+      "n_unresolved": 0,
+      "n_observations_kept": 2102,
+      "status": "ok",
+      "n_base_roots": 517,
+      "n_label_roots": 524,
+      "n_multi_fragment_label_roots": 0,
+      "n_true_merge_pairs": 0,
+      "n_mixed_lineage_base_roots": 7,
+      "frankenmerge_rate": 0.01354,
+      "merge_pairs_per_1k_synapses": 0.0,
+      "max_fragments_per_label_root": 1
+    },
+    {
+      "region": "OOC3",
+      "bbox_nm": [
+        [
+          600000,
+          600000,
+          700000
+        ],
+        [
+          800000,
+          670000,
+          800000
+        ]
+      ],
+      "side": "pre",
+      "limit": 20000,
+      "min_syn_per_fragment": 3,
+      "volume_um3": 1400000.0,
+      "n_synapses": 20000,
+      "limit_reached": true,
+      "n_unresolved": 0,
+      "n_observations_kept": 4735,
+      "status": "ok",
+      "n_base_roots": 1024,
+      "n_label_roots": 1256,
+      "n_multi_fragment_label_roots": 20,
+      "n_true_merge_pairs": 33,
+      "n_mixed_lineage_base_roots": 173,
+      "frankenmerge_rate": 0.16895,
+      "merge_pairs_per_1k_synapses": 6.969,
+      "max_fragments_per_label_root": 5
+    },
+    {
+      "region": "PCFG",
+      "bbox_nm": [
+        [
+          718592,
+          498592,
+          580640
+        ],
+        [
+          748592,
+          528592,
+          610640
+        ]
+      ],
+      "side": "pre",
+      "limit": 20000,
+      "min_syn_per_fragment": 3,
+      "volume_um3": 27000.0,
+      "status": "fetch_failed_or_empty",
+      "n_synapses": 0
+    }
+  ],
+  "ranking_by_merge_pairs": [
+    "OOC3",
+    "P1b",
+    "P1c",
+    "P1",
+    "P1a",
+    "A",
+    "T4",
+    "E",
+    "T3",
+    "B",
+    "C",
+    "D",
+    "T1",
+    "OOC1",
+    "OOC2"
+  ]
+}

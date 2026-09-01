@@ -1,0 +1,74 @@
+{
+  "dataset": "bench_v1",
+  "synthetic": false,
+  "provenance": {
+    "datastack": "minnie65_public",
+    "synapse_table": "synapses_pni_2",
+    "base_version": 117,
+    "label_version": 1718,
+    "base_timestamp": 1623399000,
+    "label_timestamp": 1772871001,
+    "available_versions": [
+      117,
+      943,
+      1300,
+      1507,
+      1621,
+      1718,
+      1822
+    ],
+    "synapse_voxel_nm": [
+      4.0,
+      4.0,
+      40.0
+    ]
+  },
+  "splits": {
+    "train": [
+      "OOC3",
+      "P1a",
+      "A",
+      "E"
+    ],
+    "val": [
+      "P1b"
+    ],
+    "test": [
+      "P1c"
+    ]
+  },
+  "seam_buffer_nm": 25000.0,
+  "manifest_sha256": {
+    "train": "97d94c5e7a132f4307cde0b82c0c4f4a30b1252ba7ce5fc2bfc7839e76b75d55",
+    "val": "1c50380c9b9f29778939dad160aac4a1d0f1dbb9a349888037773ae88646f20c",
+    "test": "e06ee9124eb422daf4276674ad079fbde6f594d2312149f8753f7fb4c26c3cfb"
+  },
+  "gates_passed": true,
+  "gate_failures": [],
+  "split_stats": {
+    "train": {
+      "n_observations": 22369,
+      "n_base_roots": 4946,
+      "n_label_roots": 5654,
+      "n_true_merge_pairs": 43,
+      "n_multi_fragment_label_roots": 32,
+      "n_mixed_lineage_base_roots": 505
+    },
+    "val": {
+      "n_observations": 5741,
+      "n_base_roots": 1311,
+      "n_label_roots": 1541,
+      "n_true_merge_pairs": 17,
+      "n_multi_fragment_label_roots": 11,
+      "n_mixed_lineage_base_roots": 177
+    },
+    "test": {
+      "n_observations": 7483,
+      "n_base_roots": 1617,
+      "n_label_roots": 1782,
+      "n_true_merge_pairs": 49,
+      "n_multi_fragment_label_roots": 12,
+      "n_mixed_lineage_base_roots": 154
+    }
+  }
+}

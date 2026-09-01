@@ -80,6 +80,14 @@ from neuronauts.data.versions import (  # noqa: E402
 REGIONS: dict[str, tuple[tuple[float, float, float], tuple[float, float, float]]] = {
     # Densely proofread column core
     "P1": ((818_500, 685_000, 794_000), (918_500, 785_000, 994_000)),
+    # P1 split into z-thirds. The survey showed the column's edit signal is
+    # concentrated here, so val and test are drawn from P1 rather than from a
+    # signal-poor region — otherwise they cannot measure anything. Defined
+    # abutting; build_bench_v1.apply_seam_buffers opens the gaps between them,
+    # and exact root dedup is the actual disjointness guarantee.
+    "P1a": ((818_500, 685_000, 794_000), (918_500, 785_000, 860_667)),
+    "P1b": ((818_500, 685_000, 860_667), (918_500, 785_000, 927_333)),
+    "P1c": ((818_500, 685_000, 927_333), (918_500, 785_000, 994_000)),
     # Training-region registry
     "A": ((750_000, 930_000, 780_000), (950_000, 1_000_000, 880_000)),
     "B": ((950_000, 930_000, 780_000), (1_100_000, 1_000_000, 880_000)),
@@ -89,11 +97,12 @@ REGIONS: dict[str, tuple[tuple[float, float, float], tuple[float, float, float]]
     # Evaluation locations
     "T1": ((1_150_000, 930_000, 780_000), (1_350_000, 1_000_000, 880_000)),
     "T2": ((550_000, 930_000, 780_000), (750_000, 1_000_000, 880_000)),
-    "T3": ((750_000, 870_000, 780_000), (950_000, 940_000, 880_000)),
-    "T4": ((750_000, 1_000_000, 780_000), (950_000, 1_070_000, 880_000)),
+    "T3": ((1_150_000, 870_000, 780_000), (1_350_000, 940_000, 880_000)),
+    "T4": ((1_150_000, 1_000_000, 780_000), (1_350_000, 1_070_000, 880_000)),
     # Out-of-column (expected: no edit signal; used as a transfer probe only)
     "OOC1": ((200_000, 500_000, 700_000), (400_000, 570_000, 800_000)),
     "OOC2": ((1_200_000, 400_000, 700_000), (1_400_000, 470_000, 800_000)),
+    "OOC3": ((600_000, 600_000, 700_000), (800_000, 670_000, 800_000)),
     # Validated densely-proofread centre used by the pcfg + EXP-051/056 work
     "PCFG": ((718_592, 498_592, 580_640), (748_592, 528_592, 610_640)),
 }

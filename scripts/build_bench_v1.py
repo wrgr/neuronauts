@@ -37,6 +37,7 @@ import json
 import os
 import sys
 from collections import defaultdict
+from itertools import combinations
 from pathlib import Path
 from typing import Optional
 
@@ -73,22 +74,93 @@ MIN_MERGE_PAIRS = {"train": 20, "val": 5, "test": 10}
 MIN_FRANKENMERGES = {"train": 5, "val": 1, "test": 1}
 
 
-def shrink_bbox(bbox, buffer_nm: float):
-    """Inset a bbox by *buffer_nm* on every face.
+LINEAGE_CACHE = REPO / "cache" / "lineage"
 
-    The seam buffer is applied to each region independently, so any two
-    regions end up separated by at least 2*buffer even if they originally
-    abutted. Fragments straddling a boundary are excluded from both sides
-    rather than assigned to one.
+
+def _resolve_base_roots_cached(svids: np.ndarray, base_ts: int) -> Optional[np.ndarray]:
+    """Resolve supervoxels -> v117 roots, caching the result on disk.
+
+    ``fetch_region_synapses`` already caches, but ``roots_at`` does not, and it
+    is the slow live call on a rebuild. Caching it keyed by the exact supervoxel
+    set makes a rebuild reproducible and near-instant. A failed resolution is
+    never cached, so a transient error cannot be frozen in as data.
     """
-    lo = np.asarray(bbox[0], float) + buffer_nm
-    hi = np.asarray(bbox[1], float) - buffer_nm
-    if np.any(hi <= lo):
-        raise SystemExit(
-            f"seam buffer {buffer_nm:.0f} nm collapses bbox {bbox}; "
-            "use a smaller buffer or a larger region"
-        )
-    return (tuple(lo.tolist()), tuple(hi.tolist()))
+    key = hashlib.sha256(
+        np.ascontiguousarray(svids, dtype=np.uint64).tobytes()
+        + str(base_ts).encode()
+    ).hexdigest()[:20]
+    LINEAGE_CACHE.mkdir(parents=True, exist_ok=True)
+    path = LINEAGE_CACHE / f"{key}.npz"
+    if path.exists():
+        try:
+            cached = np.load(path)["base_roots"].astype(np.uint64)
+            if len(cached) == len(svids):
+                print(f"    [cache] lineage hit ({len(cached):,} supervoxels)",
+                      flush=True)
+                return cached
+        except Exception:
+            pass  # corrupt cache entry: re-resolve rather than trust it
+    roots = L.roots_at(svids, base_ts)
+    if roots is None:
+        return None
+    np.savez_compressed(
+        path,
+        base_roots=np.asarray(roots, dtype=np.uint64),
+        base_timestamp=np.array([base_ts], dtype=np.int64),
+    )
+    return np.asarray(roots, dtype=np.uint64)
+
+
+def _pairwise_separation(a, b) -> np.ndarray:
+    """Per-axis separation between two boxes; >0 on an axis means a real gap."""
+    a_lo, a_hi = np.asarray(a[0], float), np.asarray(a[1], float)
+    b_lo, b_hi = np.asarray(b[0], float), np.asarray(b[1], float)
+    return np.maximum(b_lo - a_hi, a_lo - b_hi)
+
+
+def apply_seam_buffers(bboxes: dict, region_split: dict, buffer_nm: float) -> dict:
+    """Open a *buffer_nm* gap at every seam between differently-split regions.
+
+    Only faces that actually face another split are inset. A uniform inset on
+    every face would be both wasteful and impossible here: the training regions
+    are 70,000 nm deep in y, so insetting 50,000 nm per side would collapse
+    them, while P1 already sits 145,000 nm clear of the training band and needs
+    no inset at all.
+
+    Fragments in the opened gap are excluded from both sides rather than
+    assigned to one, which is what makes the split honest: Phase 2.11 measured
+    that leaving boundary fragments in inflated out-of-sample ARI by 0.149.
+    """
+    adj = {n: [np.asarray(bb[0], float).copy(), np.asarray(bb[1], float).copy()]
+           for n, bb in bboxes.items()}
+
+    for a, b in combinations(sorted(bboxes), 2):
+        if region_split[a] == region_split[b]:
+            continue  # same split: no seam to open
+        A, B = adj[a], adj[b]
+        sep = _pairwise_separation((A[0], A[1]), (B[0], B[1]))
+        axis = int(np.argmax(sep))          # the axis they are most separated on
+        gap = float(sep[axis])
+        if gap >= buffer_nm:
+            continue
+        need = (buffer_nm - max(gap, 0.0)) / 2.0
+        # Inset the two facing sides, splitting the required gap between them.
+        if A[1][axis] <= B[1][axis]:
+            A[1][axis] -= need
+            B[0][axis] += need
+        else:
+            B[1][axis] -= need
+            A[0][axis] += need
+
+    out = {}
+    for n, (lo, hi) in adj.items():
+        if np.any(hi <= lo):
+            raise SystemExit(
+                f"seam buffer {buffer_nm:.0f} nm collapses region {n}; "
+                "choose better-separated regions or a smaller buffer"
+            )
+        out[n] = (tuple(lo.tolist()), tuple(hi.tolist()))
+    return out
 
 
 def load_region(
@@ -123,9 +195,12 @@ def load_region(
     positions = np.asarray(syn["positions_nm"], dtype=np.float32)
     syn_ids = np.asarray(syn.get("synapse_ids", -np.ones(len(svids))), dtype=np.int64)
 
-    base_roots = L.roots_at(svids, base_ts)
+    base_roots = _resolve_base_roots_cached(svids, base_ts)
     if base_roots is None:
-        raise SystemExit(f"[{name}] v{BASE_VERSION} lineage resolution failed.")
+        raise SystemExit(
+            f"[{name}] v{BASE_VERSION} lineage resolution failed (transient "
+            "chunkedgraph error). Nothing cached; re-run to retry."
+        )
     base_roots = np.asarray(base_roots, dtype=np.uint64)
 
     valid = (base_roots != 0) & (label_roots != 0)
@@ -185,15 +260,19 @@ def main() -> int:
     ap.add_argument("--val-regions", nargs="*", default=DEFAULT_SPLITS["val"])
     ap.add_argument("--test-regions", nargs="*", default=DEFAULT_SPLITS["test"])
     ap.add_argument("--seam-buffer-nm", type=float, default=DEFAULT_SEAM_BUFFER_NM)
-    ap.add_argument("--limit", type=int, default=200_000,
-                    help="per-tile row cap when --tiled (default), else the "
-                         "total per-region cap")
+    ap.add_argument("--limit", type=int, default=20_000,
+                    help="per-region row cap (or per-tile cap with --tiled). "
+                         "Measured on this endpoint: limit=20,000 returns in "
+                         "~51s, limit=200,000 exceeds lineage.py's own 300s "
+                         "request timeout and returns nothing. Raise only with "
+                         "--tiled and narrow --tile-x-nm.")
     ap.add_argument("--side", default="pre", choices=["pre", "post"])
     ap.add_argument("--min-syn-per-fragment", type=int, default=3)
-    ap.add_argument("--tiled", action="store_true", default=True,
-                    help="fetch by x-tiles to cover the region instead of "
-                         "truncating at --limit in unstable server order "
-                         "(default: on)")
+    ap.add_argument("--tiled", action="store_true", default=False,
+                    help="fetch by x-tiles for fuller coverage. Off by "
+                         "default: a wide tile at a high --limit exceeds the "
+                         "300s request timeout. Use with a narrow "
+                         "--tile-x-nm.")
     ap.add_argument("--no-tiled", dest="tiled", action="store_false")
     ap.add_argument("--tile-x-nm", type=float, default=40_000.0)
     ap.add_argument("--out-dir", default=f"data/{DATASET_NAME}")
@@ -221,10 +300,20 @@ def main() -> int:
         raise SystemExit(f"unknown region(s): {unknown}")
 
     # ---- fetch every region, seam-buffered ---------------------------------
+    region_split = {n: s for s, ns in split_regions.items() for n in ns}
+    buffered = apply_seam_buffers(
+        {n: REGIONS[n] for n in all_named}, region_split, args.seam_buffer_nm)
+    for n in all_named:
+        orig = np.asarray(REGIONS[n][1], float) - np.asarray(REGIONS[n][0], float)
+        new_e = np.asarray(buffered[n][1], float) - np.asarray(buffered[n][0], float)
+        if not np.allclose(orig, new_e):
+            print(f"[seam] {n}: extent {orig.astype(int)} -> {new_e.astype(int)} nm",
+                  flush=True)
+
     loaded: dict[str, dict] = {}
     for split, names in split_regions.items():
         for name in names:
-            bbox = shrink_bbox(REGIONS[name], args.seam_buffer_nm)
+            bbox = buffered[name]
             print(f"[{split}/{name}] fetching (seam-buffered) …", flush=True)
             rec = load_region(
                 name, bbox, base_ts=base_ts, label_version=LABEL_VERSION,

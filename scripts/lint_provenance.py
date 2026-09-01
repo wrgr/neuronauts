@@ -150,7 +150,9 @@ def lint_file(path: Path) -> list[tuple[int, str, str]]:
             line = lines[lineno - 1] if lineno <= len(lines) else ""
 
             # Inline waiver, e.g.  # provenance-lint: allow SYNTH001 - reason
-            window = "\n".join(lines[max(0, lineno - 2):lineno])
+            # Look back a few lines so a waiver whose reason wraps onto a
+            # second comment line still applies.
+            window = "\n".join(lines[max(0, lineno - 4):lineno])
             if ALLOW_COMMENT in window and code in window:
                 continue
             # Skip comment/docstring-only mentions.

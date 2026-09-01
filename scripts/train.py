@@ -634,7 +634,7 @@ def cmd_train(args: argparse.Namespace) -> int:  # noqa: C901
         epoch_gat_f1s: list[float] = []
 
         # provenance-lint: allow SPLIT001 - batch ordering within train, not a split
-    order = rng.permutation(len(train_records))
+        order = rng.permutation(len(train_records))
         for idx in order:
             record = train_records[idx]
             try:
