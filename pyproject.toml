@@ -59,6 +59,9 @@ packages = [
     "neuronauts.data",
     "neuronauts.represent",
     "neuronauts.assemble",
+    "neuronauts.meshing",
+    "neuronauts.harness",
+    "neuronauts.report",
     "treestitch",
 ]
 
