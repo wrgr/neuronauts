@@ -181,7 +181,7 @@ cat results/atom_geometry_tiers.json
 
 **Existing skeleton/split code to reuse (not yet wired to harness):**
 
-See also [Skeleton code survey](a9ab9fd3-c196-4f11-81ba-082ec237dca7) for full inventory.
+See `neuronauts/cell_graph.py::precompute_self_skeletons_for_cache` and `neuronauts/data/lineage.py::l2_skeleton` for the two skeleton paths.
 
 | Tier | When | Topology | Radii | Entry point |
 |------|------|----------|-------|-------------|

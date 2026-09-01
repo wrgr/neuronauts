@@ -1,8 +1,19 @@
+> **Archived 2026-09-01.** Status: superseded. One of five "direction" docs
+> that disagreed about the canonical pipeline (`docs/consolidation_plan.md`
+> §1.1, §4.4); moved here with `git mv` so history is preserved. Superseded by
+> [`docs/architecture.md`](../../architecture.md) (current system
+> architecture) and
+> [`docs/roadmap_global_assembly.md`](../../roadmap_global_assembly.md)
+> (current direction). Content below is unchanged from the original (its
+> internal relative links still assume the old `docs/` location).
+
+---
+
 # Neuronauts Model & Architecture Note
 
 > ⚠️ **Historical architecture note** — may reference deprecated v1 modules
 > (agent/membrane simulation). See [`../README.md`](../README.md) and
-> [`roadmap_global_assembly.md`](roadmap_global_assembly.md) for the current
+> [`roadmap_global_assembly.md`](../../roadmap_global_assembly.md) for the current
 > architecture.
 
 > Captured from design discussion. Covers: agent/grammar/GAT pipeline, global vs box-scale, and the question of hierarchical assembly.

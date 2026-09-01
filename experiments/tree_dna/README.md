@@ -51,5 +51,5 @@ and not tracked — write runs under `models/scratch/`.
 
 Promote when a tree-DNA-only same-neuron predictor beats the 6-scalar-feature
 CellGNN baseline on the spatial val/test split (the "leaving signal on the table"
-gap in [`docs/TODO.md`](../../docs/TODO.md)), making tree-DNA the primary node
+gap in [`docs/TODO.md`](../../docs/archive/2026-09/TODO.md) (archived)), making tree-DNA the primary node
 feature for global assembly.

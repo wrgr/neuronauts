@@ -110,7 +110,8 @@ python scripts/coassign_demo.py --n-neurons 30 --n-pieces 3 --cell-type 23P  # w
 
 ## Next steps
 
-See [NEXT_STEPS.md](../../NEXT_STEPS.md) for the full roadmap.
+See [NEXT_STEPS.md](../../docs/archive/2026-09/NEXT_STEPS.md) (archived; see
+`docs/roadmap_global_assembly.md` for the current roadmap).
 
 **Immediate improvements:**
 1. Threshold tuning / learned threshold — the model learns good scores but the fixed 0.5 threshold is too conservative; a calibration pass on held-out data would improve recall without hurting precision

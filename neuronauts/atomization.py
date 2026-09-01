@@ -41,35 +41,28 @@ def cut_components(n_vertices: int, edges: np.ndarray,
 
 def pair_counts(true_labels: np.ndarray,
                 predicted_labels: np.ndarray) -> dict[str, int]:
-    """Pairwise sufficient statistics for one partition."""
-    true_labels = np.asarray(true_labels)
-    predicted_labels = np.asarray(predicted_labels)
-    _, true_inverse = np.unique(true_labels, return_inverse=True)
-    _, pred_inverse = np.unique(predicted_labels, return_inverse=True)
-    n_pred = int(pred_inverse.max()) + 1 if len(pred_inverse) else 0
-    joint = np.bincount(true_inverse * max(n_pred, 1) + pred_inverse)
-    true_count = np.bincount(true_inverse)
-    pred_count = np.bincount(pred_inverse)
-    choose2 = lambda values: int(np.sum(values * (values - 1) // 2))
-    total = len(true_labels) * (len(true_labels) - 1) // 2
-    true_pairs = choose2(true_count)
-    predicted_pairs = choose2(pred_count)
-    true_positive = choose2(joint)
-    false_positive = predicted_pairs - true_positive
-    false_negative = true_pairs - true_positive
-    cross_pairs = total - true_pairs
-    true_negative = cross_pairs - false_positive
-    return {
-        "tp": true_positive, "fp": false_positive,
-        "fn": false_negative, "tn": true_negative,
-    }
+    """Pairwise sufficient statistics for one partition.
+
+    Delegates to :mod:`neuronauts.metrics` (one sparse contingency table
+    instead of a hand-rolled joint-key bincount).
+    """
+    from neuronauts.metrics._core import contingency, pair_confusion
+
+    tp, fp, fn, tn = pair_confusion(
+        contingency(np.asarray(true_labels), np.asarray(predicted_labels)))
+    return {"tp": tp, "fp": fp, "fn": fn, "tn": tn}
 
 
 def metrics_from_counts(counts: dict[str, int]) -> dict[str, float]:
+    """Precision/recall/F1 plus cross-lineage split recall (specificity).
+
+    Historical convention preserved: every ratio defaults to 1.0 (not NaN)
+    when its denominator is zero.
+    """
+    from neuronauts.metrics._core import prf1, safe_div
+
     tp, fp, fn, tn = (counts[key] for key in ("tp", "fp", "fn", "tn"))
-    precision = tp / (tp + fp) if tp + fp else 1.0
-    recall = tp / (tp + fn) if tp + fn else 1.0
-    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
-    split_recall = tn / (tn + fp) if tn + fp else 1.0
+    precision, recall, f1 = prf1(tp, fp, fn, undefined=1.0)
+    split_recall = safe_div(tn, tn + fp, undefined=1.0)
     return {"pair_precision": precision, "pair_recall": recall,
             "pair_f1": f1, "cross_lineage_split_recall": split_recall}

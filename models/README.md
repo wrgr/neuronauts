@@ -33,9 +33,10 @@ To keep this directory legible, smoke/unit-test artifacts, ablation sweeps, and
 one-off benchmark dumps were removed from git. Their **findings are preserved**:
 
 - **K-hop sweep** (`cell_gnn_seg_K1..K5`): K=1 underfits (0.176); K=2..4 flat at
-  ~0.195 ±0.003. See `docs/TODO.md`.
+  ~0.195 ±0.003. See `docs/archive/2026-09/TODO.md` (archived).
 - **Per-feature ablation** (`cell_gnn_seg_drop_*`): all 6 deltas within ±0.01
-  mean F1 — scalar features largely redundant. See `docs/TODO.md`.
+  mean F1 — scalar features largely redundant. See `docs/archive/2026-09/TODO.md`
+  (archived).
 - **Hard-negative mining** (`cell_gnn_hardneg*`): eliminates wrong-base merges but
   degrades pos-sim (0.959→0.848); bottleneck is ~37 boxes. (Diagnosis was in the
   dropped `cell_gnn_hardneg_v2.metrics.json`.)

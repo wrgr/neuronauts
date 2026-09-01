@@ -660,7 +660,7 @@ tests/test_coassign.py        ← 25 tests, all green
 | Endpoint edges | `graph.py` | 1 day |
 | Within-type eval | run the demo | 30 min |
 
-**Read `INTRO.md`** for the full biology + pipeline walkthrough · **`NEXT_STEPS.md`** for the roadmap.
+**Read `INTRO.md`** for the full biology + pipeline walkthrough · **`docs/archive/2026-09/NEXT_STEPS.md`** (archived) for the historical roadmap, or `docs/roadmap_global_assembly.md` for the current one.
 
 ---
 

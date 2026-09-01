@@ -1,3 +1,17 @@
+> **Archived 2026-09-01.** Status: superseded. One of five "direction" docs
+> that disagreed about the canonical pipeline (`docs/consolidation_plan.md`
+> §1.1, §4.4); moved here with `git mv` so history is preserved. These were
+> the CellGNN's open items and ablation findings (K-hop sweep, per-feature
+> drop); the CellGNN itself has an architectural F1 ceiling of ~0.27
+> (`docs/architecture.md`). Superseded by
+> [`docs/roadmap_global_assembly.md`](../../roadmap_global_assembly.md) and
+> the experiment program in
+> [`docs/consolidation_plan.md`](../../consolidation_plan.md) §6, which is
+> where open items are now tracked. Content below is unchanged from the
+> original.
+
+---
+
 # CellGNN Pipeline — Open Items
 
 Status as of 2026-04-28.  Ordered by current dependency.

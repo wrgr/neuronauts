@@ -1,3 +1,15 @@
+> **Archived 2026-09-01.** Status: superseded. One of five "direction" docs
+> that disagreed about the canonical pipeline (`docs/consolidation_plan.md`
+> §1.1, §4.4); moved here with `git mv` so history is preserved. This is the
+> implementation plan for the box-local CellGNN, which has an architectural F1
+> ceiling of ~0.27 (`docs/architecture.md`). Superseded by
+> [`docs/roadmap_global_assembly.md`](../../roadmap_global_assembly.md)
+> (canonical since 2026-06-05), which extends rather than replaces this plan:
+> the CellGNN becomes the within-region assembler of that roadmap's Stage C.
+> Content below is unchanged from the original.
+
+---
+
 # Global Topological Merge: Implementation Plan
 
 > **Status: Phase 0 + Sampling Strategy implemented.**

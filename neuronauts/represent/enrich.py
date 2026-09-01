@@ -10,8 +10,8 @@ graph (Phase 2).  It provides:
    labels for a random sample of synapse pairs (the pair AUC task).
 
 3. ``evaluate_dna_auc`` — wraps the above into the ablation metric reported in
-   STATUS.md: "DNA-only AUC vs spatial-proximity baseline on same-neuron
-   synapse-pair classification."
+   docs/archive/2026-09/STATUS.md (archived): "DNA-only AUC vs spatial-proximity
+   baseline on same-neuron synapse-pair classification."
 
 Ground truth: ``Region.pre_root_id`` (``label_version`` root IDs).
 DNA features: ``Fragment.dna`` keyed by ``Fragment.synapse_indices`` (which rows

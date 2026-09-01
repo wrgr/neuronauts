@@ -1,3 +1,15 @@
+> **Archived 2026-09-01.** Status: superseded. One of five "direction" docs
+> that disagreed about the canonical pipeline (`docs/consolidation_plan.md`
+> §1.1, §4.4); moved here with `git mv` so history is preserved. The
+> `neuronauts.coassign` idea described below ("synapses as invariant nodes,"
+> calibrated P(same), K materializations) is folded into `assemble/` +
+> `represent/` per `docs/consolidation_plan.md` §4.1; the overall direction is
+> superseded by
+> [`docs/roadmap_global_assembly.md`](../../roadmap_global_assembly.md)
+> (canonical since 2026-06-05). Content below is unchanged from the original.
+
+---
+
 # Next Steps
 
 ## Where we are

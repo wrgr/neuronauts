@@ -1,10 +1,21 @@
+> **Archived 2026-09-01.** Status: superseded. One of five "direction" docs
+> that disagreed about the canonical pipeline (`docs/consolidation_plan.md`
+> §1.1, §4.4); moved here with `git mv` so history is preserved. Its own
+> banner below already named its replacements
+> ([`README.md`](../../../README.md), [`models/README.md`](../../../models/README.md),
+> [`roadmap_global_assembly.md`](../../roadmap_global_assembly.md)); this
+> header just records the move. Content below is unchanged from the original
+> (its internal relative links still assume the old `docs/` location).
+
+---
+
 # Pipeline State & Reinitialization Guide
 
 > ⚠️ **Historical (2026-05-01 snapshot).** Mixes the v1 agent/simulation framing
 > with the no-EM pipeline and references checkpoints that have since been curated
 > away. Canonical sources: [`../README.md`](../README.md) (what runs today),
-> [`../models/README.md`](../models/README.md) (checkpoints), and
-> [`roadmap_global_assembly.md`](roadmap_global_assembly.md) (direction).
+> [`models/README.md`](../../../models/README.md) (checkpoints), and
+> [`roadmap_global_assembly.md`](../../roadmap_global_assembly.md) (direction).
 
 Status: 2026-05-01 (updated).
 

@@ -47,7 +47,7 @@ python scripts/train.py evaluate \
 | `cell_gnn_real.pt` | test F1 0.264 @ t=0.99 (first real-CAVE no-EM baseline) |
 
 Ablation findings (K-hop sweep, per-feature drop) are summarized in
-[`docs/TODO.md`](../../docs/TODO.md) and [`models/README.md`](../../models/README.md);
+[`docs/TODO.md`](../../docs/archive/2026-09/TODO.md) (archived) and [`models/README.md`](../../models/README.md);
 the sweep checkpoints themselves were curated out.
 
 ## Graduation

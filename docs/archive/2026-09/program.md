@@ -1,9 +1,17 @@
+> **Archived 2026-09-01.** Status: superseded. One of five "direction" docs
+> that disagreed about the canonical pipeline (`docs/consolidation_plan.md`
+> §1.1, §4.4); moved here with `git mv` so history is preserved. Superseded by
+> [`docs/roadmap_global_assembly.md`](../../roadmap_global_assembly.md),
+> declared canonical 2026-06-05. Content below is unchanged from the original.
+
+---
+
 # Neuronauts v2: Scaffolded Global Grammar
 
 > ⚠️ **Historical — describes the v2 (EM voxels + agents + GAT) vision, not the
 > pipeline that runs today.** For what currently runs, see [`README.md`](README.md);
 > for the project's direction, see
-> [`docs/roadmap_global_assembly.md`](docs/roadmap_global_assembly.md). Retained
+> [`docs/roadmap_global_assembly.md`](../../roadmap_global_assembly.md). Retained
 > because the outer-loop research brief and the "shared learned representation"
 > thesis below still apply.
 

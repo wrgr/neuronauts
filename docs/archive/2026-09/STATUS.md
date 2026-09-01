@@ -1,3 +1,14 @@
+> **Archived 2026-09-01.** Status: superseded. One of five "direction" docs
+> that disagreed about the canonical pipeline (`docs/consolidation_plan.md`
+> §1.1, §4.4); moved here with `git mv` so history is preserved. This was a
+> running phase-by-phase status log; it stopped being the source of truth once
+> results started carrying their own provenance. Superseded by
+> [`docs/consolidation_plan.md`](../../consolidation_plan.md) (current survey
+> and execution log, §8b) and by `results/EXP-*/provenance.json` for anything
+> claimed as a result. Content below is unchanged from the original.
+
+---
+
 # Status
 
 ## Phase 0 — COMPLETE

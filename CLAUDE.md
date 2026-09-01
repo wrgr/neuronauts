@@ -59,7 +59,9 @@ code is correct here, with a check I could show?"* If no, don't write it.
 - Clean up scratch files; don't commit them.
 
 ## 2. Project context
-- `program.md` — pipeline overview, training/eval commands, key files.
+- `docs/roadmap_global_assembly.md` — canonical pipeline overview and
+  direction (supersedes `docs/archive/2026-09/program.md`, see
+  `docs/consolidation_plan.md` §4.4).
 - `README.md` — project summary and setup.
 - `experiments/pcfg_synapse_partitions/README.md` — PCFG synapse-partition
   experiment.

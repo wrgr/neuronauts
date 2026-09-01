@@ -522,7 +522,22 @@ def pairwise_merge_metrics(
     A pair of observations is a *predicted merge* when both share a predicted
     cluster; a *true merge* when both share a ground-truth object.  Computed in
     closed form (Σ C(n,2) over contingency cells) — no pair sampling.
+
+    Delegates to :func:`neuronauts.metrics.partition_metrics`. Note the
+    filtering convention here: an abstained observation (``pred ==
+    ignore_pred``) is *dropped* entirely, not kept as its own singleton —
+    different from ``partition_metrics``' own ``pred_ignore`` (singleton)
+    convention, so the drop is done before delegating.
+
+    Behaviour change from the pre-consolidation version: when precision and
+    recall are both legitimately 0.0 (there were predicted/true merges, just
+    none correct), ``merge_f1`` is now 0.0, not NaN. The old code special-cased
+    ``(prec + rec) > 0`` in a way that made a genuine (0, 0) collapse to NaN
+    indistinguishably from the "undefined" case — inconsistent with every
+    other F1 in this codebase and not depended on by any test.
     """
+    from neuronauts.metrics.partition import partition_metrics
+
     pred = np.asarray(pred, dtype=np.int64)
     true = np.asarray(true, dtype=np.int64)
     keep = (pred != ignore_pred) & (true != ignore_true)
@@ -531,26 +546,9 @@ def pairwise_merge_metrics(
         return {"merge_precision": float("nan"), "merge_recall": float("nan"),
                 "merge_f1": float("nan"), "n_obs": 0}
 
-    def _pairs(x: np.ndarray) -> float:
-        _, c = np.unique(x, return_counts=True)
-        return float((c * (c - 1) // 2).sum())
-
-    # joint cells via a combined key — remap to compact indices first so the
-    # multiplication cannot overflow int64 (real root ids are ~1e18)
-    _, pred_c = np.unique(pred, return_inverse=True)
-    _, true_c = np.unique(true, return_inverse=True)
-    pred_c = pred_c.astype(np.int64)
-    true_c = true_c.astype(np.int64)
-    joint = pred_c * (int(true_c.max()) + 1) + true_c
-    tp = _pairs(joint)
-    pred_pos = _pairs(pred)
-    true_pos = _pairs(true)
-    prec = tp / pred_pos if pred_pos > 0 else float("nan")
-    rec = tp / true_pos if true_pos > 0 else float("nan")
-    f1 = (2 * prec * rec / (prec + rec)
-          if prec == prec and rec == rec and (prec + rec) > 0 else float("nan"))
-    return {"merge_precision": prec, "merge_recall": rec, "merge_f1": f1,
-            "n_obs": int(len(pred))}
+    m = partition_metrics(pred, true, ignore=None)
+    return {"merge_precision": m["pair_precision"], "merge_recall": m["pair_recall"],
+            "merge_f1": m["pair_f1"], "n_obs": int(len(pred))}
 
 
 def stitch_edge_precision(

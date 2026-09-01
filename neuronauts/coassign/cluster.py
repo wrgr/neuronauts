@@ -167,29 +167,18 @@ def pairwise_precision_recall(
       FN: predicted different-neuron AND truly same-neuron
 
     These metrics are defined purely on synapse pairs — independent of
-    segmentation version or number of neurons.
+    segmentation version or number of neurons. Delegates to
+    :func:`neuronauts.metrics.partition_metrics` (one sparse contingency
+    table, O(N log N)) rather than the dense N x N pair matrix this used to
+    build. Historical convention preserved: precision/recall/f1 default to
+    0.0 (not NaN) when their denominator is zero.
     """
-    mask = true_labels != ignore_label
-    p = pred_labels[mask]
-    t = true_labels[mask]
-    N = len(p)
-    if N < 2:
-        return {"precision": 0.0, "recall": 0.0, "f1": 0.0, "tp": 0.0, "fp": 0.0, "fn": 0.0}
+    from neuronauts.metrics.partition import partition_metrics
 
-    pred_same = (p[:, None] == p[None, :]) & ~np.eye(N, dtype=bool)
-    true_same = (t[:, None] == t[None, :]) & ~np.eye(N, dtype=bool)
-
-    tp = float((pred_same & true_same).sum()) / 2
-    fp = float((pred_same & ~true_same).sum()) / 2
-    fn = float((~pred_same & true_same).sum()) / 2
-
-    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-    recall    = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-    f1 = (2 * precision * recall / (precision + recall)
-          if (precision + recall) > 0 else 0.0)
-
-    return {"precision": precision, "recall": recall, "f1": f1,
-            "tp": tp, "fp": fp, "fn": fn}
+    m = partition_metrics(pred_labels, true_labels, ignore=ignore_label, undefined=0.0)
+    return {"precision": m["pair_precision"], "recall": m["pair_recall"],
+            "f1": m["pair_f1"], "tp": m["pair_tp"], "fp": m["pair_fp"],
+            "fn": m["pair_fn"]}
 
 
 def coverage_at_k(

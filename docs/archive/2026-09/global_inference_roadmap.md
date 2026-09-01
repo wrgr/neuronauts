@@ -1,6 +1,16 @@
+> **Archived 2026-09-01.** Status: superseded. One of five "direction" docs
+> that disagreed about the canonical pipeline (`docs/consolidation_plan.md`
+> §1.1, §4.4); moved here with `git mv` so history is preserved. Its own
+> banner below already said it was superseded by
+> [`roadmap_global_assembly.md`](../../roadmap_global_assembly.md); this
+> header just records the move. Content below is unchanged from the original
+> (its internal relative links still assume the old `docs/` location).
+
+---
+
 ## Neuronauts: Global Inference Roadmap
 
-> ⚠️ **Superseded by [`roadmap_global_assembly.md`](roadmap_global_assembly.md).**
+> ⚠️ **Superseded by [`roadmap_global_assembly.md`](../../roadmap_global_assembly.md).**
 > Kept for history; see [`../README.md`](../README.md) for the pipeline that runs
 > today.
 
