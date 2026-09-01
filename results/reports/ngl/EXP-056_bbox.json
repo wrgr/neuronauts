@@ -1,0 +1,82 @@
+{
+  "dimensions": {
+    "x": [
+      1e-09,
+      "m"
+    ],
+    "y": [
+      1e-09,
+      "m"
+    ],
+    "z": [
+      1e-09,
+      "m"
+    ]
+  },
+  "position": [
+    859776.0,
+    715136.0,
+    890040.0
+  ],
+  "crossSectionScale": 33.33,
+  "projectionScale": 48000.0,
+  "layers": [
+    {
+      "type": "image",
+      "source": "precomputed://https://bossdb-open-data.s3.amazonaws.com/iarpa_microns/minnie/minnie65/em",
+      "name": "em",
+      "shader": "void main() { emitGrayscale(toNormalized(getDataValue())); }"
+    },
+    {
+      "type": "segmentation",
+      "source": "graphene://https://minnie.microns-daf.com/segmentation/table/minnie65_public",
+      "name": "segmentation",
+      "segments": [],
+      "objectAlpha": 0.6,
+      "hideSegmentZero": true
+    },
+    {
+      "type": "annotation",
+      "name": "experiment bbox",
+      "source": {
+        "url": "local://annotations",
+        "transform": {
+          "outputDimensions": {
+            "x": [
+              1e-09,
+              "m"
+            ],
+            "y": [
+              1e-09,
+              "m"
+            ],
+            "z": [
+              1e-09,
+              "m"
+            ]
+          }
+        }
+      },
+      "annotationColor": "#2a78d6",
+      "annotations": [
+        {
+          "type": "axis_aligned_bounding_box",
+          "id": "experiment bbox-box",
+          "pointA": [
+            844776.0,
+            700136.0,
+            875040.0
+          ],
+          "pointB": [
+            874776.0,
+            730136.0,
+            905040.0
+          ],
+          "description": "EXP-056 box"
+        }
+      ]
+    }
+  ],
+  "showSlices": false,
+  "layout": "4panel"
+}
