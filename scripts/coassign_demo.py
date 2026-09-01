@@ -34,7 +34,8 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-TOKEN = "a08cdcba8581846f48d5742a75c53311"
+from neuronauts.data.auth import cave_token  # token must come from the environment
+TOKEN = cave_token()
 
 
 # ---------------------------------------------------------------------------

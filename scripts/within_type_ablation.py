@@ -59,7 +59,8 @@ SKELETON_CACHE_BASE = (
     "https://minnie.microns-daf.com/skeletoncache/api/v1/"
     "minnie65_public/precomputed/skeleton"
 )
-TOKEN = "a08cdcba8581846f48d5742a75c53311"
+from neuronauts.data.auth import cave_token  # token must come from the environment
+TOKEN = cave_token()
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +204,7 @@ def main() -> int:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--cache-dir", default=None,
                    help="Directory to cache downloaded tables")
-    p.add_argument("--encoder", choices=["path", "gnn"], default="path",
+    p.add_argument("--encoder", choices=["path", "gnn", "vicreg"], default="path",
                    help="path=TreeDNAEncoder (hand-crafted 6-D), gnn=SkeletonGNN (raw graph)")
     args = p.parse_args()
 

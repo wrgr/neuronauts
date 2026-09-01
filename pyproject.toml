@@ -64,6 +64,9 @@ packages = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# quarantine/ holds synthetic-derived and label-leaking code frozen as a
+# historical record; it must never be collected or imported.
+norecursedirs = ["quarantine", ".git", "build", "dist"]
 markers = [
     "legacy: v1 agent/membrane simulation tests that exercise neuronauts.legacy; run with -m 'not legacy' to skip",
 ]

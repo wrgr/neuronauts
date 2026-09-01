@@ -241,7 +241,7 @@ def main() -> int:
     p.add_argument("--max-pairs", type=int, default=2000)
     p.add_argument("--device", default="cpu")
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--token", default="a08cdcba8581846f48d5742a75c53311",
+    p.add_argument("--token", default=None,
                    help="CAVE auth token")
     args = p.parse_args()
 

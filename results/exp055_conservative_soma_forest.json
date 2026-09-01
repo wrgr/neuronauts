@@ -1,0 +1,16 @@
+{
+  "assembly_metrics": {},
+  "experiment": "EXP-055 conservative soma-seeded forest",
+  "interpretation": "No forest was assembled because joining roots with an unvalidated or empty scorer would reproduce the EXP-053A collapse failure.",
+  "prerequisite_gate": {
+    "observed_scorer_status": "prerequisite_failed",
+    "passed": false,
+    "required_scorer_status": "completed"
+  },
+  "provenance": {
+    "git_commit": "6c5e3aac03247c7bda4a1df46b783feccf2d195d",
+    "input": "results/exp054_fixed_panel_scorers.json",
+    "synthetic_fallback": false
+  },
+  "status": "prerequisite_failed"
+}

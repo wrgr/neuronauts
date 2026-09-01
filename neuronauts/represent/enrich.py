@@ -285,10 +285,21 @@ def evaluate_dna_auc(
         ``dna_auc``, ``n_pos``, ``n_neg``, ``n_no_dna``
         and optionally ``baseline_auc`` (spatial proximity).
     """
-    try:
-        from sklearn.metrics import roc_auc_score
-    except ImportError as exc:
-        raise ImportError("pip install scikit-learn") from exc
+    def roc_auc_score(y_true, y_score):
+        try:
+            from sklearn.metrics import roc_auc_score as _sklearn_auc
+            return float(_sklearn_auc(y_true, y_score))
+        except ImportError:
+            from scipy.stats import rankdata
+            y_true = np.asarray(y_true)
+            y_score = np.asarray(y_score)
+            ranks = rankdata(y_score)
+            n_pos = int(np.sum(y_true == 1))
+            n_neg = int(np.sum(y_true == 0))
+            if n_pos == 0 or n_neg == 0:
+                return 0.5
+            u = np.sum(ranks[y_true == 1]) - n_pos * (n_pos + 1) / 2.0
+            return float(u / (n_pos * n_neg))
 
     _rng = rng or np.random.default_rng(0)
 

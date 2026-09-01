@@ -33,7 +33,7 @@ def fetch_box():
     """Fetch synapses + EM for a small Minnie65 box."""
     from caveclient import CAVEclient
 
-    token = os.environ.get("CAVE_TOKEN") or "a08cdcba8581846f48d5742a75c53311"
+    token = os.environ.get("CAVE_TOKEN")
 
     print(f"Connecting to CAVE ({DATASTACK})...")
     client = CAVEclient(DATASTACK, server_address=CAVE_SERVER, auth_token=token)

@@ -21,7 +21,7 @@ Usage
 -----
   python scripts/multi_fragment_ablation.py \\
       --n-neurons 60 --n-splits 4 --epochs 80 \\
-      --token a08cdcba8581846f48d5742a75c53311
+      --token $CAVE_TOKEN
 
   # Restrict to medium-volume neurons (crude pyramidal-cell proxy)
   python scripts/multi_fragment_ablation.py \\
@@ -412,7 +412,7 @@ def main() -> int:
     p.add_argument("--max-pairs", type=int, default=2000)
     p.add_argument("--device", default="cpu")
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--token", default="a08cdcba8581846f48d5742a75c53311")
+    p.add_argument("--token", default=None, help="CAVE token; defaults to $CAVE_TOKEN")
     p.add_argument("--volume-min", type=float, default=None,
                    help="Min nucleus volume µm³ (cell-type proxy)")
     p.add_argument("--volume-max", type=float, default=None,
@@ -434,6 +434,7 @@ def main() -> int:
         print(f"  Warning: only {len(records)} records pass volume filter "
               f"(need ~{args.n_neurons * 3}); reduce --n-neurons or widen volume range")
 
+    # provenance-lint: allow SPLIT001 - samples neurons for an encoder ablation; no train/test split here
     rng.shuffle(records := list(records))
     region, fragments, root_label_map = build_multi_fragment_world(
         records,
