@@ -458,7 +458,30 @@ undefined precision when nothing is predicted is **NaN, not 1.0**; pairs are
 counted over the evaluated unit only; ERL uses skeleton cable, not synapse
 chords.
 
-### 7.2 The baseline ladder
+### 7.2 Two different things called "baselines"
+
+Keep these separate; conflating them is how a weak result looks strong.
+
+- **The ladder** (below) — floor, controls, and ceiling *on our substrate*. It
+  answers "did this method do anything?" Every row is cheap and must appear in
+  every results table.
+- **Comparison methods** — published approaches (NEURD, RoboEM-style
+  continuation, point-affinity clustering, multicut variants) reimplemented or
+  run on *our* substrate under *our* protocol. This answers "is this
+  competitive?" and it is the harder, more valuable axis.
+
+`neuronauts/harness/baselines.py` currently implements the ladder plus two
+learned scorers (logistic, gradient-boosted stumps); it was intended as the
+comparison-methods surface. **Paused as of 2026-09-01** — resume by deciding
+which published methods are in scope and what a faithful reimplementation on
+the harness substrate requires. Until then, EXP-058 runs the ladder only, and
+no result claims competitiveness with published work.
+
+Literature numbers as *published* stay in their own table labelled "different
+data, different protocol" and never share a row with ours; a comparison method
+only earns a shared row once it has been run on our substrate.
+
+### 7.2.1 The ladder
 
 Every results table has these rows, in this order, on the same substrate:
 
@@ -509,6 +532,9 @@ Literature numbers (FFN, multicut, FlyWire) live in a separate table labelled
 | 2026-09-01 | 2 (partial) | **Attic created.** `neuronauts/morpho_grammar/` → `attic/morpho_grammar/` (26 engines) with a `__path__`-redirecting shim that keeps `neuronauts.morpho_grammar.*` importable under a `DeprecationWarning`. 34 benchmark scripts → `attic/benchmarks_semi_synthetic/`; `tests/test_morpho_grammar.py` → `attic/tests/`. Selection criterion was objective (`grep -l "treestitch.worldbuild"`), plus three scripts verified by hand: `benchmark_exp049` (unconditional fallback), `benchmark_exp050` (neurons generated from random walks), `benchmark_pcfg_infiller` (imports a class that does not exist). EXP-051–056 stayed in `scripts/`. All 34 moved scripts parse and every import still resolves. |
 | 2026-09-01 | 0 | **Provenance headers.** Superseded banner on `EXPERIMENT_LOG.md`; new `docs/paper/README.md`; `% SUPERSEDED` stamps in all three LaTeX sources. `attic/README.md` carries the full audit. |
 | 2026-09-01 | 0 | **Collection error fixed.** `tests/test_synapse_table_filter.py` tested `SynapseTable.filter_clutter` / `line_graph._clutter_keep_indices`, which live only on the unmerged branch `claude/remove-connectome-clutter-CkKag`; the test was merged without the implementation, so a bare `pytest` aborted with `ImportError`. Now skipped with that reason. **`pytest` collects cleanly for the first time: 1,494 tests, 0 errors.** |
+| 2026-09-01 | 0 | **Decision 0 done — the untracked tree is committed** in five reviewed commits: `harness/` (substrate), `report/` (provenance + rendering), `meshing/` (Neuroglancer export), `metrics/` (the consolidation), and the two grammar docs. `neuronauts.{harness,report,meshing}` registered in `pyproject`. Suite after: **7 failed, 1,289 passed, 9 skipped** — the same 7 CellGNN failures as before the work started, so nothing regressed. |
+| 2026-09-01 | 1 | **Metrics consolidated** (parallel session). `line_graph.py`, `treestitch/{partition,connectivity,calibration}.py` and `global_merge/eval/benchmark.py` are now delegating shims over `neuronauts/metrics/`, cross-checked numerically against the pre-consolidation implementations rather than assumed equivalent. 149 tests. `experiments/pcfg/conn_metric.py` still to migrate. |
+| 2026-09-01 | 5 | **Runner landed** (`neuronauts/experiments/_runner.py`). Declares the bar before the run, blocks on unmet prerequisites without executing the body, checks inputs up front, records exceptions instead of swallowing them, stamps provenance, appends exactly one ledger row. A `Spec` with a blank criterion is rejected at construction. 15 tests, one per refusal. EXP-051–056 still to port onto it. |
 
 Still open from Phases 0–2: committing the other three untracked packages (§8
 decision 0), `neuronauts/legacy/` → attic (drags `topology_dataset.py`,

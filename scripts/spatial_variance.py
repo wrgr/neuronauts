@@ -161,8 +161,10 @@ def main() -> int:
                    help="Where to save the trained checkpoint (default: /tmp/neuronauts_variance.pt)")
     p.add_argument("--save-bundle", type=str, default=None,
                    help="If set, serialize all evaluation results (metrics + skeletons + "
-                        "synapse positions) to a JSON bundle at this path. Load with the "
-                        "dashboard/app.py Streamlit app.")
+                        "synapse positions) to a JSON bundle at this path. Load with "
+                        "attic/outer_loop_and_viz/dashboard/streamlit_app.py or "
+                        "results_explorer.py (retired to attic/ 2026-09-01; see "
+                        "attic/README.md).")
     p.add_argument("--quick", action="store_true",
                    help="Fewer epochs (debug mode): embed=5, partition=30")
     p.add_argument("--no-calibration", action="store_true",

@@ -2,10 +2,17 @@
 
 All numbers are mean / median F1 on the 7-box test split, evaluated
 at the calibrated partition threshold of 0.99 (best-mean threshold
-identified by `scripts/eval_at_t099.sh`'s sweep on the baseline seg
-model).  All trainings used `seed=42`, 50 epochs, the 37-box CAVE
-cache at `data/boxes/`, and the seg-connectivity feature (loaded
-from `data/seg_scores.json`).
+identified by `attic/outer_loop_and_viz/eval_at_t099.sh`'s sweep on
+the baseline seg model).  All trainings used `seed=42`, 50 epochs,
+the 37-box CAVE cache at `data/boxes/`, and the seg-connectivity
+feature (loaded from `data/seg_scores.json`).
+
+> These are historical results from the box-local CellGNN track
+> (F1 0.27 ceiling; see `docs/architecture.md`). The outer-loop shell
+> scripts that produced them (`run_k_ablation.sh`,
+> `run_feature_ablation.sh`, `eval_at_t099.sh`) moved to
+> `attic/outer_loop_and_viz/` on 2026-09-01 (see `attic/README.md`);
+> the commands below still run from that path.
 
 ## Headline
 
@@ -88,11 +95,11 @@ for t in 0.90 0.95 0.97 0.99 0.995 0.999; do
 done
 
 # K-hop ablation
-bash scripts/run_k_ablation.sh
+bash attic/outer_loop_and_viz/run_k_ablation.sh
 
 # Per-feature ablation
-bash scripts/run_feature_ablation.sh
+bash attic/outer_loop_and_viz/run_feature_ablation.sh
 
 # Apples-to-apples at t=0.99 across all checkpoints
-bash scripts/eval_at_t099.sh
+bash attic/outer_loop_and_viz/eval_at_t099.sh
 ```
