@@ -43,18 +43,29 @@ def main() -> int:
         tracker._cache["collect"] = (-1, 0)   # reported as unknown, not asserted
 
     if args.next:
-        from neuronauts.experiments.registry import blocked, next_runnable
+        from neuronauts.experiments.registry import (
+            blocked, next_runnable, unblocked_but_unwritten)
         ready = next_runnable()
+        todo = unblocked_but_unwritten()
         if ready:
-            print("ready to run:")
+            print("READY TO RUN")
             for e in ready:
-                mins = f" (~{e.est_minutes} min)" if e.est_minutes else ""
+                mins = f"  (~{e.est_minutes} min)" if e.est_minutes else ""
                 print(f"  {e.id}  {e.spec.title}{mins}")
                 print(f"      bar: {e.spec.criterion}")
-        else:
-            print("nothing is ready. blocked on:")
+        if todo:
+            print("\nUNBLOCKED, NEEDS AN ENTRY POINT")
+            for e in todo:
+                mins = f"  (~{e.est_minutes} min)" if e.est_minutes else ""
+                print(f"  {e.id}  {e.spec.title}{mins}")
+                print(f"      bar: {e.spec.criterion}")
+        if not ready and not todo:
+            print("nothing is actionable. blocked on:")
             for e, why in blocked()[:6]:
                 print(f"  {e.id}  {why[0]}")
+        elif blocked():
+            print(f"\n({len(blocked())} others still blocked; "
+                  f"run with no flags for the full picture)")
         return 0
 
     if args.html:

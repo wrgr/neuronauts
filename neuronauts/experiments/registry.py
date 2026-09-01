@@ -280,6 +280,22 @@ def next_runnable(root: Optional[Path] = None) -> list[Entry]:
     return [e for e in REGISTRY if state(e, root)[0] == "ready"]
 
 
+def unblocked_but_unwritten(root: Optional[Path] = None) -> list[Entry]:
+    """Prerequisites and inputs satisfied; only the entry point is missing.
+
+    Distinct from :func:`next_runnable` because the action differs: these are
+    ready to *write*, not ready to *run*. Collapsing the two hides the fact
+    that the program is gated on unwritten code rather than on evidence.
+    """
+    root = root or repo_root()
+    out = []
+    for e in REGISTRY:
+        st, _ = state(e, root)
+        if st == "not_implemented":
+            out.append(e)
+    return out
+
+
 def blocked(root: Optional[Path] = None) -> list[tuple[Entry, list[str]]]:
     root = root or repo_root()
     out = []
