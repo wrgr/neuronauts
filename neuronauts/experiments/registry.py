@@ -161,13 +161,14 @@ REGISTRY: list[Entry] = [
              "exist even as it failed."),
 
     Entry(series="B", est_minutes=45, spec=_s(
-        id="EXP-061", title="Proximity vs cone, by compartment",
+        id="EXP-061", title="Directed cone vs proximity ball",
         question="Does the axon proximity failure hold for dendrites too?",
         criterion="a directed cone reaches at least 70% of true pairs at a "
                   "median panel of at most 20 -- i.e. beats EXP-060's measured "
                   "proximity ceiling of 47.4% reachable / 17.5% proposed, at "
                   "comparable panel size",
         requires_ran=["EXP-060"], inputs=[TOPOLOGY_K10, LABELS_NPZ]),
+        module="neuronauts.experiments.exp061_directed_cone",
         note="Rewritten after EXP-060: the cone is not an improvement on the "
              "proximity ball, it is the replacement. EXP-060 measured the "
              "median true partner at 6.5 um and p90 at 56 um, so a 5 um ball "

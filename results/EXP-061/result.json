@@ -1,0 +1,251 @@
+{
+  "elapsed_min": 4.74319372177124,
+  "id": "EXP-061",
+  "note": "no cone reached 70% at a median panel of 20; median angle to the true partner is 46 degrees",
+  "observed": {
+    "best_cone": "none",
+    "best_median_panel": null,
+    "best_reach": 0.0,
+    "median_angle_if_random_deg": 90.0,
+    "median_angle_to_partner_deg": 45.5,
+    "proximity_reference_reach": 0.474
+  },
+  "population": {
+    "n_endpoints": 5102950,
+    "n_labelled_atoms": 1297,
+    "n_pairs_measurable": 492,
+    "n_true_pairs": 492,
+    "panel_sample": 4000
+  },
+  "provenance": {
+    "argv": [
+      "/Users/wgray13/projects/neuronauts/neuronauts/experiments/exp061_directed_cone.py"
+    ],
+    "cwd": "/Users/wgray13/projects/neuronauts",
+    "git_branch": "feat/global-merge-assembly",
+    "git_commit": "677d3d9bfeb3c201775182ab0a094d5ac9dfeb59",
+    "git_dirty": true,
+    "git_modified_files": [
+      "ocs/consolidation_plan.md",
+      "neuronauts/experiments/registry.py",
+      "results/RESULTS.md"
+    ],
+    "git_untracked_count": 3,
+    "hostname": "DXJ5G9L3W1-ML",
+    "inputs": [
+      {
+        "algo": "quick-sha256",
+        "bytes": 140684671,
+        "hash": "07f8d4363cadde77a6b8d1263e2113431a6c34237b0e81ff7b41269aeb75887f",
+        "mtime_utc": "2026-09-01T22:12:51+00:00",
+        "path": "data/substrate/topology/k10.npz"
+      },
+      {
+        "algo": "sha256",
+        "bytes": 1321376,
+        "hash": "64f436a008bd0b5b027c28bb1d074eac972dda5acc6194f6e463c88f65a0635a",
+        "mtime_utc": "2026-09-01T22:57:45+00:00",
+        "path": "data/substrate/c100um/labels_v1822.npz"
+      }
+    ],
+    "labels_used_only_for_evaluation": true,
+    "packages": {
+      "caveclient": "8.0.1",
+      "matplotlib": "3.10.8",
+      "networkx": "3.6.1",
+      "neuroglancer": "2.41.2",
+      "numpy": "2.4.3",
+      "pandas": "2.3.3",
+      "scipy": "1.17.1",
+      "torch": "2.10.0"
+    },
+    "params": {
+      "cones": [
+        [
+          10000.0,
+          15.0
+        ],
+        [
+          10000.0,
+          30.0
+        ],
+        [
+          10000.0,
+          45.0
+        ],
+        [
+          25000.0,
+          15.0
+        ],
+        [
+          25000.0,
+          30.0
+        ],
+        [
+          25000.0,
+          45.0
+        ],
+        [
+          50000.0,
+          15.0
+        ],
+        [
+          50000.0,
+          30.0
+        ],
+        [
+          50000.0,
+          45.0
+        ]
+      ],
+      "panel_sample": 4000,
+      "seed": 0
+    },
+    "platform": "macOS-15.7.9-arm64-arm-64bit-Mach-O",
+    "python": "3.14.2",
+    "synthetic_fallback": false,
+    "timestamp_utc": "2026-09-02T00:35:17+00:00"
+  },
+  "question": "Do true partners lie along the outward tangent, and is the cone that reaches them small?",
+  "requires": [],
+  "requires_ran": [
+    "EXP-060"
+  ],
+  "status": "failed",
+  "success_criterion": "a cone reaches at least 70% of true pairs at a median panel of at most 20 distractor endpoints -- beating EXP-060's measured proximity ceiling of 47.4% reachable / 17.5% proposed at median panel 819",
+  "tables": {
+    "angle_to_true_partner_deg": {
+      "p10": {
+        "if_random_deg": 36.9,
+        "observed_deg": 14.6
+      },
+      "p25": {
+        "if_random_deg": 60.0,
+        "observed_deg": 27.0
+      },
+      "p50": {
+        "if_random_deg": 90.0,
+        "observed_deg": 45.5
+      },
+      "p75": {
+        "if_random_deg": 120.0,
+        "observed_deg": 69.1
+      },
+      "p90": {
+        "if_random_deg": 143.1,
+        "observed_deg": 94.4
+      }
+    },
+    "cone_sweep": {
+      "10um_15deg": {
+        "enrichment_over_chance": 5.96,
+        "half_angle_deg": 15.0,
+        "max_distance_nm": 10000.0,
+        "mean_panel": 48.06,
+        "median_panel": 45.0,
+        "meets_bar": false,
+        "p90_panel": 89.0,
+        "reach_angle_only": 0.101626,
+        "reach_if_direction_were_random": 0.017037,
+        "reach_within_distance": 0.060976
+      },
+      "10um_30deg": {
+        "enrichment_over_chance": 4.28,
+        "half_angle_deg": 30.0,
+        "max_distance_nm": 10000.0,
+        "mean_panel": 189.17,
+        "median_panel": 175.0,
+        "meets_bar": false,
+        "p90_panel": 339.0,
+        "reach_angle_only": 0.286585,
+        "reach_if_direction_were_random": 0.066987,
+        "reach_within_distance": 0.152439
+      },
+      "10um_45deg": {
+        "enrichment_over_chance": 3.32,
+        "half_angle_deg": 45.0,
+        "max_distance_nm": 10000.0,
+        "mean_panel": 411.93,
+        "median_panel": 378.0,
+        "meets_bar": false,
+        "p90_panel": 719.0,
+        "reach_angle_only": 0.485772,
+        "reach_if_direction_were_random": 0.146447,
+        "reach_within_distance": 0.262195
+      },
+      "25um_15deg": {
+        "enrichment_over_chance": 5.96,
+        "half_angle_deg": 15.0,
+        "max_distance_nm": 25000.0,
+        "mean_panel": 690.38,
+        "median_panel": 655.5,
+        "meets_bar": false,
+        "p90_panel": 1234.0,
+        "reach_angle_only": 0.101626,
+        "reach_if_direction_were_random": 0.017037,
+        "reach_within_distance": 0.079268
+      },
+      "25um_30deg": {
+        "enrichment_over_chance": 4.28,
+        "half_angle_deg": 30.0,
+        "max_distance_nm": 25000.0,
+        "mean_panel": 2714.57,
+        "median_panel": 2581.5,
+        "meets_bar": false,
+        "p90_panel": 4692.4,
+        "reach_angle_only": 0.286585,
+        "reach_if_direction_were_random": 0.066987,
+        "reach_within_distance": 0.193089
+      },
+      "25um_45deg": {
+        "enrichment_over_chance": 3.32,
+        "half_angle_deg": 45.0,
+        "max_distance_nm": 25000.0,
+        "mean_panel": 5939.89,
+        "median_panel": 5680.0,
+        "meets_bar": false,
+        "p90_panel": 10191.3,
+        "reach_angle_only": 0.485772,
+        "reach_if_direction_were_random": 0.146447,
+        "reach_within_distance": 0.327236
+      },
+      "50um_15deg": {
+        "enrichment_over_chance": 5.96,
+        "half_angle_deg": 15.0,
+        "max_distance_nm": 50000.0,
+        "mean_panel": 4908.65,
+        "median_panel": 4836.5,
+        "meets_bar": false,
+        "p90_panel": 9265.3,
+        "reach_angle_only": 0.101626,
+        "reach_if_direction_were_random": 0.017037,
+        "reach_within_distance": 0.087398
+      },
+      "50um_30deg": {
+        "enrichment_over_chance": 4.28,
+        "half_angle_deg": 30.0,
+        "max_distance_nm": 50000.0,
+        "mean_panel": 19322.53,
+        "median_panel": 19244.0,
+        "meets_bar": false,
+        "p90_panel": 35914.3,
+        "reach_angle_only": 0.286585,
+        "reach_if_direction_were_random": 0.066987,
+        "reach_within_distance": 0.243902
+      },
+      "50um_45deg": {
+        "enrichment_over_chance": 3.32,
+        "half_angle_deg": 45.0,
+        "max_distance_nm": 50000.0,
+        "mean_panel": 42302.57,
+        "median_panel": 42159.5,
+        "meets_bar": false,
+        "p90_panel": 77213.3,
+        "reach_angle_only": 0.485772,
+        "reach_if_direction_were_random": 0.146447,
+        "reach_within_distance": 0.402439
+      }
+    }
+  },
+  "title": "Directed cone vs proximity ball"
+}

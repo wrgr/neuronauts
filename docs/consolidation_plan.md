@@ -332,6 +332,17 @@ only semi-synthetic or in-sample evidence; **untested** = no run.
 
 ### 6.2 Common protocol
 
+**A candidate-generation bar must state its reachability ceiling.** EXP-060
+failed a 90%-recall bar that no setting could have met: the median true partner
+is 6.5 µm away and p90 is 56 µm, so a 5 µm proximity panel reaches at most
+47.4% of true pairs before any filter is applied. The bar was adopted verbatim
+from a companion document and nobody checked it against the geometry. Any
+future bar of the form "≥X% recall from panel P" must be accompanied by the
+measured fraction of positives P can reach at all, and X must sit below it.
+The same applies to a scoring bar: EXP-058 showed AUROC is a poor target at a
+0.06% base rate, so scoring bars are stated as precision at fixed recall.
+
+
 - **Substrate:** the 100 µm harness cube (centre 663/591/860 µm), tier ≥10
   atoms first, ≥5 and ≥1 as coverage allows; GT = proofread status v1822 gold,
   attached for evaluation only; spatial train/val/test split with a 50 µm seam

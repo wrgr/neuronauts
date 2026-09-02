@@ -12,3 +12,5 @@ a gap. Full reports: [`results/reports/`](reports/).
 | EXP-058 | Baseline ladder | pass | oracle_ari=1, best_proximity_ari=0, random_ari=-1e-06 | 0.2 | `95d67c25a` | 2026-09-02T00:01:21+00:00 |
 | EXP-060 | Endpoint filter | fail | best_setting=none, best_recall=0, unfiltered_recall_ceiling=0.1748 | 2.3 | `8a148bdba` | 2026-09-02T00:06:31+00:00 |
 | EXP-060 | Endpoint filter | fail | best_setting=none, best_recall=0, unfiltered_recall_ceiling=0.1748 | 2.5 | `3f8c6bb98` | 2026-09-02T00:22:22+00:00 |
+| EXP-061 | Directed cone vs proximity ball | fail | best_cone=none, best_reach=0, best_median_panel=None | 4.7 | `677d3d9bf` | 2026-09-02T00:29:51+00:00 |
+| EXP-061 | Directed cone vs proximity ball | fail | best_cone=none, best_reach=0, best_median_panel=None | 4.7 | `677d3d9bf` | 2026-09-02T00:35:17+00:00 |
