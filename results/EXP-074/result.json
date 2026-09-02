@@ -1,0 +1,1198 @@
+{
+  "elapsed_min": 15.098190049330393,
+  "id": "EXP-074",
+  "note": "distance alone at 2 um: recovery 0.4%, purity 0.1%, abstention 0.0%; fails on recovery, purity, abstention. The grammar has to supply what distance cannot, and this says which clause it must fix",
+  "observed": {
+    "abstention_at_bar": 0.0,
+    "failed_clauses": [
+      "recovery",
+      "purity",
+      "abstention"
+    ],
+    "median_added_per_needing_cell": 200.0,
+    "purity_at_bar": 0.000609,
+    "recovery_at_bar": 0.00431,
+    "unknown_objects_absorbed": 11759
+  },
+  "population": {
+    "already_whole": 36,
+    "cells": 103,
+    "needing_joins": 67,
+    "objects_in_substrate": 485689,
+    "target_fragments": 232
+  },
+  "provenance": {
+    "argv": [
+      "/Users/wgray13/projects/neuronauts/neuronauts/experiments/exp074_seeded_growth.py"
+    ],
+    "cwd": "/Users/wgray13/projects/neuronauts",
+    "git_branch": "feat/global-merge-assembly",
+    "git_commit": "2c92d4efda241a8ed3664d4b5d23be12f60a8f21",
+    "git_dirty": true,
+    "git_modified_files": [
+      "LAUDE.md"
+    ],
+    "git_untracked_count": 1,
+    "hostname": "DXJ5G9L3W1-ML",
+    "inputs": [
+      {
+        "algo": "quick-sha256",
+        "bytes": 266213819,
+        "hash": "f38af2e0209d1cd1638dff50dfe262e0e48a56d0f0cd1443a2e5d4861adde41c",
+        "mtime_utc": "2026-09-02T15:43:03+00:00",
+        "path": "data/substrate/c100um/object_clouds_mip5.npz"
+      },
+      {
+        "algo": "sha256",
+        "bytes": 3543832,
+        "hash": "564159a3796326a1b3080ff034f48f12a52ab21777b28e037969ae32814dd1f2",
+        "mtime_utc": "2026-09-02T15:35:04+00:00",
+        "path": "data/substrate/c100um/objects_v117_mip5.npz"
+      },
+      {
+        "algo": "quick-sha256",
+        "bytes": 191644932,
+        "hash": "2047718c20150f632839f435db88eed9d99f4807f61cf9bdff582e9a52a8022f",
+        "mtime_utc": "2026-09-02T01:50:26+00:00",
+        "path": "data/substrate/topology/kall.npz"
+      },
+      {
+        "algo": "sha256",
+        "bytes": 1321376,
+        "hash": "64f436a008bd0b5b027c28bb1d074eac972dda5acc6194f6e463c88f65a0635a",
+        "mtime_utc": "2026-09-01T22:57:45+00:00",
+        "path": "data/substrate/c100um/labels_v1822.npz"
+      }
+    ],
+    "labels_used_only_for_evaluation": true,
+    "packages": {
+      "caveclient": "8.0.1",
+      "matplotlib": "3.10.8",
+      "networkx": "3.6.1",
+      "neuroglancer": "2.41.2",
+      "numpy": "2.4.3",
+      "pandas": "2.3.3",
+      "scipy": "1.17.1",
+      "torch": "2.10.0"
+    },
+    "params": {
+      "bar_abstention": 0.7,
+      "bar_purity": 0.8,
+      "bar_radius_nm": 2000.0,
+      "bar_recovery": 0.6,
+      "max_adds_per_cell": 200,
+      "min_volume_um3": 0.041,
+      "radii_nm": [
+        500.0,
+        1000.0,
+        2000.0,
+        3000.0
+      ]
+    },
+    "platform": "macOS-15.7.9-arm64-arm-64bit-Mach-O",
+    "python": "3.14.2",
+    "synthetic_fallback": false,
+    "timestamp_utc": "2026-09-02T20:35:59+00:00"
+  },
+  "question": "Can a grower seeded at a cell body recover that cell's in-box root process, and does it know when to stop?",
+  "requires": [],
+  "requires_ran": [
+    "EXP-071",
+    "EXP-072"
+  ],
+  "status": "failed",
+  "success_criterion": "scored on two populations separately, never pooled. On the 67 cells that need joining, at radius 2 um: recovery of target fragments at least 60% (micro-averaged) AND purity at least 80%, where purity counts only LABELLED objects added, since unlabelled connective cable is neither right nor wrong and is reported separately. On the 36 already-whole cells, add nothing in at least 70% of them. The method uses distance alone -- no compartment, caliber, direction or learned score",
+  "tables": {
+    "by_radius": {
+      "r1000": {
+        "abstained": 0,
+        "abstention": 0.0,
+        "already_whole_cells": 36,
+        "correct_labelled": 1,
+        "labelled_added": 1641,
+        "median_added_per_needing_cell": 200.0,
+        "purity": 0.000609,
+        "radius_nm": 1000.0,
+        "recovered": 1,
+        "recovery": 0.00431,
+        "target_fragments": 232,
+        "unknown_added": 11759
+      },
+      "r2000": {
+        "abstained": 0,
+        "abstention": 0.0,
+        "already_whole_cells": 36,
+        "correct_labelled": 1,
+        "labelled_added": 1641,
+        "median_added_per_needing_cell": 200.0,
+        "purity": 0.000609,
+        "radius_nm": 2000.0,
+        "recovered": 1,
+        "recovery": 0.00431,
+        "target_fragments": 232,
+        "unknown_added": 11759
+      },
+      "r3000": {
+        "abstained": 0,
+        "abstention": 0.0,
+        "already_whole_cells": 36,
+        "correct_labelled": 1,
+        "labelled_added": 1641,
+        "median_added_per_needing_cell": 200.0,
+        "purity": 0.000609,
+        "radius_nm": 3000.0,
+        "recovered": 1,
+        "recovery": 0.00431,
+        "target_fragments": 232,
+        "unknown_added": 11759
+      },
+      "r500": {
+        "abstained": 0,
+        "abstention": 0.0,
+        "already_whole_cells": 36,
+        "correct_labelled": 1,
+        "labelled_added": 1641,
+        "median_added_per_needing_cell": 200.0,
+        "purity": 0.000609,
+        "radius_nm": 500.0,
+        "recovered": 1,
+        "recovery": 0.00431,
+        "target_fragments": 232,
+        "unknown_added": 11759
+      }
+    },
+    "per_cell_at_bar": [
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691134920077322",
+        "correct_labelled": 0,
+        "labelled_added": 24,
+        "recovered": 0,
+        "target": 3,
+        "unknown_added": 176
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691134942169955",
+        "correct_labelled": 0,
+        "labelled_added": 28,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 172
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691134942659427",
+        "correct_labelled": 0,
+        "labelled_added": 24,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 176
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691134948788476",
+        "correct_labelled": 0,
+        "labelled_added": 26,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 174
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691134991067002",
+        "correct_labelled": 0,
+        "labelled_added": 24,
+        "recovered": 0,
+        "target": 1,
+        "unknown_added": 176
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135015352054",
+        "correct_labelled": 0,
+        "labelled_added": 21,
+        "recovered": 0,
+        "target": 1,
+        "unknown_added": 179
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691135084244727",
+        "correct_labelled": 0,
+        "labelled_added": 22,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 178
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135157198692",
+        "correct_labelled": 0,
+        "labelled_added": 25,
+        "recovered": 0,
+        "target": 5,
+        "unknown_added": 175
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135157210468",
+        "correct_labelled": 0,
+        "labelled_added": 29,
+        "recovered": 0,
+        "target": 2,
+        "unknown_added": 171
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135196650282",
+        "correct_labelled": 0,
+        "labelled_added": 23,
+        "recovered": 0,
+        "target": 3,
+        "unknown_added": 177
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135257669039",
+        "correct_labelled": 0,
+        "labelled_added": 21,
+        "recovered": 0,
+        "target": 1,
+        "unknown_added": 179
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691135275003153",
+        "correct_labelled": 0,
+        "labelled_added": 26,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 174
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135277186789",
+        "correct_labelled": 0,
+        "labelled_added": 27,
+        "recovered": 0,
+        "target": 5,
+        "unknown_added": 173
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135281185697",
+        "correct_labelled": 0,
+        "labelled_added": 24,
+        "recovered": 0,
+        "target": 3,
+        "unknown_added": 176
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135281252001",
+        "correct_labelled": 0,
+        "labelled_added": 25,
+        "recovered": 0,
+        "target": 2,
+        "unknown_added": 175
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691135336055529",
+        "correct_labelled": 0,
+        "labelled_added": 27,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 173
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691135361238616",
+        "correct_labelled": 0,
+        "labelled_added": 26,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 174
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135369764601",
+        "correct_labelled": 0,
+        "labelled_added": 28,
+        "recovered": 0,
+        "target": 2,
+        "unknown_added": 172
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135375888840",
+        "correct_labelled": 0,
+        "labelled_added": 25,
+        "recovered": 0,
+        "target": 3,
+        "unknown_added": 175
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135376410441",
+        "correct_labelled": 0,
+        "labelled_added": 26,
+        "recovered": 0,
+        "target": 2,
+        "unknown_added": 174
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135376419401",
+        "correct_labelled": 0,
+        "labelled_added": 23,
+        "recovered": 0,
+        "target": 3,
+        "unknown_added": 177
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135384950234",
+        "correct_labelled": 0,
+        "labelled_added": 25,
+        "recovered": 0,
+        "target": 4,
+        "unknown_added": 175
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135396794101",
+        "correct_labelled": 0,
+        "labelled_added": 25,
+        "recovered": 0,
+        "target": 5,
+        "unknown_added": 175
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135410137545",
+        "correct_labelled": 0,
+        "labelled_added": 22,
+        "recovered": 0,
+        "target": 4,
+        "unknown_added": 178
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135417313722",
+        "correct_labelled": 0,
+        "labelled_added": 20,
+        "recovered": 0,
+        "target": 2,
+        "unknown_added": 180
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691135430290480",
+        "correct_labelled": 0,
+        "labelled_added": 25,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 175
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135448130450",
+        "correct_labelled": 0,
+        "labelled_added": 26,
+        "recovered": 0,
+        "target": 1,
+        "unknown_added": 174
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135456920938",
+        "correct_labelled": 0,
+        "labelled_added": 22,
+        "recovered": 0,
+        "target": 5,
+        "unknown_added": 178
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135465163933",
+        "correct_labelled": 0,
+        "labelled_added": 24,
+        "recovered": 0,
+        "target": 2,
+        "unknown_added": 176
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691135465178430",
+        "correct_labelled": 0,
+        "labelled_added": 23,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 177
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135465329565",
+        "correct_labelled": 0,
+        "labelled_added": 25,
+        "recovered": 0,
+        "target": 6,
+        "unknown_added": 175
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135478095016",
+        "correct_labelled": 0,
+        "labelled_added": 24,
+        "recovered": 0,
+        "target": 2,
+        "unknown_added": 176
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691135492568551",
+        "correct_labelled": 0,
+        "labelled_added": 23,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 177
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135499765267",
+        "correct_labelled": 0,
+        "labelled_added": 23,
+        "recovered": 0,
+        "target": 1,
+        "unknown_added": 177
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691135502873666",
+        "correct_labelled": 0,
+        "labelled_added": 28,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 172
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691135503287618",
+        "correct_labelled": 0,
+        "labelled_added": 23,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 177
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135562001633",
+        "correct_labelled": 0,
+        "labelled_added": 25,
+        "recovered": 0,
+        "target": 1,
+        "unknown_added": 175
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135563017953",
+        "correct_labelled": 0,
+        "labelled_added": 24,
+        "recovered": 0,
+        "target": 1,
+        "unknown_added": 176
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691135563052513",
+        "correct_labelled": 0,
+        "labelled_added": 22,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 178
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135567137111",
+        "correct_labelled": 0,
+        "labelled_added": 29,
+        "recovered": 0,
+        "target": 1,
+        "unknown_added": 171
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691135570303724",
+        "correct_labelled": 0,
+        "labelled_added": 21,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 179
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135570381292",
+        "correct_labelled": 0,
+        "labelled_added": 24,
+        "recovered": 0,
+        "target": 1,
+        "unknown_added": 176
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135573296677",
+        "correct_labelled": 0,
+        "labelled_added": 23,
+        "recovered": 0,
+        "target": 8,
+        "unknown_added": 177
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135573516581",
+        "correct_labelled": 0,
+        "labelled_added": 23,
+        "recovered": 0,
+        "target": 1,
+        "unknown_added": 177
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135577919006",
+        "correct_labelled": 0,
+        "labelled_added": 27,
+        "recovered": 0,
+        "target": 1,
+        "unknown_added": 173
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135587371132",
+        "correct_labelled": 1,
+        "labelled_added": 23,
+        "recovered": 1,
+        "target": 2,
+        "unknown_added": 177
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691135616533451",
+        "correct_labelled": 0,
+        "labelled_added": 26,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 174
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135616651211",
+        "correct_labelled": 0,
+        "labelled_added": 27,
+        "recovered": 0,
+        "target": 5,
+        "unknown_added": 173
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135619994255",
+        "correct_labelled": 0,
+        "labelled_added": 26,
+        "recovered": 0,
+        "target": 4,
+        "unknown_added": 174
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691135641505339",
+        "correct_labelled": 0,
+        "labelled_added": 19,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 181
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135656746690",
+        "correct_labelled": 0,
+        "labelled_added": 26,
+        "recovered": 0,
+        "target": 1,
+        "unknown_added": 174
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691135662059248",
+        "correct_labelled": 0,
+        "labelled_added": 24,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 176
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691135662825456",
+        "correct_labelled": 0,
+        "labelled_added": 25,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 175
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135662922224",
+        "correct_labelled": 0,
+        "labelled_added": 23,
+        "recovered": 0,
+        "target": 1,
+        "unknown_added": 177
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135686656951",
+        "correct_labelled": 0,
+        "labelled_added": 23,
+        "recovered": 0,
+        "target": 1,
+        "unknown_added": 177
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691135689734624",
+        "correct_labelled": 0,
+        "labelled_added": 26,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 174
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691135694415551",
+        "correct_labelled": 0,
+        "labelled_added": 22,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 178
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135698460826",
+        "correct_labelled": 0,
+        "labelled_added": 25,
+        "recovered": 0,
+        "target": 1,
+        "unknown_added": 175
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135726140843",
+        "correct_labelled": 0,
+        "labelled_added": 25,
+        "recovered": 0,
+        "target": 5,
+        "unknown_added": 175
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691135726995371",
+        "correct_labelled": 0,
+        "labelled_added": 25,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 175
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135739587697",
+        "correct_labelled": 0,
+        "labelled_added": 29,
+        "recovered": 0,
+        "target": 5,
+        "unknown_added": 171
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691135751149353",
+        "correct_labelled": 0,
+        "labelled_added": 26,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 174
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691135773073147",
+        "correct_labelled": 0,
+        "labelled_added": 23,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 177
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135774581835",
+        "correct_labelled": 0,
+        "labelled_added": 24,
+        "recovered": 0,
+        "target": 9,
+        "unknown_added": 176
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135778419901",
+        "correct_labelled": 0,
+        "labelled_added": 27,
+        "recovered": 0,
+        "target": 4,
+        "unknown_added": 173
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135778815421",
+        "correct_labelled": 0,
+        "labelled_added": 22,
+        "recovered": 0,
+        "target": 5,
+        "unknown_added": 178
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135867057372",
+        "correct_labelled": 0,
+        "labelled_added": 33,
+        "recovered": 0,
+        "target": 11,
+        "unknown_added": 167
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691135886130288",
+        "correct_labelled": 0,
+        "labelled_added": 24,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 176
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691135942123174",
+        "correct_labelled": 0,
+        "labelled_added": 26,
+        "recovered": 0,
+        "target": 2,
+        "unknown_added": 174
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691135992790209",
+        "correct_labelled": 0,
+        "labelled_added": 21,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 179
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691136006493898",
+        "correct_labelled": 0,
+        "labelled_added": 25,
+        "recovered": 0,
+        "target": 5,
+        "unknown_added": 175
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691136006519498",
+        "correct_labelled": 0,
+        "labelled_added": 27,
+        "recovered": 0,
+        "target": 1,
+        "unknown_added": 173
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691136011458734",
+        "correct_labelled": 0,
+        "labelled_added": 25,
+        "recovered": 0,
+        "target": 7,
+        "unknown_added": 175
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691136011850926",
+        "correct_labelled": 0,
+        "labelled_added": 19,
+        "recovered": 0,
+        "target": 2,
+        "unknown_added": 181
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691136026394425",
+        "correct_labelled": 0,
+        "labelled_added": 25,
+        "recovered": 0,
+        "target": 3,
+        "unknown_added": 175
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691136042989910",
+        "correct_labelled": 0,
+        "labelled_added": 33,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 167
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691136043283030",
+        "correct_labelled": 0,
+        "labelled_added": 24,
+        "recovered": 0,
+        "target": 9,
+        "unknown_added": 176
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691136058804696",
+        "correct_labelled": 0,
+        "labelled_added": 28,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 172
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691136144674612",
+        "correct_labelled": 0,
+        "labelled_added": 21,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 179
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691136197172556",
+        "correct_labelled": 0,
+        "labelled_added": 24,
+        "recovered": 0,
+        "target": 12,
+        "unknown_added": 176
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691136238801935",
+        "correct_labelled": 0,
+        "labelled_added": 28,
+        "recovered": 0,
+        "target": 1,
+        "unknown_added": 172
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691136240071996",
+        "correct_labelled": 0,
+        "labelled_added": 22,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 178
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691136275309502",
+        "correct_labelled": 0,
+        "labelled_added": 26,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 174
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691136275894285",
+        "correct_labelled": 0,
+        "labelled_added": 25,
+        "recovered": 0,
+        "target": 1,
+        "unknown_added": 175
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691136276470285",
+        "correct_labelled": 0,
+        "labelled_added": 24,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 176
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691136298913563",
+        "correct_labelled": 0,
+        "labelled_added": 22,
+        "recovered": 0,
+        "target": 1,
+        "unknown_added": 178
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691136299162907",
+        "correct_labelled": 0,
+        "labelled_added": 26,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 174
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691136312445786",
+        "correct_labelled": 0,
+        "labelled_added": 23,
+        "recovered": 0,
+        "target": 14,
+        "unknown_added": 177
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691136313406781",
+        "correct_labelled": 0,
+        "labelled_added": 26,
+        "recovered": 0,
+        "target": 1,
+        "unknown_added": 174
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691136330407914",
+        "correct_labelled": 0,
+        "labelled_added": 26,
+        "recovered": 0,
+        "target": 3,
+        "unknown_added": 174
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691136364362466",
+        "correct_labelled": 0,
+        "labelled_added": 24,
+        "recovered": 0,
+        "target": 8,
+        "unknown_added": 176
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691136372954248",
+        "correct_labelled": 0,
+        "labelled_added": 24,
+        "recovered": 0,
+        "target": 6,
+        "unknown_added": 176
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691136453546495",
+        "correct_labelled": 0,
+        "labelled_added": 24,
+        "recovered": 0,
+        "target": 3,
+        "unknown_added": 176
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691136453565951",
+        "correct_labelled": 0,
+        "labelled_added": 25,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 175
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691136619344859",
+        "correct_labelled": 0,
+        "labelled_added": 21,
+        "recovered": 0,
+        "target": 6,
+        "unknown_added": 179
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691136619801307",
+        "correct_labelled": 0,
+        "labelled_added": 27,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 173
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691136675929479",
+        "correct_labelled": 0,
+        "labelled_added": 26,
+        "recovered": 0,
+        "target": 1,
+        "unknown_added": 174
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691136904594610",
+        "correct_labelled": 0,
+        "labelled_added": 22,
+        "recovered": 0,
+        "target": 2,
+        "unknown_added": 178
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691136968529870",
+        "correct_labelled": 0,
+        "labelled_added": 18,
+        "recovered": 0,
+        "target": 5,
+        "unknown_added": 182
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691136976202524",
+        "correct_labelled": 0,
+        "labelled_added": 25,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 175
+      },
+      {
+        "added": 200,
+        "already_whole": true,
+        "cell": "864691137022275182",
+        "correct_labelled": 0,
+        "labelled_added": 26,
+        "recovered": 0,
+        "target": 0,
+        "unknown_added": 174
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691137056345206",
+        "correct_labelled": 0,
+        "labelled_added": 29,
+        "recovered": 0,
+        "target": 2,
+        "unknown_added": 171
+      },
+      {
+        "added": 200,
+        "already_whole": false,
+        "cell": "864691137199914561",
+        "correct_labelled": 0,
+        "labelled_added": 19,
+        "recovered": 0,
+        "target": 1,
+        "unknown_added": 181
+      }
+    ]
+  },
+  "title": "Soma-seeded growth, distance only"
+}

@@ -6,7 +6,7 @@ cells, and a whole-cell skeleton is a few thousand vertices where a mesh is
 1.37M faces. Each vertex is assigned to the v117 fragment whose object cloud is
 nearest, so the shattering is visible without fetching anything.
 """
-import base64, io, json
+import base64, io, json, math
 from pathlib import Path
 import numpy as np
 from PIL import Image
@@ -94,6 +94,20 @@ for r in A:
                            for l in c["split_challenges"] if l.get("scored", True)],
                  "gaps": [l["gap_nm"] for l in c["split_challenges"] if l.get("scored", True)],
                  "thumb": thumb(r["cell"])})
-json.dump({"rows": rows, "reps": {k: str(v) for k, v in reps.items()}, "skeletons": skels,
-           "cube": {"lo_nm": LO.tolist(), "hi_nm": HI.tolist()}}, open(OUT, "w"), separators=(",", ":"))
+def finite(x):
+    """JSON.parse rejects bare NaN/Infinity; json.dump emits them happily.
+
+    A cell with no scored links has an empty gap list, so its median is nan.
+    One such token invalidates the whole payload in the browser and the page
+    renders nothing, with no error until you open a console. allow_nan=False
+    below turns that silent breakage into a build failure.
+    """
+    if isinstance(x, float) and not math.isfinite(x): return None
+    if isinstance(x, dict):  return {k: finite(v) for k, v in x.items()}
+    if isinstance(x, list):  return [finite(v) for v in x]
+    return x
+
+payload = finite({"rows": rows, "reps": {k: str(v) for k, v in reps.items()}, "skeletons": skels,
+                  "cube": {"lo_nm": LO.tolist(), "hi_nm": HI.tolist()}})
+json.dump(payload, open(OUT, "w"), separators=(",", ":"), allow_nan=False)
 import os; print(f"\nwrote {OUT}  {os.path.getsize(OUT)/1e6:.1f} MB  ({len(rows)} cells, {len(skels)} skeletons)")
