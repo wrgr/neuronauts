@@ -180,6 +180,16 @@ def main() -> int:
     print(f"resolved {int(ok.sum()):,}/{len(sv):,} supervoxels "
           f"({ok.mean():.1%}) in {(time.time()-t1)/60:.1f} min")
 
+    # Keep the supervoxel-level map, not just the object aggregate. Geometry for
+    # the newly-found objects is then one batched ``get_roots(stop_layer=2)``
+    # over their supervoxels, instead of one lvl2_graph request per object --
+    # the difference between minutes and a per-object fetch of the same scale as
+    # the original 279,075-atom build.
+    svmap = out.with_name(out.stem + "_svmap.npz")
+    np.savez_compressed(svmap, sv=sv[ok], root=roots[ok],
+                        n_voxels=svc[ok])
+    print(f"wrote {svmap} ({int(ok.sum()):,} supervoxel -> v117 root)")
+
     # voxels per v117 object, summed over its supervoxels
     order0 = np.argsort(roots[ok])
     r_s = roots[ok][order0]

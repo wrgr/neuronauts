@@ -8,6 +8,48 @@ stitching skeleton fragments across space) can succeed — and what is actually
 in the way. Every number below is from a registered experiment's `result.json`
 or a QA reproduction; nothing is projected.*
 
+---
+
+> ## Superseded in part, same day, by EXP-071 — read this first
+>
+> This assessment named **candidate generation** as the blocker (§3) and put
+> "adjacency from the segmentation itself" first on the leverage list, calling
+> touching-pair recall "the single most important unmeasured quantity in the
+> program." That measurement was then made, and it moved the blocker one level
+> upstream.
+>
+> **EXP-071** (passed, 40 held-out cells) walked the real level-2 graph of
+> proofread cells instead of measuring between synapse-anchored atoms. The
+> nearest labelled fragment of the same cell is a median **3 hops** away, 60%
+> within 3 — and every one of the **2,147 objects** holding the material in
+> between is **absent from the population**, at a median of 5 level-2 nodes
+> each: ordinary neurite, the same size as an atom the harness already carries.
+> Direct atom-to-atom contacts are **zero**, structurally and always, because
+> two v117 atoms that were level-2 adjacent would be one atom.
+>
+> So the four proximity experiments were measuring **the width of a hole the
+> substrate made**, not the distance to a neighbour. The population admits a
+> v117 object only if it owns a synapse in the cube; the passing neurite that
+> joins two fragments never enters.
+>
+> **What this changes.** The blocker is the substrate, not candidate generation,
+> and it is a fetch rather than a model —
+> `scripts/enumerate_region_objects.py` enumerates every v117 object with a
+> voxel in the region, label-blind. On a 12 µm test cube: **4,279 objects absent
+> from the population against 1,939 present**, holding 6.7% of segmented volume.
+>
+> **What this does not change.** The verdict below stands until EXP-060B is
+> re-run on the widened substrate. EXP-071's hops are counted on the *proofread*
+> graph — ground truth a proposer does not have. It shows the missing pieces are
+> ordinary objects we skipped, so they are recoverable by enumeration; it does
+> **not** show a panel built over them recovers the spanning links. Everything
+> from §3 onward should be read with that pending.
+>
+> The leverage list in §4 is likewise re-ordered: item 1 is done, and the new
+> first step is the widened enumeration plus an EXP-060B re-run.
+
+---
+
 ## 1. Where the program stands
 
 17 registered experiments: **6 passed** (057B, 058, 059, 060B, 063, 070),
