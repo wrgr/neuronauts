@@ -156,6 +156,31 @@ def main():
                     if sv2l2.get(s) in cal]
             return float(np.median(vals)) if vals else np.nan
 
+        # --- how does the SEED end here? ---
+        # EXP-075 showed candidate geometry cannot say whether to stop. This asks
+        # a different question, about the seed alone: a severed process keeps its
+        # caliber right to the cut face, while a genuine terminal tapers to a tip
+        # or closes into a bouton. Caliber is profiled along the seed's own axis
+        # out to its last voxel near this point.
+        aS_all = axis_of(Sv[np.linalg.norm(Sv - ctr, axis=1) < LOCAL_NM])
+        end_ratio = end_drop = np.nan
+        if aS_all is not None:
+            loc = Sv[np.linalg.norm(Sv - ctr, axis=1) < 2 * LOCAL_NM]
+            t = (loc - ctr) @ aS_all
+            # the end is whichever side runs out of seed first
+            side = 1.0 if abs(t.max()) < abs(t.min()) else -1.0
+            t = t * side
+            edge = t.max()
+            def cal_at(lo_t, hi_t):
+                m = (t >= lo_t) & (t < hi_t)
+                # voxels in a slab -> equivalent radius of its cross-section
+                return np.sqrt(m.sum() * float(np.prod(res)) / max(hi_t - lo_t, 1.0) / np.pi)
+            tip = cal_at(edge - 300.0, edge)
+            back = cal_at(edge - 1300.0, edge - 1000.0)
+            if back > 0:
+                end_ratio = float(tip / back)
+                end_drop = float(1.0 - tip / back)
+
         sub = Sv if len(Sv) <= MAXPTS else Sv[:: len(Sv) // MAXPTS][:MAXPTS]
         st = cKDTree(sub)
         others = np.unique(R2[R2 != seed])
@@ -187,6 +212,7 @@ def main():
                  cal_cand=np.array([r[5] for r in rec], dtype=np.float32),
                  in_target=np.array([r[6] for r in rec], dtype=bool),
                  seed=np.uint64(seed), cal_seed=np.float32(caliber(seed_mask)),
+                 end_ratio=np.float32(end_ratio), end_drop=np.float32(end_drop),
                  already_whole=bool(c["structure"]["already_whole"]))
         n_t = sum(r[6] for r in rec)
         print(f"  {key}: {len(rec)} candidates, {n_t} in target, "
