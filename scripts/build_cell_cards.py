@@ -58,6 +58,12 @@ def positions_for(nodes):
 
 def build(cell):
     s = seeds[cell]; card = {"cell": cell, "seed": s, "coverage": {}}
+    # cell type is a prediction unless a human typed it; carry which, so a card
+    # never launders a model call into a fact (92.5% agreement, all disagreements
+    # 23P vs 4P -- see scripts/add_human_cell_types.py)
+    card["cell_type"] = {"final": s.get("cell_type_final", s.get("cell_type", "unknown")),
+                         "source": s.get("cell_type_source", "model"),
+                         "human": s.get("cell_type_human"), "model": s.get("cell_type_fine")}
     gf = X / f"cell_l2_graphs/{cell}.npz"
     if not gf.exists(): card["coverage"]["graph"] = False; return card
     E = np.load(gf, allow_pickle=False)["edges"]; nodes = np.unique(E); pos = {int(v): k for k, v in enumerate(nodes.tolist())}

@@ -68,6 +68,34 @@ So 23% of cell bodies in the cube are non-neuronal and never become targets
 under seeded growth, and every evaluable seed is a neuron, because proofread-
 owner status is only granted to neurons.
 
+### Cell type: which labels are these?
+
+The census first carried only model predictions — `nucleus_ref_neuron_svm` (a
+support vector machine on nucleus volume, foldedness and cortical position) and
+`aibs_metamodel_celltypes_v661` (a soma and nucleus metamodel). Checked against
+the hand-typed tables that cover part of this volume —
+`allen_v1_column_types_slanted_ref` (neurons; Casey Schneider-Mizell, Nuno da
+Costa, Agnes Bodor) and `aibs_column_nonneuronal_ref` (non-neuronal; JoAnn
+Buchanan):
+
+| | |
+|---|---:|
+| Nuclei in the cube with a human label | 114 of 332 |
+| Nuclei with both a human and a model fine label | 107 |
+| **Exact agreement** | **99 (92.5%)** |
+| Evaluable seeds with a human label | 88 of 103 (81 agree) |
+| Human-labelled non-neuronal cells among the seeds | **0** |
+
+Every one of the eight disagreements is 23P versus 4P — layer 2/3 against layer
+4 pyramidal, a laminar boundary call — plus one "Unsure E". There is no
+neuron/non-neuron disagreement. So the coarse class the challenge typing rests
+on is safe, and anything resting on the pyramidal subtype is not.
+
+The census and every card now carry `cell_type_final`, `cell_type_source`
+("human" or "model") and both underlying labels, so a card cannot present a
+prediction as a curated fact. Final seed types: 4P 44, 23P 41, BC 8, MC 5,
+BPC 3, NGC 1, Unsure E 1 — 88 human-sourced, 15 model-sourced.
+
 A first attempt at the cell-type join returned nothing from every table: the
 `cell_type_reference` tables are keyed on `target_id` (the nucleus id), not
 `pt_root_id`, and 5,000 ids in one filter is also too many. Chunks of 200 on
