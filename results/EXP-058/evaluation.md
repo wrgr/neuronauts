@@ -50,12 +50,23 @@ secondary diagnostic rather than the bar.
 
 ## Limits of these numbers, stated
 
-- **The ceiling is conditional.** The oracle clusters by proofread owner, so it
-  scores 1.0 by construction — but only over pairs the shared candidate panel
-  could ever propose. The panel is bounded (k = 8 nearest endpoints within
-  5 µm), not all-pairs, so a true ceiling is lower wherever the panel missed a
-  pair. It happens to contain all 492 true pairs here; that is a property of
-  this substrate, not a guarantee.
+- **The oracle is an unconditional ceiling, not a panel-conditional one.**
+  *(Corrected 2026-09-02, after EXP-060.)* The oracle clusters by proofread
+  owner directly and never consults the candidate panel, so its 1.0 measures
+  the metric path, not what the panel can reach. The original version of this
+  note went further and claimed the panel "happens to contain all 492 true
+  pairs". **That was wrong.** Both the oracle's and proximity's `pair_tp = 492`
+  come from transitive closure — proximity collapses the labelled population
+  into one cluster, so every true pair is trivially same-cluster — not from the
+  panel proposing those pairs.
+
+  EXP-060 measured the panel directly and found it contains only **17.5%** of
+  true pairs at these settings (k = 8 within 5 µm). So the ceiling *given this
+  candidate surface* is 0.175 recall, not 1.0, and the gap between the two is
+  the panel's own inadequacy. That is a more serious finding than anything else
+  in this experiment, and it was invisible here precisely because the
+  clustering metric cannot distinguish a pair that was proposed from a pair
+  that was swept up by a collapse.
 - **Trained checkpoints are absent from the ladder.** The plan lists them as a
   rung. The treestitch models expect a different input contract, and wiring
   them in badly would be worse than recording that they are missing. That rung
@@ -75,12 +86,21 @@ The shared candidate panel is cached at
 `data/substrate/panels/k10_proximity.npz` (6,848,187 pairs, ~66 s to build,
 5.7 GB peak) and is reused by EXP-060.
 
-## A bug worth recording
+## Two errors worth recording
 
-The first run of this experiment **passed with every precision and recall
-NaN**. The metric suite returns `pair_precision`/`pair_recall`; the experiment
+**1. A hollow pass.** The first run of this experiment **passed with every
+precision and recall NaN**. The metric suite returns `pair_precision`/`pair_recall`; the experiment
 asked for `merge_precision`/`merge_recall`, got nothing, and the ordering check
 accepted the result because one of its clauses read `== 0.0 or isnan(...)`.
 Fixed twice over: the score function now names the keys it requires and raises
 if the suite does not return them, and the ordering check refuses to pass on a
 non-finite rung. A ladder that cannot be ordered is not a passing ladder.
+
+**2. A confident wrong claim,** corrected above: that the panel contained all
+492 true pairs. It contains 17.5% of them. `pair_tp` after union-find counts
+same-cluster pairs, and a partition that has collapsed to one cluster scores
+every true pair as found — so that number can never evidence panel coverage.
+EXP-060 caught it by measuring panel membership directly, one experiment later.
+The lesson generalises: a clustering metric on a collapsed partition says
+nothing about the candidate stage that fed it, and the two must be measured
+apart.

@@ -17,14 +17,20 @@ The rungs, weakest to strongest:
                     merging moves ARI".
 ``proximity_*``     union-find over candidate pairs whose endpoint gap is under
                     1, 2 or 5 um. The naive method every reader will ask about.
-``oracle``          cluster the labelled atoms by their proofread owner. The
-                    ceiling *given this candidate surface*, which is lower than
-                    a true ceiling wherever the panel missed a pair.
+``oracle``          cluster the labelled atoms by their proofread owner. An
+                    *unconditional* ceiling: it never consults the candidate
+                    panel, so it measures the metric path rather than what the
+                    panel can reach. EXP-060 measured the panel directly and
+                    found it proposes only 17.5% of true pairs, so the ceiling
+                    given this candidate surface is far lower.
 
 The candidate surface is shared: one bounded k-nearest-neighbour panel over
 every tier-10 endpoint, built once and cached, so the rungs differ only in
-which pairs they accept. It is bounded (k=8 within 5 um), not all-pairs, and
-that is a real limitation of the ceiling rather than a detail.
+which pairs they accept. It is bounded (k=8 within 5 um), not all-pairs, and EXP-060 showed that bound
+is severe: the panel proposes 17.5% of true pairs. Every rung here shares it,
+so the comparison between rungs stands, but no rung can exceed it except by
+transitive closure -- which is exactly how the collapsed proximity rungs reach
+a recall of 1.0.
 
 Evaluation is restricted to atoms with a proofread owner, because those are the
 only ones whose merges can be judged; the unlabelled atoms remain in the
@@ -160,7 +166,8 @@ def run(ctx: Context) -> Outcome:
     rungs["random_matched"] = {**_score(pred, owner, labelled),
                                "n_pairs_accepted": int(len(pick))}
 
-    # 4. the ceiling, given this candidate surface
+    # 4. the unconditional ceiling -- deliberately ignores the panel, so it
+    #    must not be read as what the candidate surface could reach (EXP-060)
     pred = np.arange(n)
     pred[labelled] = n + owner[labelled]          # keep distractors singleton
     _, pred = np.unique(pred, return_inverse=True)
