@@ -163,3 +163,39 @@ signature*, not by a raw count — which is what embedding retrieval (EXP-057C)
 and the still-untested biological constraints (polarity, one-soma, caliber
 continuity — same-owner fragments should agree with each other, not merely
 clear a size threshold) are for.
+
+## The open hypothesis above, resolved: small fragments are genuinely distal, not interstitial
+
+*Prompted directly: doesn't adding intermediate objects to a fixed volume have
+to shrink nearest-neighbour distances?* Correct as a general principle, and
+worth checking directly rather than assuming it explains the sparsity effect
+above.
+
+For the 947 owners with a tier ≥10 fragment, comparing before/after adding
+every other labelled atom of that owner: the MST's median longest edge got
+**longer**, not shorter — 4.08 µm → 19.68 µm. Measured directly why: for each
+newly-added (non-tier ≥10) atom, its distance to the *nearest* existing
+tier ≥10 fragment of the same owner (not centroid — nearest actual point):
+
+| percentile | distance to nearest existing big fragment |
+|---|---:|
+| p10 | 1.33 µm |
+| p25 | 4.25 µm |
+| **p50** | **14.5 µm** |
+| p75 | 29.8 µm |
+| p90 | 48.9 µm |
+
+Only 24.2% of new atoms are within the old MST's own median edge length
+(4.08 µm) of an existing fragment; only 6.4% are within 1 µm. If sparse
+endpoint sampling on small atoms were inflating these distances as an
+artifact, the distribution would cluster near zero with occasional misses —
+instead it is systematically large from the 10th percentile up.
+
+**Conclusion: small (1–9 synapse) v117 fragments are mostly genuinely distal**
+— separate distal branch tips or bouton clusters the ≥10-synapse population
+never captured — not interstitial pieces of cable already represented nearby.
+Including them extends the physical span assembly must cover rather than
+filling gaps in what was already spanned, which is the direct cause of both
+the longer MST edges above and the lower proximity recall throughout this
+experiment: a real share of the missing partners are tens of microns away,
+not badly-sampled nearby ones.
