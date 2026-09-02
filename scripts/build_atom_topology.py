@@ -63,16 +63,23 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--population", default="data/substrate/c100um/population.npz")
     ap.add_argument("--geom-dir", default="data/substrate/geom")
-    ap.add_argument("--tier", type=int, default=10,
-                    help="shard prefix to contract, e.g. 10 -> k10_*.npz")
+    ap.add_argument("--tier", default="10",
+                    help="shard prefix to contract, e.g. 10 -> k10_*.npz only "
+                        "(that tier's own incremental shards, NOT the union "
+                        "of everything with >=k synapses -- each tier's fetch "
+                        "skips atoms already done in a narrower tier, so "
+                        "k1_*.npz alone holds only the 1-4 synapse slice). "
+                        "Pass 'all' to glob every shard (k10_+k5_+k1_), the "
+                        "true complete population.")
     ap.add_argument("--span", type=int, default=5,
                     help="nodes back along a segment used for the tip tangent")
     ap.add_argument("--out", default="")
     ap.add_argument("--report", default="")
     args = ap.parse_args()
 
-    out = Path(args.out or f"data/substrate/topology/k{args.tier}.npz")
-    report = Path(args.report or f"results/atom_topology_k{args.tier}.json")
+    tier_label = "all" if args.tier == "all" else int(args.tier)
+    out = Path(args.out or f"data/substrate/topology/k{tier_label}.npz")
+    report = Path(args.report or f"results/atom_topology_k{tier_label}.json")
 
     pop = load_population(args.population)
     n_pre_all, n_post_all = polarity_counts(pop)
@@ -83,9 +90,10 @@ def main() -> None:
                          cols=["pos_nm", "mean_dt_nm"])
     print(f"attributes: {len(attrs.l2_id):,} L2 nodes", flush=True)
 
-    shards = sorted(Path(args.geom_dir).glob(f"shards/k{args.tier}_*.npz"))
+    pattern = "shards/*.npz" if args.tier == "all" else f"shards/k{args.tier}_*.npz"
+    shards = sorted(Path(args.geom_dir).glob(pattern))
     if not shards:
-        raise SystemExit(f"no shards matching k{args.tier}_*.npz in {args.geom_dir}")
+        raise SystemExit(f"no shards matching {pattern} in {args.geom_dir}")
     print(f"shards    : {len(shards)}", flush=True)
 
     rows: list[np.ndarray] = []
@@ -165,7 +173,7 @@ def main() -> None:
         ep_seg_len_nm=ep_len.astype(np.float32),
         ep_caliber_nm=ep_cal.astype(np.float32),
         meta=np.frombuffer(json.dumps({
-            "tier": args.tier, "span": args.span,
+            "tier": tier_label, "span": args.span,
             "geom_dir": str(args.geom_dir), "population": str(args.population),
             "cols": ATOM_COLS}).encode(), np.uint8))
 
@@ -174,7 +182,8 @@ def main() -> None:
     nan_seg = int(col["cable_nan_seg"].sum())
     q = [10, 25, 50, 75, 90, 99]
 
-    print(f"\n{'='*70}\nTIER >={args.tier} CONTRACTED TOPOLOGY "
+    tier_display = "ALL (complete population)" if args.tier == "all" else f">={args.tier}"
+    print(f"\n{'='*70}\nTIER {tier_display} CONTRACTED TOPOLOGY "
           f"({len(atom_id):,} atoms, {time.time()-t0:.0f}s)")
     print(f"  L2 nodes             : {int(col['n_l2'].sum()):,}")
     print(f"  L2 edges             : {int(col['n_edge'].sum()):,}")
@@ -203,7 +212,7 @@ def main() -> None:
                       f"{int(m.sum()):>9,} ({100*m.mean():5.2f}%)")
 
     write_result(report, {
-        "tier": args.tier, "n_atoms": int(len(atom_id)),
+        "tier": tier_label, "n_atoms": int(len(atom_id)),
         "n_l2": int(col["n_l2"].sum()), "n_edges": int(col["n_edge"].sum()),
         "n_components": int(col["n_comp"].sum()),
         "n_endpoints": int(col["n_end"].sum()),
@@ -218,7 +227,7 @@ def main() -> None:
                                     for p in q} if len(ep_cal) else {},
         "out": str(out),
     }, inputs=[args.population, str(out)],
-        params={"tier": args.tier, "span": args.span,
+        params={"tier": tier_label, "span": args.span,
                 "geom_dir": str(args.geom_dir)},
         quick_hash=True, synthetic_fallback=False)
     print(f"\nwrote {out} and {report}")

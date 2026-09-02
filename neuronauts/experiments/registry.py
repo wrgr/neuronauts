@@ -184,9 +184,10 @@ REGISTRY: list[Entry] = [
         module="neuronauts.experiments.exp060b_object_panel",
         note="Direct test of CORRECTION.md's two fixes: reduce by atom not "
              "endpoint, and report/cap panel size in atom units. Compares "
-             "tier>=10 (sparse, 20,826 atoms) against tier>=1 (complete "
-             "substrate, 279,075 atoms) since the earlier gap measurement "
-             "only covered tier>=10."),
+             "tier>=10 (sparse, 20,826 atoms) against the true complete "
+             "population (279,075 atoms, every atom, unioned from all fetch "
+             "tiers). A first run mislabeled k1.npz -- the incremental "
+             "1-4-synapse-only shard, not the union -- as this; fixed."),
 
     Entry(series="B", est_minutes=60, spec=_s(
         id="EXP-060", title="Endpoint filter",

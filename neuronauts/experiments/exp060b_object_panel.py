@@ -18,10 +18,10 @@ of *atoms* by their minimum endpoint gap. Panel size is capped in the unit
 that matters -- candidate objects -- not in the unit the geometry happens to
 be stored in.
 
-Two substrates are compared, because the earlier gap measurement was flagged
-as incomplete: tier >=10 (20,826 atoms, sparse) and tier >=1 (279,075 atoms,
-the complete substrate, now available). More fragments means more spanning
-links to make, so this could cut either way.
+Two substrates are compared: tier >=10 (20,826 atoms, sparse) and the true
+complete population (279,075 atoms, every atom with >=1 synapse, unioned from
+all three fetch tiers). More fragments means more spanning links to make, so
+this could cut either way.
 
     uv run python -m neuronauts.experiments.exp060b_object_panel
 """
@@ -36,7 +36,16 @@ from neuronauts.harness.labels import TIER_NONE, load_labels
 
 LABELS_NPZ = "data/substrate/c100um/labels_v1822.npz"
 TOPOLOGIES = {"tier10": "data/substrate/topology/k10.npz",
-             "tier1": "data/substrate/topology/k1.npz"}
+             "all": "data/substrate/topology/kall.npz"}
+#: A first run of this experiment used k1.npz here under the name "tier1",
+#: intending "every atom with >=1 synapse". k1.npz is NOT that: the tiered
+#: fetch's own docstring says each tier "skips atoms already done", so
+#: shards/k1_*.npz holds only the atoms newly added at the widen-to->=1 step --
+#: exactly the 1-4 synapse slice, since >=10 and >=5 already took everything
+#: above that. This was caught by a direct question about candidate synapse
+#: counts (a floor of >=5 returned zero candidates, which is only possible if
+#: the "complete population" file secretly contained none). Fixed by adding
+#: `--tier all` to build_atom_topology.py, which globs every shard.
 
 RADII_NM = (2000.0, 5000.0)
 #: Swept rather than fixed: the first run at a single cap (20) showed recall
@@ -145,7 +154,7 @@ def _object_panel(nearest: dict[int, dict[int, float]], cap: int):
     return panel
 
 
-def _measure(tier_key: str, topo_path, labels, root) -> dict:
+def _measure(tier_key: str, topo_path, labels, root) -> dict:  # noqa: D401
     with np.load(root / topo_path, allow_pickle=False) as z:
         atoms = z["atom_id"]
         ep_atom, ep_pos, ep_tan = z["ep_atom"], z["ep_pos_nm"], z["ep_tangent"]
@@ -217,8 +226,8 @@ def run(ctx: Context) -> Outcome:
             "tier10_5um_recall_uncapped": uncapped,
             "tier10_5um_median_panel_uncapped":
                 t10_5.get("uncapped", {}).get("median_panel_atoms"),
-            "tier1_5um_recall_at_cap_20":
-                curve_at("tier1", "5um").get("20", {}).get("mst_recall"),
+            "all_5um_recall_at_cap_20":
+                curve_at("all", "5um").get("20", {}).get("mst_recall"),
             "correction_md_predicted": 0.65,
         },
         population={k: {"n_atoms": v["n_atoms"], "n_labelled_geo": v["n_labelled_geo"],

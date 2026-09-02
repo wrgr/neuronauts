@@ -87,3 +87,79 @@ uv run python -m neuronauts.experiments.exp060b_object_panel
 Runtime ~2.5 minutes for both tiers, both radii, the full cap sweep — cheap
 enough that this curve should be the default report, not a single number, for
 every future candidate-generation measurement on this substrate.
+
+---
+
+## Correction, 2026-09-02 — "tier ≥1" above was mislabeled; here is the true comparison
+
+The tier comparison in this file originally used `data/substrate/topology/k1.npz`
+under the name "tier ≥1 (complete substrate)". **It was not that.** The tiered
+fetch's own design has each tier "skip atoms already done" (`neuronauts/harness/geometry.py`),
+so `shards/k1_*.npz` holds only the atoms *newly added* at the widen-to-≥1 step
+— exactly the 1–4 synapse slice, since ≥10 and ≥5 already covered everything
+above that. `k1.npz` was 238,966 atoms of 1–4 synapses each, not the 279,075-atom
+union.
+
+This was caught by a direct question about candidate synapse counts: filtering
+candidates in that file to `n_synapses >= 5` returned **zero** candidates,
+which is only possible if every atom present already had 1–4 synapses. Fixed
+by adding `--tier all` to `scripts/build_atom_topology.py` (globs every shard),
+rebuilding the true union (`kall.npz`, 279,075 atoms, verified against the
+population count), and rerunning this experiment against it.
+
+**Corrected tier comparison** (labelled/MST counts also correct now — the true
+population has far more labelled atoms and links than the mislabeled slice
+suggested):
+
+| | tier ≥10 | **true full population** | *(mislabeled "tier≥1" — wrong)* |
+|---|---:|---:|---:|
+| atoms | 20,826 | 279,075 | ~~238,966~~ |
+| labelled | 1,297 | **4,511** | ~~2,723~~ |
+| MST links | 350 | **3,260** | ~~1,899~~ |
+| uncapped recall @5µm | 64.6% | **47.4%** | ~~26.6%~~ |
+| uncapped median panel @5µm | 3,870 | **1,172** | ~~293~~ |
+
+The qualitative finding survives correction — recall on the full population is
+still lower than the tier ≥10 slice, and the trade-off curve still holds — but
+every number attributed to "tier ≥1" before this correction was wrong, and the
+gap was smaller than claimed (47.4% vs 64.6%, not 26.6% vs 64.6%).
+
+## The synapse-floor question, answered on the correct file
+
+Prompted directly: given the population is entirely synapse-anchored, is
+proximity's failure actually a symptom of the panel being flooded with
+near-zero-synapse "junk" objects that a cheap floor would filter out?
+
+Composition of the uncapped candidate crowd on the true full population, 5 µm:
+**45.0% of nearby candidates have only 1–4 synapses**, 12.9% have 5–9, 42.1%
+have ≥10. So the intuition that low-synapse objects dominate the local
+neighbourhood is right, once measured on the correct file (at tier ≥10 the
+figure is a tautological 0%, since that population excludes them by
+construction — which is exactly what made the mislabeled file look deceptively
+clean).
+
+But filtering them out makes recall **worse**, not better, at every panel size
+tested, capped or not:
+
+| candidate floor | recall @ cap 20 | recall uncapped | uncapped median panel |
+|---|---:|---:|---:|
+| none | 10.5% | 47.4% | 1,172 |
+| ≥5 synapses | 8.1% | 32.1% | 731 |
+| ≥10 synapses | 6.7% | 26.6% | 605 |
+| ≥30 synapses | 5.5% | 22.1% | 436 |
+
+Raising the floor shrinks the panel, as expected — but recall falls faster
+than the panel does, at every setting. The reason: a meaningful share of the
+**true spanning partners themselves are low-synapse fragments** — a real
+neuron's distal twig, with 1–4 synapses in this region, is exactly the kind of
+object a floor removes along with the junk. An absolute synapse-count floor
+cannot distinguish "irrelevant small fragment" from "real partner that happens
+to be small," because both live in the same range.
+
+**This refutes the specific mechanism** (filter by synapse count) while
+confirming the premise that motivated it (the neighbourhood really is full of
+low-synapse objects). The fix has to discriminate by *identity or connectivity
+signature*, not by a raw count — which is what embedding retrieval (EXP-057C)
+and the still-untested biological constraints (polarity, one-soma, caliber
+continuity — same-owner fragments should agree with each other, not merely
+clear a size threshold) are for.

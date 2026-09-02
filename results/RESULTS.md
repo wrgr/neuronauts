@@ -17,3 +17,4 @@ a gap. Full reports: [`results/reports/`](reports/).
 | EXP-059 | Metric agreement | pass | n_cases=200, n_quantities_checked=11, n_disagreeing=0 | 0.0 | `06e069e0b` | 2026-09-02T00:47:43+00:00 |
 | EXP-060B | Object-space atom-pair panel | fail | tier10_recall_5um=0.12, tier10_recall_2um=0.12, tier10_median_panel_5um=20 | 1.4 | `b67bd27fd` | 2026-09-02T01:23:49+00:00 |
 | EXP-060B | Object-space atom-pair panel | pass | tier10_5um_recall_at_cap_20=0.12, tier10_5um_recall_uncapped=0.6457, tier10_5um_median_panel_uncapped=3870 | 1.6 | `b67bd27fd` | 2026-09-02T01:33:40+00:00 |
+| EXP-060B | Object-space atom-pair panel | pass | tier10_5um_recall_at_cap_20=0.12, tier10_5um_recall_uncapped=0.6457, tier10_5um_median_panel_uncapped=3870 | 3.8 | `28039e9f3` | 2026-09-02T02:03:07+00:00 |

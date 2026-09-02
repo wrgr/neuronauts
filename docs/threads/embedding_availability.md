@@ -316,3 +316,256 @@ later materializations. Redirect the EXP-057C half-day slot to it:
 No large files were downloaded to produce this report; all existence/size claims above are
 from HTTP HEAD requests, GCS JSON bucket listings, or full reads of small (<7 KB) README /
 config files.
+
+---
+
+## Spike: can we use these on v117?
+
+> Follow-on network+data spike, run 2026-09-02, on top of the recommendation above. Everything
+> in this section is **measured** (fetched bytes, parsed content, live CAVE/CloudVolume calls,
+> compared against this repo's own ground truth) unless a line is explicitly marked
+> **(inferred)**. All downloads went to the scratchpad, not the repo; nothing here was
+> committed.
+
+### Step 1 — fetch one shard (measured)
+
+Pulled `.../embeddings_m343/segclr_nm_coord_public_offset_csvzips/0.zip` over plain HTTPS
+(public bucket, no auth needed): **220,460,316 bytes**, byte-for-byte equal to the GCS-listed
+object size — not truncated.
+
+No README exists inside `segclr_nm_coord_public_offset_csvzips/` itself (`404` on `README`,
+`README.txt`, `README.md`); the offset convention is documented one directory over, in
+`segclr_csvzips/README` (fetched, 1,088 bytes, quoted in §2.3 above): raw embeddings are in
+**voxels** (32×32×40 nm for mouse) and need **+110592, +110592, +592640 nm** added to align to
+the public coordinate frame. I cross-checked that offset independently: the volume's own
+Neuroglancer state (`segclr_v2.json`, fetched) carries an annotation-layer transform of
+`(13824, 13824, 14816)` **voxels** at 8×8×40 nm resolution for the *raw* `by_id` annotation
+source — `13824×8 = 110592` nm, `13824×8 = 110592` nm, `14816×40 = 592640` nm. Exact match to
+the README's offset, from a second, independent source. The `_nm_coord_public_offset_`
+directory name is accurate: as parsed below, its coordinates come out already in nm and already
+in the public frame (verified in Step 3 by falling inside our own cube's known nm bounds; no
+further shift needed).
+
+### Step 2 — actual format (measured)
+
+Parsed `0.zip` fully (23,982 entries):
+
+| Quantity | Value |
+|---|---:|
+| Zip entries (`{segment_id}.csv`) | 23,982 |
+| Total rows (skeleton nodes) | 375,526 |
+| Distinct segment ids | 23,982 (1 CSV per id, as documented) |
+| Embedding width | 64 (`e0..e63`) — confirmed, 0 rows with a different column count |
+| Rows/segment | min 1, max 29,575, mean 15.7 |
+| x range (nm) | 216,608 – 1,686,560 |
+| y range (nm) | 278,720 – 1,239,488 |
+| z range (nm) | 596,560 – 1,111,720 |
+
+A row is exactly `node_id, x, y, z, e0..e63` as the sibling README states. Coordinates are
+**nm, not voxels** — confirmed two ways: (a) the raw values (e.g. `305888.0, 534496.0,
+772200.0`) are on the right order of magnitude for minnie65 in nm and wildly wrong for voxels
+at any documented resolution; (b) a volume-density sanity check: this one 1-in-10,000 md5 shard
+spans a bounding box of ≈1.47 × 0.96 × 0.52 mm ≈ 0.73 mm³, in the right ballpark for minnie65's
+published extent (≈0.88 mm³), and scaling 23,982 segments in ≈0.73 mm³ down to our 0.001 mm³
+(100 µm)³ cube predicts ≈27 segments landing inside it — close to the 37 actually measured in
+Step 3 (see there for why it isn't geographic sampling and some spread is expected).
+
+### Step 3 — overlap with our cube (measured, no widening needed)
+
+Filtering shard 0 to `|x-663000| ≤ 50000, |y-591000| ≤ 50000, |z-860000| ≤ 50000` (nm) gave
+**440 rows across 37 distinct segment ids** directly — the first shard tried already covers our
+region, no need to check a wider box or hunt for a different shard.
+
+This is expected once you read the sharding rule correctly: `md5_shard(segment_id, 10000)` is a
+hash of the **segment id**, not of its location. Shard 0.zip is not "the region near the
+origin" — it's a pseudo-random **1-in-10,000 subsample of every non-trivial object in the
+entire dataset**, spatially spread out just like the full population. That's why the very first
+shard already contains ~37 objects overlapping any given small cube, matching the density
+math above.
+
+### Step 4 — the crosswalk
+
+**A bug I made and caught before trusting the result (per this repo's CLAUDE.md, logged in
+full because it's instructive):**
+
+My first attempt used `neuronauts.fetch.MICRONS_SEG_PATH` (`precomputed://https://bossdb-open-
+data.s3.amazonaws.com/.../minnie65/seg`, the path other repo code uses for `fetch_seg_volume`)
+at mip 2, assuming it returns raw, timestamp-invariant supervoxels. All 37/37 point queries
+"succeeded" and fed cleanly into `roots_at(..., V117_TIMESTAMP)` — but the returned "v117 root"
+was **identical to the input SegCLR m343 segment id in 37/37 cases**. That is not a plausible
+coincidence, and CLAUDE.md's rule 0 says to suspect my own call before anything else. I checked
+by treating a few of those ids as roots and calling `root_leaves(id, stop_layer=1)`: they came
+back with 13, 75, 22, and 700 supervoxel leaves — real, multi-supervoxel agglomerated objects,
+not raw supervoxels. **`MICRONS_SEG_PATH`'s static, unversioned `/seg` export is itself an
+already-agglomerated flat segmentation** (apparently frozen at a state coincident with m343 for
+never-since-edited components), not the raw watershed layer. Using it for a "get the
+supervoxel at this point" step would have been silently wrong — it happened to produce
+plausible-looking numbers for this batch of atoms only because they turn out to be unedited.
+
+**Corrected method:** query the *live* graphene segmentation source
+(`client.info.segmentation_source()`) at **mip 0** (8×8×40 nm, the true supervoxel layer) with
+**`agglomerate=False`**, then `roots_at(sv, V117_TIMESTAMP)` for the real crosswalk.
+
+**Validated against this repo's own ground truth before trusting it on SegCLR data:** 15
+random synapses from `data/substrate/c100um/population.npz` (whose `syn_atom_pre`/
+`syn_atom_post` were computed independently, from the synapse table's own
+`pre_pt_supervoxel_id`/`post_pt_supervoxel_id` columns, not from coordinates) were run through
+`xyz → CloudVolume(graphene, mip0, agglomerate=False) → roots_at(V117_TIMESTAMP)`.
+**15/15 exact matches** to the already-trusted supervoxel-column-based atom id. Cost: ~700 ms/
+item (dominated by the live point query; `roots_at` batches and is cheap).
+
+**Applied to the 37 SegCLR segments found in the cube:** 37/37 raw-supervoxel lookups
+succeeded (nonzero), 37/37 resolved to a nonzero v117 root, and **22/37 (59%) landed exactly in
+our existing 279,075-atom substrate population** (`data/substrate/c100um/population.npz`). Cost
+end-to-end: 246 ms/item (217 ms/item for the point query, `roots_at` amortizes to ~13 ms/item in
+one batch POST).
+
+The 15/37 that don't land in the population are not a crosswalk failure: our population is
+defined as "every v117 root with a **synapse side whose center** falls in the cube" (label-
+blind, per `neuronauts/harness/population.py`), while SegCLR embeds **any non-trivial object**
+(≥1,000 voxels) regardless of synaptic contact — glia, myelin, and dendrite/axon stretches
+between synapses all get nodes. A SegCLR node landing geometrically inside the cube on such an
+object, with zero synapses centered there, correctly resolves to a valid v117 root that is
+correctly *absent* from our synapse-anchored atom list. I did not individually confirm all 15
+have zero synapses (that would need a further per-root synapse query), but the population's own
+inclusion rule fully accounts for the gap without needing to invoke any bug.
+
+**A striking, separately useful finding:** for all 37/37 sampled objects, `v117_root == m343
+segment_id`, i.e. these particular fragments were **never edited** between the v117 (2021) and
+m343 (Feb 2022) timestamps — their chunkedgraph id simply never changed. This is consistent
+with (not independently proof of) EXP-057's finding that 83.8% of this cube's synapse mass sits
+on objects no human has proofread: most objects here have no edit history at all across
+materializations, so for the *unproofread* majority, "the crosswalk" often reduces to "the id
+doesn't change" — the real crosswalk work is concentrated on the proofread minority, which is
+exactly the population Step 5 needs.
+
+**Verdict on the crosswalk: tractable, cheap, and now validated end-to-end.** ~700 ms per
+xyz→v117-atom resolution, 100% agreement with ground truth on the validation sample.
+
+### Step 5 — does it separate same-owner from different-owner atoms?
+
+**Random sampling from one shard cannot reach this test — a measured, not assumed, limit.**
+Of the 22 embedded objects that landed in our population, **0/22 fell in the 4,802-atom
+"pure, proofread-owned" gold pool** used for ground-truth ownership
+(`data/substrate/c100um/labels_v1822.npz`). That pool is only 1.72% of the 279,075-atom
+population (4,802/279,075), and only 59% of embedded-in-cube objects land in the population at
+all, so the expected yield is ≈22 × 1.72% ≈ **0.4 gold atoms per random shard** — the measured
+0/22 is exactly consistent with that rate, not a sign anything is broken.
+
+**Targeted (not random) fetch, so every download counts:** instead of hoping a random shard
+contains a gold atom, I forward-crosswalked known gold atoms to their own m343 root
+(`xyz → supervoxel → roots_at(m343_timestamp=1645690200)`, same validated pipeline as Step 4,
+now run forward instead of back to v117) and computed which of the 10,000 shard files must hold
+it via `md5_shard(m343_root, 10000)` — first validating my reimplementation of that hash against
+the 37 segments already known (from Step 3) to live in shard 0: **37/37 correctly predicted
+shard 0.** Forward crosswalk succeeded 60/60 times tried (~730 ms/item).
+
+Selected the **top 12 owner cells by atom count** (a disclosed, non-random stratification —
+chosen to guarantee same-owner pairs exist in a small sample; it picks *which* atoms to test,
+not the embedding values themselves), capped at 3 atoms/owner: **36 atoms, 35 distinct shard
+files, ≈8.8 GB.**
+
+**A second bug I made and caught:** the first download batch (6-way parallel `curl` with
+`--max-time 120`) silently truncated 9 of the 35 files — under shared bandwidth, some
+200–300 MB shards needed more than 120 s, `curl -s` gave no error, and I hadn't checked exit
+codes or sizes. Caught by comparing every local file's byte count against the GCS object
+listing's `size` field before trusting any of it (per CLAUDE.md: "verify correctness against
+ground truth, not vibes" — the object listing *is* ground truth here). Re-fetched the 9
+mismatches serially with a longer timeout; all 9 then matched the remote size exactly.
+
+**Result, from the corrected data:** 34/36 atoms got an embedding (per-atom vector = the
+embedding row of the node nearest that atom's own synapse point, guarding against a much larger
+already-merged m343 parent object diluting the local signal). The other 2/36 are a distinct,
+minor, expected miss — the forward-mapped m343 root wasn't present as its own CSV in its
+predicted shard (a numerically adjacent id was; plausibly a sub-1,000-voxel object or one that
+changed between query time and m343's exact timestamp), not a repeat of the truncation bug.
+
+| | value |
+|---|---:|
+| Atoms embedded | 34 (12 distinct owners) |
+| Same-owner pairs | 33 |
+| Different-owner pairs | 528 |
+| Same-owner cosine (mean ± sd) | 0.823 ± 0.118 |
+| Different-owner cosine (mean ± sd) | 0.842 ± 0.118 |
+| **AUC (nearest-node embedding)** | **0.445** |
+| AUC (mean of 5 nearest nodes, robustness check) | 0.461 |
+| Tree-DNA within-type AUC (the bar) | 0.829 |
+
+Both pooling variants land at essentially chance, slightly on the wrong side of 0.5 (different-
+owner pairs are *marginally more* similar on average than same-owner pairs). Per-owner spread
+shows this isn't uniform noise — some owner groups cluster tightly (e.g. one owner's 3 atoms:
+cosines 0.95/0.93/0.92) while others don't (e.g. another owner's 3 atoms: 0.55/0.55/0.96) — but
+whatever identity signal exists is inconsistent enough across owners that it doesn't produce
+separation from the cross-owner background at this sample size.
+
+**Caveats on this AUC, stated plainly:**
+- **n is small.** 34 atoms in 12 owner-clusters is closer to 12 independent samples than 34;
+  wide uncertainty is expected, and I did not compute a formal interval.
+- **Type is not controlled.** The 0.829 tree-DNA bar is specifically a *within-type* number
+  (`scripts/within_type_ablation.py` exists precisely because cross-type pairs are trivially
+  separable and inflate the naive score). My 12 owners were picked only by atom count, not
+  matched by cell type — if several are the same type, local-window embeddings failing to
+  separate individuals within a type would look exactly like this result, and it would not be
+  a fair comparison to 0.829. I did not check owner cell types this pass.
+- **Context size varies enormously and unexamined:** the m343 parent segment each embedding
+  came from ranged from 1 node (a still-unedited fragment) to 26,230 nodes (an almost-whole,
+  heavily proofread neuron) — because "gold" ownership is anchored to the much later v1822
+  timestamp, while the embedding is anchored to m343 (Feb 2022); how much proofreading had
+  happened to a given cell by m343 varies atom to atom. Untested whether this confound matters.
+- **Only one pooling strategy per node was tried per variant** (single nearest node; mean of 5
+  nearest). SegCLR's own aggregated 10 µm / 25 µm precomputed tables, or mean-pooling over the
+  *entire* parent object rather than just the local neighborhood, were not tried and could
+  behave differently — untested, not ruled out.
+
+### Verdict: is EXP-057C worth building as a real experiment?
+
+**Split verdict.** Two independent things were tested here and they point different directions:
+
+1. **The v117↔m343 id crosswalk itself is solid, reusable infrastructure.** 100% agreement
+   with ground truth (15/15), ~700 ms/atom, works in both directions (v117→m343 for shard
+   targeting, m343→v117 for population membership). This part is done and should be reused by
+   any future embedding-intake experiment, SegCLR or otherwise.
+2. **The actual signal test, as run here, does not clear the bar and should not be scaled up
+   as-is.** AUC 0.44–0.46 against a bar of 0.829, reproduced under two pooling choices, on a
+   small but not trivial (34-atom, 12-owner) targeted sample, with a plausible (not proven)
+   explanation — type not controlled — for part of the gap.
+
+**Recommendation: do not fund a full-scale EXP-057C around single-node (or 5-node-local-mean)
+SegCLR cosine similarity for same-cell/different-cell atom separation on this substrate.** The
+gap from 0.829 is large enough, and reproduced across two variants, that it is unlikely to be
+closed by more of the same. Before spending the ~25–70 GB / multi-hour fetch a properly powered
+version would need (≥150–300 gold atoms at the ~1.72% gold-atom base rate measured here, even
+using the efficient targeted-shard method), a **cheap, no-new-data preliminary check** would
+settle the "was it just uncontrolled type" question first: pull cell types for these same 12
+owners from the already-confirmed-available `aibs_metamodel_celltypes` table and see whether
+the 12 owners are mostly one type. If they are, a proper within-type SegCLR test is the fair
+comparison to 0.829 and is worth the larger fetch; if they're already mixed types and it still
+doesn't separate, that closes the question without spending more on SegCLR.
+
+**If EXP-057C is pursued further despite this, it needs to do all of the following (not just
+repeat this spike at larger scale):**
+1. Reuse the validated crosswalk exactly as implemented (§Step 4 method) — do not use
+   `MICRONS_SEG_PATH`/`fetch_seg_volume`-style static-volume queries for supervoxel lookups
+   elsewhere in this repo without checking they're not hitting the same already-agglomerated-
+   export trap.
+2. Fetch shards via deterministic `md5_shard(m343_root, 10000)` targeting per gold atom, not
+   random shards — ~100× the hit rate (100% vs ~1% measured here).
+3. Scale to ≥150–300 gold atoms for a trustworthy AUC (this spike's 34/12-owner sample is a
+   pilot, not a result to act on alone) — at ~230 MB/shard this is a genuine multi-hour, ~25-70
+   GB fetch, not a half-day task.
+4. Control for cell type (via `aibs_metamodel_celltypes`) and report both a raw and a
+   within-type AUC, so the number is comparable to tree-DNA's own 0.829.
+5. Try at least the whole-parent-object mean-pooled embedding and the precomputed
+   `aggregated_10um`/`25um` tables as alternate poolings, since the single-node/5-node-local
+   variants tested here are the cheapest but not the only reasonable choice.
+6. Decision rule: if the type-controlled, better-pooled variant still doesn't clear roughly
+   0.7, deprioritize SegCLR for candidate generation and lean on the lineage-anchored-
+   scaffolding alternative already identified in `results/EXP-061/evaluation.md` (59.6% of
+   synapses at 99.8% purity via containment in a certified soma-owned scaffold, no embedding
+   needed).
+
+All data for this section lives in the scratchpad
+(`/private/tmp/claude-501/-Users-wgray13-projects-neuronauts/cf09141a-b1df-4e7f-9934-ee973a777a45/scratchpad/segclr/`,
+not the repo): `0.zip` (Step 1-3), `crosswalk_sample_v2.json` (Step 4), `gold_targets.json` /
+`selected_targets.json` / `shards/*.zip` / `auc_result.json` (Step 5). Nothing from this spike
+was committed.

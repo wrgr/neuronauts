@@ -303,6 +303,231 @@ step 3 is the "work" the brief flagged and should be costed separately (it is
 a CAVE-network-bound loop, subject to this repo's own rate-limiting rules in
 `CLAUDE.md`).
 
+## Measured: decisions near the harness region
+
+Everything in this section is **measured** from real downloaded/streamed
+bytes of the actual dataset (not desk research, not extrapolation), except
+where explicitly marked "inferred." Files live in the session scratchpad
+(`cb2/`), not in this repo.
+
+### 0. Revision used, and the `main` vs `v2` question resolved
+
+`main` and `v2` are **confirmed genuinely different**, not an artifact of
+`datasets-server` ignoring the revision parameter as the earlier section of
+this document worried. Via `HfApi.repo_info(..., files_metadata=True)`:
+
+| File | `main` size / sha256 (first 12 hex) | `v2` size / sha256 (first 12 hex) |
+|---|---:|---:|
+| `metadata/train.parquet` | 15,402,826 B / `553324...` | 25,421,261 B / `f3518d...` |
+| `metadata/val.parquet` | 2,216,569 B / `842d80...` | 4,129,929 B / `21aea4...` |
+| `metadata/test.parquet` | 1,940,900 B / `f4038d...` | 5,035,727 B / `60c816...` |
+
+All six files differ in both size and hash. **This intake used `v2` explicitly**
+(`revision="v2"` on every download/stream call below), per the card's own
+instruction. `main` was not analyzed further.
+
+### 1. Schema of the three lightweight metadata files (as downloaded)
+
+`metadata/{train,val,test}.parquet` (25.4 MB / 4.1 MB / 5.0 MB, `v2`) share
+one schema, 13 columns:
+
+```
+combined_sample_hash                 string
+source_archive_sample_hash           string
+source_archive                       string
+sample_type                          string
+same_neuron                          bool
+has_em                                bool
+has_after_mask                        bool
+task_routing                          list<string>
+false_split_correction_label          double
+false_merge_identification_label      double
+split                                 string
+species                               string
+shard                                 string
+```
+
+Row counts: train 531,734; val 82,822; test 101,929; **total 716,485** — this
+**resolves the 401,170-vs-716,485 discrepancy** flagged in §2/§6.5 above:
+401,170 was the `main`/V1 total; **716,485, matching the paper's headline
+figure exactly, is the `v2` total** (531,734+82,822+101,929 = 716,485,
+confirmed twice — once by summing the row counts in the three parquet files
+directly, once independently by summing `n_samples` in the repo's own
+`shards.csv` manifest, which agrees exactly).
+
+Three real rows (one per species, `train` split):
+
+```json
+{"combined_sample_hash": "81c5a636674e76552ed428d6c3f1148c", "source_archive_sample_hash": "88cda73850c3", "source_archive": "unified_fly", "sample_type": "merge_edit", "same_neuron": true, "has_em": true, "has_after_mask": false, "task_routing": ["false_split_correction"], "false_split_correction_label": 1.0, "false_merge_identification_label": null, "split": "train", "species": "fly", "shard": "train/train-00000.parquet"}
+{"combined_sample_hash": "8b8301f8499a8c916ea4586aaca884de", "source_archive_sample_hash": "60a789906f67", "source_archive": "unified_controls_fly", "sample_type": "junction_control", "same_neuron": true, "has_em": true, "has_after_mask": false, "task_routing": ["false_merge_identification"], "false_split_correction_label": null, "false_merge_identification_label": 0.0, "split": "train", "species": "fly", "shard": "train/train-00000.parquet"}
+{"combined_sample_hash": "f68dc81a0a77a76a2943da4839464cc9", "source_archive_sample_hash": "a8c0215dbc61", "source_archive": "unified_mouse", "sample_type": "split_edit", "same_neuron": false, "has_em": true, "has_after_mask": true, "task_routing": ["false_merge_identification", "split_mask_generation"], "false_split_correction_label": null, "false_merge_identification_label": 1.0, "split": "train", "species": "mouse", "shard": "train/train-00000.parquet"}
+```
+
+**Correction to this document's earlier §2 guess:** §2 speculated the
+lightweight `metadata/*.parquet` files "appear to carry the metadata/id/
+coordinate columns without the image and geometry blobs." **That guess was
+wrong, verified directly** — the schema above has no coordinate field at all
+(no `interface_point_nm`, `render_center_nm`, root ids, or `operation_id`).
+Those live only inside a `metadata` string column (JSON-encoded) present in
+the **full** per-shard files (`train/train-NNNNN.parquet`, etc.), alongside
+the large binary image/geometry columns — confirmed via `demo.parquet`'s
+schema (a 6.6 MB, 20-row full-schema sample) and directly via the full
+shards themselves (§2 below). Per this repo's `CLAUDE.md` §0, we do not
+report a workaround-free dead end here; we found the actual coordinate
+source and used it (next section), rather than declaring the task impossible
+because the file the brief named turned out not to hold what was assumed.
+
+### 2. Getting coordinates without downloading the corpus
+
+The full per-shard files are large — `shards.csv` (downloaded, 903 rows,
+one per shard) sums to **235,295,923,238 bytes = 235.3 GB** across
+`train/` (669 shards) + `val/` (105) + `test/` (129) — this *is* "the 121 GB
+of task data" the brief said not to download (in fact ~2× that figure for
+`v2`, since `v2` has 1.79× as many rows as `main`).
+
+Parquet stores columns contiguously per row group, and HuggingFace's CDN
+supports HTTP byte-range GETs (confirmed directly: `curl -H "Range:
+bytes=0-1023"` against a resolved shard URL returned `HTTP/2 206`,
+`Content-Range: bytes 0-1023/261047486`, exactly 1024 bytes). So we read the
+parquet footer of every shard (via ranged GETs) to get each column-chunk's
+byte offsets, then fetched **only** the `combined_sample_hash`, `species`,
+`sample_type`, and `metadata` columns' byte ranges — never the `geometry`,
+`em_*`, or `split_mask_*` binary image columns that make up the bulk of each
+shard.
+
+**Result, measured directly:** across all 903 shards (0 failures, 0 retries
+needed after the first working version), this transferred **1,197,462,860
+bytes = 1.197 GB — 0.51% of the 235.3 GB full corpus** — while still reading
+every one of the 716,485 rows' `species`/`sample_type`/`metadata` fields.
+Per-shard row counts matched the `shards.csv` manifest's `n_samples` exactly
+for all 903 shards (0 mismatches) — this is the ground-truth check that the
+column-projected reads aren't silently dropping or duplicating rows.
+
+Full per-shard schema (21 columns; only 4 were fetched):
+```
+combined_sample_hash, source_archive_sample_hash, source_archive, sample_type,
+same_neuron, task_routing, false_split_correction_label,
+false_merge_identification_label, split, species, has_em, has_after_mask,
+present_slots, metadata (string, JSON), geometry (binary),
+em_xy_before, em_xz_before, em_yz_before, em_best_before (binary structs),
+split_mask_front, split_mask_side, split_mask_top (binary structs)
+```
+
+A real `metadata` JSON value (mouse, `adjacent_control`):
+```json
+{"adjacent_root": "864691135499482491", "after_root_ids": null, "base_root": "864691135764441828", "before_root_ids": null, "cutout_timestamp": 1747792546.0, "edit_point_nm": [619856.0, 731404.0, 835020.0], "interface_point_nm": [619616.0, 731296.0, 835160.0], "is_merge": true, "operation_id": "1687135", "render_center_nm": [619218.39, 731780.11, 834222.46], "root_ids": ["864691135764441828", "864691135499482491"], "species": "mouse", "strategy": "adjacent_control", "timestamp": 1747792546, "view_extent_nm": 7500.0}
+```
+
+### 3. Dataset-wide species counts (measured, all 716,485 rows, `v2`)
+
+From the lightweight metadata files (top-level `species` column, all three
+splits combined):
+
+| Species | Count |
+|---|---:|
+| fly | 333,905 |
+| **mouse (MICrONS)** | **301,162** |
+| human | 43,138 |
+| zebrafish | 38,280 |
+| **Total** | **716,485** |
+
+**Cross-check:** the full-shard scan (§2), which independently re-derives
+`species` per row from the big shards while extracting `metadata`, found
+**301,162** mouse rows — an exact match to the lightweight-file count above,
+with 0 rows missing a coordinate. This is a strong internal-consistency
+check that the column-projected read is not corrupting or dropping data.
+
+### 4. Units determination — nanometers, confirmed by direct measurement
+
+All 301,162 mouse rows carry a non-null `interface_point_nm` triple (0
+missing; `render_center_nm` was never needed as a fallback). Measured extent
+of `interface_point_nm` across all 301,162 mouse decisions:
+
+| Axis | Min (nm) | Max (nm) | Span (nm) | Span (µm) |
+|---|---:|---:|---:|---:|
+| x | 289,008 | 1,627,424 | 1,338,416 | 1,338 |
+| y | 286,080 | 1,151,632 | 865,552 | 866 |
+| z | 594,020 | 1,114,240 | 520,220 | 520 |
+
+**These are nanometers, not voxels.** Reasoning: the brief's own reference
+extent for minnie65 is ~1.4 × 0.87 × 0.79 mm. Our measured x-span (1.338 mm)
+and y-span (0.866 mm) land right on that reference; z-span (0.52 mm) is
+smaller than the reference but that is expected — it's the span of *decision
+points*, a subset of the volume, so it can only be ≤ the full-volume extent,
+never larger. If these values were mip-0 voxel coordinates at 4×4×40 nm, x/y
+would read as ~10⁵ (e.g. 1.4 mm / 4 nm ≈ 350,000) and z as ~10⁴ (0.79 mm /
+40 nm ≈ 19,750) — two full orders of magnitude off from what we measured
+(~10⁶ on all three axes). No conversion factor was applied; this matches the
+pipeline source's own comment (§3 above, "converted to nm") and the
+harness's own coordinate convention (`centre_um * 1000.0` nm, no offset).
+
+### 5. Counts in/near the harness region (measured)
+
+Harness cube: center `(663000, 591000, 860000)` nm, half-widths 50,000 nm
+(100 µm cube) and 100,000 nm (200 µm cube), axis-aligned box filter directly
+on `interface_point_nm`.
+
+| Scope | All mouse decisions | merge_edit + split_edit only |
+|---|---:|---:|
+| **100 µm cube** (half-width 50,000 nm) | **6,079** | **2,514** |
+| **200 µm cube** (half-width 100,000 nm) | **39,292** | **17,496** |
+| **Whole MICrONS volume** | **301,162** | **145,324** |
+
+The 100 µm cube holds about 2.0% of all mouse decisions and about 1.7% of
+mouse merge/split edits — well above the ~0.1% naive-uniform-density
+estimate from §5 above, consistent with this doc's stated hypothesis that
+our harness region (picked as the densest gold-proofread cube in the v1822
+manifest) sits in one of ConnectomeBench2's denser regions too, because both
+draw on the same underlying MICrONS proofreading effort. (This is now a
+measured finding, not the "reason for optimism" it was framed as earlier.)
+
+### 6. Decision/task-type distribution among MICrONS (mouse) rows
+
+`sample_type` values, measured directly (not the partial-sample estimate
+from §1 above):
+
+| sample_type | Whole volume | 100 µm cube | 200 µm cube |
+|---|---:|---:|---:|
+| split_edit | 100,463 (33.4%) | 1,684 (27.7%) | 11,968 (30.5%) |
+| adjacent_control | 82,869 (27.5%) | 1,568 (25.8%) | 10,283 (26.2%) |
+| junction_control | 57,084 (19.0%) | 1,736 (28.6%) | 9,727 (24.8%) |
+| merge_edit | 44,861 (14.9%) | 830 (13.7%) | 5,528 (14.1%) |
+| synapse_control | 15,885 (5.3%) | 261 (4.3%) | 1,786 (4.5%) |
+| **Total** | **301,162** | **6,079** | **39,292** |
+
+Real edits (`merge_edit` + `split_edit`) are 48.3% of whole-volume mouse
+rows — close to, and higher than, the 55.6%-from-a-partial-sample figure
+this document originally estimated in §1 (that estimate mixed species; this
+one is mouse-only and is the full population, not a partial sample).
+
+### 7. Bottom line on EXP-057B's bar
+
+The plan's criterion (`docs/consolidation_plan.md` row 366) is **"≥1,000
+mapped merge-or-split decisions in or near the cube."** Two separate claims
+are bundled in that sentence, and this intake only measured one of them:
+
+- **Spatially in-or-near the cube: MET, with room to spare.** 2,514
+  merge-or-split decisions fall inside the exact 100 µm cube (2.5× the bar on
+  its own), and 17,496 fall inside the 200 µm cube. Both numbers are
+  measured, not estimated, from all 301,162 mouse rows with 0 missing
+  coordinates.
+- **"Mapped" (i.e., resolved to this repo's v117/v1822 root-id lineage via
+  the `roots_binary?timestamp=` step described in §3/§6.3 above): STILL
+  UNDETERMINED.** This intake deliberately did not touch CAVE or run any
+  lineage resolution — that is real, separate, network-bound work, not a
+  parquet-filtering question, and it was out of scope for this pass. A
+  decision landing in the cube spatially is not the same as its
+  `before_root_ids`/`after_root_ids` resolving cleanly onto atoms this repo
+  already tracks at v117 or v1822; some fraction could fail to resolve
+  (renamed/merged-away segments, operations after v1822, etc.).
+
+So: **the spatial-availability half of the bar is comfortably cleared, and
+by a wide enough margin (2.5× at exact scope, 17.5× at 200 µm) that even a
+substantial lineage-mapping failure rate would plausibly still clear
+1,000.** But that is an inference, not a measurement — the honest status is
+"spatial supply is not the bottleneck; the mapping step is the only thing
+left to measure before the bar can be called met outright."
+
 ## 7. Go / no-go
 
 **GO**, scoped narrowly. ConnectomeBench2 is real, its MICrONS portion is

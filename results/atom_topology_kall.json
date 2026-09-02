@@ -1,0 +1,82 @@
+{
+  "cable_m": 43.78725222621402,
+  "endpoint_caliber_nm_pct": {
+    "10": 8.0,
+    "25": 11.7890625,
+    "50": 25.65625,
+    "75": 39.875,
+    "90": 55.0625,
+    "99": 78.25
+  },
+  "leaf_len_nm_pct": {
+    "10": 344.836181640625,
+    "25": 723.5025634765625,
+    "50": 1418.06884765625,
+    "75": 2170.371826171875,
+    "90": 3291.6650390625,
+    "99": 11201.94140625
+  },
+  "n_atoms": 279075,
+  "n_branch": 6598017,
+  "n_components": 369697,
+  "n_edges": 28252088,
+  "n_endpoints": 6893517,
+  "n_l2": 25280966,
+  "n_leaf_segments": 6762041,
+  "n_segments": 16512192,
+  "n_segments_without_length": 1131,
+  "out": "data/substrate/topology/kall.npz",
+  "provenance": {
+    "argv": [
+      "scripts/build_atom_topology.py",
+      "--tier",
+      "all"
+    ],
+    "cwd": "/Users/wgray13/projects/neuronauts",
+    "git_branch": "feat/global-merge-assembly",
+    "git_commit": "28039e9f379f9194f75ac9a67d71f864cb0fe99e",
+    "git_dirty": true,
+    "git_modified_files": [
+      "ocs/threads/connectomebench_intake.md",
+      "scripts/build_atom_topology.py"
+    ],
+    "git_untracked_count": 1,
+    "hostname": "DXJ5G9L3W1-ML",
+    "inputs": [
+      {
+        "algo": "quick-sha256",
+        "bytes": 19923218,
+        "hash": "137f812cd57dadc7732ad23cc472c830b01088b79ad15b9e4e58cb6eb208d48f",
+        "mtime_utc": "2026-09-01T19:58:07+00:00",
+        "path": "data/substrate/c100um/population.npz"
+      },
+      {
+        "algo": "quick-sha256",
+        "bytes": 191644932,
+        "hash": "2047718c20150f632839f435db88eed9d99f4807f61cf9bdff582e9a52a8022f",
+        "mtime_utc": "2026-09-02T01:50:26+00:00",
+        "path": "data/substrate/topology/kall.npz"
+      }
+    ],
+    "packages": {
+      "caveclient": "8.0.1",
+      "matplotlib": "3.10.8",
+      "networkx": "3.6.1",
+      "neuroglancer": "2.41.2",
+      "numpy": "2.4.3",
+      "pandas": "2.3.3",
+      "scipy": "1.17.1",
+      "torch": "2.10.0"
+    },
+    "params": {
+      "geom_dir": "data/substrate/geom",
+      "span": 5,
+      "tier": "all"
+    },
+    "platform": "macOS-15.7.9-arm64-arm-64bit-Mach-O",
+    "python": "3.14.2",
+    "synthetic_fallback": false,
+    "timestamp_utc": "2026-09-02T01:50:28+00:00"
+  },
+  "tier": "all"
+}
