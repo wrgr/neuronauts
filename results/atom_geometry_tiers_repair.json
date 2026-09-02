@@ -1,0 +1,82 @@
+{
+  "provenance": {
+    "argv": [
+      "scripts/fetch_atom_geometry.py",
+      "--population",
+      "data/substrate/c100um/population.npz",
+      "--geom-dir",
+      "data/substrate/geom",
+      "--bounds-centre-um",
+      "663",
+      "591",
+      "860",
+      "--bounds-side-um",
+      "200",
+      "--tiers",
+      "1",
+      "--workers",
+      "16",
+      "--batch",
+      "2000",
+      "--out",
+      "results/atom_geometry_tiers_repair.json"
+    ],
+    "cwd": "/Users/wgray13/projects/neuronauts",
+    "git_branch": "feat/global-merge-assembly",
+    "git_commit": "97bf419582479160df26a21e14bb4fcb7fe851c0",
+    "git_dirty": true,
+    "git_modified_files": [
+      "euronauts/harness/geometry.py",
+      "results/atom_geometry_tiers.json"
+    ],
+    "git_untracked_count": 2,
+    "hostname": "DXJ5G9L3W1-ML",
+    "inputs": [
+      {
+        "algo": "quick-sha256",
+        "bytes": 19923218,
+        "hash": "137f812cd57dadc7732ad23cc472c830b01088b79ad15b9e4e58cb6eb208d48f",
+        "mtime_utc": "2026-09-01T19:58:07+00:00",
+        "path": "data/substrate/c100um/population.npz"
+      }
+    ],
+    "packages": {
+      "caveclient": "8.0.1",
+      "matplotlib": "3.10.8",
+      "networkx": "3.6.1",
+      "neuroglancer": "2.41.2",
+      "numpy": "2.4.3",
+      "pandas": "2.3.3",
+      "scipy": "1.17.1",
+      "torch": "2.10.0"
+    },
+    "params": {
+      "batch": 2000,
+      "bounds_centre_um": [
+        663.0,
+        591.0,
+        860.0
+      ],
+      "bounds_side_um": 200.0,
+      "tiers": [
+        1
+      ],
+      "workers": 16
+    },
+    "platform": "macOS-15.7.9-arm64-arm-64bit-Mach-O",
+    "python": "3.14.2",
+    "synthetic_fallback": false,
+    "timestamp_utc": "2026-09-02T00:51:07+00:00"
+  },
+  "tiers": [
+    {
+      "caliber_coverage": 0.9999823978245135,
+      "coord_coverage": 0.9999823978245135,
+      "elapsed_min": 1.4363229354222615,
+      "k": 1,
+      "n_atoms": 279075,
+      "n_with_geom": 279075,
+      "total_l2_nodes": 25280966
+    }
+  ]
+}

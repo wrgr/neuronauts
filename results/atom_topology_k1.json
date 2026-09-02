@@ -1,0 +1,82 @@
+{
+  "cable_m": 6.728236083538998,
+  "endpoint_caliber_nm_pct": {
+    "10": 8.0,
+    "25": 11.7109375,
+    "50": 24.703125,
+    "75": 35.84375,
+    "90": 52.03125,
+    "99": 77.6875
+  },
+  "leaf_len_nm_pct": {
+    "10": 256.1249694824219,
+    "25": 513.809326171875,
+    "50": 1161.558837890625,
+    "75": 2111.772705078125,
+    "90": 4039.427490234375,
+    "99": 14560.197265625
+  },
+  "n_atoms": 238966,
+  "n_branch": 956842,
+  "n_components": 251679,
+  "n_edges": 4528239,
+  "n_endpoints": 1192836,
+  "n_l2": 4324111,
+  "n_leaf_segments": 1091625,
+  "n_segments": 2403341,
+  "n_segments_without_length": 322,
+  "out": "data/substrate/topology/k1.npz",
+  "provenance": {
+    "argv": [
+      "scripts/build_atom_topology.py",
+      "--tier",
+      "1"
+    ],
+    "cwd": "/Users/wgray13/projects/neuronauts",
+    "git_branch": "feat/global-merge-assembly",
+    "git_commit": "2cbcdb46507927ade90f5b8c1b087c9ed39264e2",
+    "git_dirty": true,
+    "git_modified_files": [
+      "ocs/consolidation_plan.md",
+      "neuronauts/experiments/registry.py"
+    ],
+    "git_untracked_count": 6,
+    "hostname": "DXJ5G9L3W1-ML",
+    "inputs": [
+      {
+        "algo": "quick-sha256",
+        "bytes": 19923218,
+        "hash": "137f812cd57dadc7732ad23cc472c830b01088b79ad15b9e4e58cb6eb208d48f",
+        "mtime_utc": "2026-09-01T19:58:07+00:00",
+        "path": "data/substrate/c100um/population.npz"
+      },
+      {
+        "algo": "quick-sha256",
+        "bytes": 34341208,
+        "hash": "95374bbee18e1e0a86abf6a922df9767bc18d5e3044a8dd653c2328fc642ba7f",
+        "mtime_utc": "2026-09-02T01:01:42+00:00",
+        "path": "data/substrate/topology/k1.npz"
+      }
+    ],
+    "packages": {
+      "caveclient": "8.0.1",
+      "matplotlib": "3.10.8",
+      "networkx": "3.6.1",
+      "neuroglancer": "2.41.2",
+      "numpy": "2.4.3",
+      "pandas": "2.3.3",
+      "scipy": "1.17.1",
+      "torch": "2.10.0"
+    },
+    "params": {
+      "geom_dir": "data/substrate/geom",
+      "span": 5,
+      "tier": 1
+    },
+    "platform": "macOS-15.7.9-arm64-arm-64bit-Mach-O",
+    "python": "3.14.2",
+    "synthetic_fallback": false,
+    "timestamp_utc": "2026-09-02T01:01:42+00:00"
+  },
+  "tier": 1
+}

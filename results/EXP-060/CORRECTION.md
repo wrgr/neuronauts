@@ -128,3 +128,30 @@ as stated, and the correct figure is ~10% of the substrate rather than 2×.
 L2 nodes and endpoints are the geometry the search runs over; atoms are what
 gets decided. Mixing them makes a panel look one to two orders of magnitude
 worse than it is.
+
+---
+
+## Addendum, 2026-09-02 — the "revised bottom line" above was itself premature
+
+EXP-060B ran the atom-pair reduction this correction called for and measured
+the full recall-vs-panel-size curve rather than a single point. Result: the
+~65% prediction above is **exactly right at the uncapped limit** (64.6% at
+5 µm, tier ≥10) — **and it arrives at a median panel of 3,870 candidate
+objects**, which was never checked before this file called the earlier
+withdrawal correct. At any panel size a scorer could use (≤20-100 candidates),
+recall is 12-23%, close to EXP-060's original numbers, not an improvement on
+them.
+
+Tier ≥1 is worse, not better, at every panel size except the very smallest:
+uncapped recall at 5 µm is 26.6% versus tier ≥10's 64.6%, plausibly because
+tier ≥1's small atoms average 5 endpoints each versus 245 at tier ≥10 and so
+expose far less surface to any endpoint-based search — a hypothesis, not
+confirmed. See `results/EXP-060B/evaluation.md` for the full curves and
+population counts.
+
+**So: "geometry cannot propose candidates on its own" is reinstated**, with
+correct numbers this time (a recall/panel-size trade-off, not a single flawed
+percentage) rather than the flat statement EXP-060 first made. The scorer is
+not the sole remaining bottleneck as this file claimed; the proposer is still
+a live problem, and embedding retrieval plus the free biological constraints
+(polarity, one-soma, caliber continuity) both remain necessary, not optional.

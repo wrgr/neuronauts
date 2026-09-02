@@ -1,0 +1,271 @@
+{
+  "elapsed_min": 1.6026115496953328,
+  "id": "EXP-060B",
+  "note": "at a usable panel (<=20 objects), recall is 12.0%; uncapped it reaches 64.6% (CORRECTION.md predicted ~65%, confirmed) but at a median panel of 3870 objects -- not deployable. The recall/panel-size trade-off is real for the ball, matching what EXP-061 found for the cone.",
+  "observed": {
+    "correction_md_predicted": 0.65,
+    "tier10_5um_median_panel_uncapped": 3870.0,
+    "tier10_5um_recall_at_cap_20": 0.12,
+    "tier10_5um_recall_uncapped": 0.645714,
+    "tier1_5um_recall_at_cap_20": 0.147446
+  },
+  "population": {
+    "tier1": {
+      "n_atoms": 238966,
+      "n_labelled_geo": 2723,
+      "n_mst_links": 1899
+    },
+    "tier10": {
+      "n_atoms": 20826,
+      "n_labelled_geo": 1297,
+      "n_mst_links": 350
+    }
+  },
+  "provenance": {
+    "argv": [
+      "/Users/wgray13/projects/neuronauts/neuronauts/experiments/exp060b_object_panel.py"
+    ],
+    "cwd": "/Users/wgray13/projects/neuronauts",
+    "git_branch": "feat/global-merge-assembly",
+    "git_commit": "b67bd27fdee7f79fc150916c624db3b3d4e1480d",
+    "git_dirty": true,
+    "git_modified_files": [
+      "ocs/consolidation_plan.md",
+      "neuronauts/experiments/registry.py",
+      "results/RESULTS.md"
+    ],
+    "git_untracked_count": 7,
+    "hostname": "DXJ5G9L3W1-ML",
+    "inputs": [
+      {
+        "algo": "quick-sha256",
+        "bytes": 140684671,
+        "hash": "07f8d4363cadde77a6b8d1263e2113431a6c34237b0e81ff7b41269aeb75887f",
+        "mtime_utc": "2026-09-01T22:12:51+00:00",
+        "path": "data/substrate/topology/k10.npz"
+      },
+      {
+        "algo": "sha256",
+        "bytes": 1321376,
+        "hash": "64f436a008bd0b5b027c28bb1d074eac972dda5acc6194f6e463c88f65a0635a",
+        "mtime_utc": "2026-09-01T22:57:45+00:00",
+        "path": "data/substrate/c100um/labels_v1822.npz"
+      }
+    ],
+    "labels_used_only_for_evaluation": true,
+    "packages": {
+      "caveclient": "8.0.1",
+      "matplotlib": "3.10.8",
+      "networkx": "3.6.1",
+      "neuroglancer": "2.41.2",
+      "numpy": "2.4.3",
+      "pandas": "2.3.3",
+      "scipy": "1.17.1",
+      "torch": "2.10.0"
+    },
+    "params": {
+      "cap_sweep": [
+        20,
+        50,
+        100,
+        300,
+        1000000
+      ],
+      "radii_nm": [
+        2000.0,
+        5000.0
+      ],
+      "usable_cap": 20
+    },
+    "platform": "macOS-15.7.9-arm64-arm-64bit-Mach-O",
+    "python": "3.14.2",
+    "synthetic_fallback": false,
+    "timestamp_utc": "2026-09-02T01:33:40+00:00"
+  },
+  "question": "Does reducing by atom instead of by endpoint recover the spanning links EXP-060 missed, and does it hold at tier >=1?",
+  "requires": [],
+  "requires_ran": [
+    "EXP-060"
+  ],
+  "status": "passed",
+  "success_criterion": "report MST-spanning-link recall as a function of panel size in OBJECT units (candidate atoms, not endpoints), at 2 and 5 um, on both tier>=10 and tier>=1; passes if the curve is internally consistent (recall non-decreasing in panel size) -- this is a diagnostic measurement, not a threshold test, because CORRECTION.md's prior '~65% at a usable panel' prediction was itself an unverified extrapolation and this experiment exists to check it",
+  "tables": {
+    "by_tier": {
+      "tier1": {
+        "by_radius": {
+          "2um": {
+            "cap_curve": {
+              "100": {
+                "cap": 100,
+                "median_panel_atoms": 32.0,
+                "mst_recall": 0.16377,
+                "n_candidate_pairs": 105307,
+                "p90_panel_atoms": 80.0
+              },
+              "20": {
+                "cap": 20,
+                "median_panel_atoms": 20.0,
+                "mst_recall": 0.142707,
+                "n_candidate_pairs": 49675,
+                "p90_panel_atoms": 20.0
+              },
+              "300": {
+                "cap": 300,
+                "median_panel_atoms": 32.0,
+                "mst_recall": 0.16377,
+                "n_candidate_pairs": 118256,
+                "p90_panel_atoms": 80.0
+              },
+              "50": {
+                "cap": 50,
+                "median_panel_atoms": 32.0,
+                "mst_recall": 0.163244,
+                "n_candidate_pairs": 87717,
+                "p90_panel_atoms": 50.0
+              },
+              "uncapped": {
+                "cap": 1000000,
+                "median_panel_atoms": 32.0,
+                "mst_recall": 0.16377,
+                "n_candidate_pairs": 122088,
+                "p90_panel_atoms": 80.0
+              }
+            },
+            "radius_nm": 2000.0
+          },
+          "5um": {
+            "cap_curve": {
+              "100": {
+                "cap": 100,
+                "median_panel_atoms": 100.0,
+                "mst_recall": 0.230121,
+                "n_candidate_pairs": 268697,
+                "p90_panel_atoms": 100.0
+              },
+              "20": {
+                "cap": 20,
+                "median_panel_atoms": 20.0,
+                "mst_recall": 0.147446,
+                "n_candidate_pairs": 53882,
+                "p90_panel_atoms": 20.0
+              },
+              "300": {
+                "cap": 300,
+                "median_panel_atoms": 293.0,
+                "mst_recall": 0.261717,
+                "n_candidate_pairs": 667428,
+                "p90_panel_atoms": 300.0
+              },
+              "50": {
+                "cap": 50,
+                "median_panel_atoms": 50.0,
+                "mst_recall": 0.201685,
+                "n_candidate_pairs": 134681,
+                "p90_panel_atoms": 50.0
+              },
+              "uncapped": {
+                "cap": 1000000,
+                "median_panel_atoms": 293.0,
+                "mst_recall": 0.266456,
+                "n_candidate_pairs": 964435,
+                "p90_panel_atoms": 636.8000000000002
+              }
+            },
+            "radius_nm": 5000.0
+          }
+        },
+        "n_atoms": 238966,
+        "n_labelled_geo": 2723,
+        "n_mst_links": 1899
+      },
+      "tier10": {
+        "by_radius": {
+          "2um": {
+            "cap_curve": {
+              "100": {
+                "cap": 100,
+                "median_panel_atoms": 100.0,
+                "mst_recall": 0.228571,
+                "n_candidate_pairs": 123946,
+                "p90_panel_atoms": 100.0
+              },
+              "20": {
+                "cap": 20,
+                "median_panel_atoms": 20.0,
+                "mst_recall": 0.12,
+                "n_candidate_pairs": 25133,
+                "p90_panel_atoms": 20.0
+              },
+              "300": {
+                "cap": 300,
+                "median_panel_atoms": 300.0,
+                "mst_recall": 0.345714,
+                "n_candidate_pairs": 343447,
+                "p90_panel_atoms": 300.0
+              },
+              "50": {
+                "cap": 50,
+                "median_panel_atoms": 50.0,
+                "mst_recall": 0.157143,
+                "n_candidate_pairs": 62634,
+                "p90_panel_atoms": 50.0
+              },
+              "uncapped": {
+                "cap": 1000000,
+                "median_panel_atoms": 1467.0,
+                "mst_recall": 0.428571,
+                "n_candidate_pairs": 2749335,
+                "p90_panel_atoms": 5517.800000000001
+              }
+            },
+            "radius_nm": 2000.0
+          },
+          "5um": {
+            "cap_curve": {
+              "100": {
+                "cap": 100,
+                "median_panel_atoms": 100.0,
+                "mst_recall": 0.228571,
+                "n_candidate_pairs": 125232,
+                "p90_panel_atoms": 100.0
+              },
+              "20": {
+                "cap": 20,
+                "median_panel_atoms": 20.0,
+                "mst_recall": 0.12,
+                "n_candidate_pairs": 25138,
+                "p90_panel_atoms": 20.0
+              },
+              "300": {
+                "cap": 300,
+                "median_panel_atoms": 300.0,
+                "mst_recall": 0.385714,
+                "n_candidate_pairs": 374027,
+                "p90_panel_atoms": 300.0
+              },
+              "50": {
+                "cap": 50,
+                "median_panel_atoms": 50.0,
+                "mst_recall": 0.157143,
+                "n_candidate_pairs": 62732,
+                "p90_panel_atoms": 50.0
+              },
+              "uncapped": {
+                "cap": 1000000,
+                "median_panel_atoms": 3870.0,
+                "mst_recall": 0.645714,
+                "n_candidate_pairs": 6074914,
+                "p90_panel_atoms": 10962.000000000004
+              }
+            },
+            "radius_nm": 5000.0
+          }
+        },
+        "n_atoms": 20826,
+        "n_labelled_geo": 1297,
+        "n_mst_links": 350
+      }
+    }
+  },
+  "title": "Object-space atom-pair panel"
+}

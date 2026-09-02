@@ -169,6 +169,25 @@ REGISTRY: list[Entry] = [
              "conn_metric.py is the outstanding one."),
 
     # --- B. candidate generation --------------------------------------------
+    Entry(series="B", est_minutes=45, spec=_s(
+        id="EXP-060B", title="Object-space atom-pair panel",
+        question="Does atom-pair reduction recover the spanning links "
+                 "endpoint k-NN missed, and does it hold at tier >=1?",
+        criterion="report recall-vs-panel-size as a curve (object units), not "
+                  "a single number; passes on internal consistency, since the "
+                  "prior single-cap bar was itself an unverified extrapolation",
+        requires_ran=["EXP-060"],
+        inputs=["data/substrate/topology/k10.npz",
+               "data/substrate/c100um/labels_v1822.npz"],
+        flags={"synthetic_fallback": False,
+              "labels_used_only_for_evaluation": True}),
+        module="neuronauts.experiments.exp060b_object_panel",
+        note="Direct test of CORRECTION.md's two fixes: reduce by atom not "
+             "endpoint, and report/cap panel size in atom units. Compares "
+             "tier>=10 (sparse, 20,826 atoms) against tier>=1 (complete "
+             "substrate, 279,075 atoms) since the earlier gap measurement "
+             "only covered tier>=10."),
+
     Entry(series="B", est_minutes=60, spec=_s(
         id="EXP-060", title="Endpoint filter",
         question="Which of the 5.1M endpoints are real split sites rather "

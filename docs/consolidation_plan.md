@@ -405,43 +405,59 @@ The same applies to a scoring bar: EXP-058 showed AUROC is a poor target at a
 Order is strict A → B → C → D → E; F after D. Each EXP is one module in
 `neuronauts/experiments/` and one PR.
 
-### 6.3a Two grammars, not one
+### 6.3a Three things called "grammar" — keep them apart
 
-The PCFG report frames the grammar over **morphology** — productions over the
-observed L2 tree, scoring which edge to cut. There is a second object with the
-same name and a different corpus: a grammar over **proofreading actions**.
-A proofreader's edit stream is a language — split here, merge these two, extend
-along there, mark this as done — with its own vocabulary, its own valid and
-invalid sequences, and its own context dependence. This project's collaborators
-have prior work on that framing.
+The PCFG report frames a grammar over **morphology** — productions over the
+observed L2 tree, scoring which edge to cut. Two more objects share the word
+and must not be conflated with it or each other, per
+`docs/threads/berlin_proofreading_language.md` (read directly from prior
+project work, github.com/wrgr/berlin, not summarized from memory):
 
-The two are complementary and their corpora differ, which is the practical
-point:
+| | terminals | learns | corpus | status here |
+|---|---|---|---|---|
+| morphology grammar (PCFG report) | skeleton segments, tips | is this object well-formed; where to cut | gold cells (harness, plentiful: 2,357 pure-gold atoms) | E0-E5 proposed |
+| **Berlin's action grammar** | UI events (navigate/segment/annotate) | who is an expert, from behavioral style | 44 annotators' session logs | prior work, verified; not ours to extend without data access |
+| **ConnectomeBench2 decision corpus** | merge/split/cut decisions | what a proofreader decided, and why | ~400k expert decisions | EXP-057B intake |
 
-| | morphology grammar | proofreading-action grammar |
-|---|---|---|
-| Terminals | segments, tips, branch points | edit operations |
-| Learned from | correct gold cells (plentiful: 2,357 pure-gold atoms) | expert decision streams (scarce here: 56 usable seam positives) |
-| Answers | is this object biologically well-formed? where does it break? | what would a proofreader do next, and is this edit plausible? |
-| Corpus | the harness substrate, already built | **ConnectomeBench2's ~716k expert decisions** |
+Berlin's first-order Markov grammar over UI action tokens recovers
+expert-vs-proto-expert at LOO AUC 0.95 -- a real, verified "language of
+proofreading" result -- but it is a grammar of *how someone works*, not of
+*what they decided* or *what the tissue looks like*. It answers a different
+question than either of our two and does not stand in for the ConnectomeBench2
+corpus.
+
+**A pattern worth naming: expressive models are data-starved at small scale,
+independently, three times.** Berlin's own richer HMM over the same action
+tokens collapses to AUC 0.39-0.59 at n=15 annotators (read by its source as
+data-starved, not falsified). This project's seam-locating GNN was
+net-negative at 150 training objects and first cleared zero at 513.
+ConnectomeBench2's own stated motivation is that the prior benchmark had
+"hundreds of samples" and theirs has 716k, "large enough to both train and
+evaluate on." Three alphabets (skeleton edges, UI actions, segmentation
+decisions), the same failure mode. That is the strongest argument on record
+for the low-parameter-first approach already adopted for the morphology
+grammar (E0-E2), and for treating EXP-057B's corpus size as the thing that
+actually unblocks EXP-062/063, not a nice-to-have.
+
+**A test that exists but is inconclusive, not negative, and may be cheaply
+re-runnable.** Berlin also tested whether cell morphology (caliber, branches,
+size) predicts per-cell proofreading error; result was null (all p > 0.09),
+but 17 of the 28 test cells carried stale 2021-22 root ids at analysis time --
+exactly the timestamp-resolution problem `neuronauts/data/lineage.py` and
+`neuronauts/harness/labels.py` already solve for this project's own v1822
+overlay. A clean re-run is flagged in the thread doc as a possible follow-on,
+not scheduled: it needs a per-atom difficulty/error signal this project does
+not yet have outside the seam experiments, and data-access agreement.
 
 This is why the ConnectomeBench2 intake (EXP-057B) is worth more than a label
-top-up. It is not only extra positives for the seam experiments — it is the
-*corpus for the second grammar*, and the only one at a scale where the
-data-starvation wall (net-negative at 150 objects, clearing zero at 513) is not
-the binding constraint.
-
-It also changes what the grammars are for. Together they support **capability
-testing**: given an object, does the morphology grammar flag it as ill-formed,
-and does the action grammar propose the edit a human would have made? That is a
-benchmark ConnectomeForge can pose even before any assembler is good enough to
-deploy, and it is scoreable against real decisions rather than against our own
-lineage bookkeeping.
-
+top-up for EXP-062/063: it is the corpus for the decision-outcome grammar
+specifically, distinct from Berlin's behavioral one, and the only one of the
+three at a scale where the data-starvation wall is not the binding constraint.
 Concretely this adds one experiment, gated on 057B's outcome: **EXP-057D**,
-learn a first-order model of the edit language from the MICrONS decision split
-and test whether it predicts held-out proofreader actions above the base rate.
-Cheap, and it either establishes the corpus is usable or shows it is not.
+learn a first-order model of the *decision* language (ConnectomeBench2's
+merge/split/cut outcomes, not UI actions) and test whether it predicts
+held-out proofreader decisions above base rate. Cheap, and it either
+establishes the corpus is usable for this or shows it is not.
 
 ### 6.4 Relation to the grammar track
 
