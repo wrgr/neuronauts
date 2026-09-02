@@ -118,16 +118,22 @@ REGISTRY: list[Entry] = [
     Entry(series="A", est_minutes=90, spec=_s(
         id="EXP-058", title="Baseline ladder",
         question="What are the floor and the ceiling on this substrate?",
-        criterion="publishes every ladder rung on one substrate through "
-                  "neuronauts.metrics; later experiments must beat proximity",
+        criterion="every rung reports through neuronauts.metrics AND the "
+                  "ladder is correctly ordered: oracle ARI above the best "
+                  "proximity rung, proximity above random, do-nothing at zero "
+                  "merge recall",
         requires_ran=["EXP-057"], inputs=[TOPOLOGY_K10, LABELS_NPZ],
         flags={"synthetic_fallback": False}),
+        module="neuronauts.experiments.exp058_baseline_ladder",
         note="Rungs: untouched v117, random at matched count, proximity "
-             "union-find at 1/2/5 um, current checkpoints, GT-lineage oracle. "
-             "Comparison methods (published approaches) are a separate axis and "
-             "are paused; see plan section 7.2. Scoped to EXP-057's labelled "
-             "subset (16.2% of synapse mass), which every rung shares, so the "
-             "comparison between rungs is still fair."),
+             "union-find at 1/2/5 um, GT-lineage oracle. Trained checkpoints "
+             "are deliberately omitted -- the treestitch models expect a "
+             "different input contract, and wiring them badly would be worse "
+             "than saying they are absent. Comparison methods (published "
+             "approaches) are a separate axis and are paused; see plan "
+             "section 7.2. Scoped to EXP-057's labelled subset (16.2% of "
+             "synapse mass), which every rung shares, so the comparison "
+             "between rungs is fair."),
 
     Entry(series="A", est_minutes=15, spec=_s(
         id="EXP-059", title="Metric agreement",

@@ -1,0 +1,159 @@
+{
+  "elapsed_min": 0.2454905351003011,
+  "id": "EXP-058",
+  "note": "ladder correctly ordered",
+  "observed": {
+    "best_proximity_ari": 0.0,
+    "best_proximity_pair_precision": 0.0005853964990433765,
+    "do_nothing_pair_recall": 0.0,
+    "oracle_ari": 1.0,
+    "random_ari": -1e-06
+  },
+  "population": {
+    "n_atoms": 20826,
+    "n_candidate_pairs": 6848187,
+    "n_distinct_owners": 947,
+    "n_endpoints": 5103160,
+    "n_labelled_atoms": 1297,
+    "n_true_same_owner_pairs": 492,
+    "panel_from_cache": true
+  },
+  "provenance": {
+    "argv": [
+      "/Users/wgray13/projects/neuronauts/neuronauts/experiments/exp058_baseline_ladder.py"
+    ],
+    "cwd": "/Users/wgray13/projects/neuronauts",
+    "git_branch": "feat/global-merge-assembly",
+    "git_commit": "95d67c25a0e7da2a96742ed39e85a96b7a9131b7",
+    "git_dirty": true,
+    "git_modified_files": [
+      "euronauts/experiments/registry.py",
+      "results/RESULTS.md"
+    ],
+    "git_untracked_count": 3,
+    "hostname": "DXJ5G9L3W1-ML",
+    "inputs": [
+      {
+        "algo": "quick-sha256",
+        "bytes": 140684671,
+        "hash": "07f8d4363cadde77a6b8d1263e2113431a6c34237b0e81ff7b41269aeb75887f",
+        "mtime_utc": "2026-09-01T22:12:51+00:00",
+        "path": "data/substrate/topology/k10.npz"
+      },
+      {
+        "algo": "sha256",
+        "bytes": 1321376,
+        "hash": "64f436a008bd0b5b027c28bb1d074eac972dda5acc6194f6e463c88f65a0635a",
+        "mtime_utc": "2026-09-01T22:57:45+00:00",
+        "path": "data/substrate/c100um/labels_v1822.npz"
+      }
+    ],
+    "labels_used_only_for_evaluation": true,
+    "packages": {
+      "caveclient": "8.0.1",
+      "matplotlib": "3.10.8",
+      "networkx": "3.6.1",
+      "neuroglancer": "2.41.2",
+      "numpy": "2.4.3",
+      "pandas": "2.3.3",
+      "scipy": "1.17.1",
+      "torch": "2.10.0"
+    },
+    "params": {
+      "panel_k": 8,
+      "panel_radius_nm": 5000.0,
+      "proximity_thresholds_nm": [
+        1000.0,
+        2000.0,
+        5000.0
+      ],
+      "seed": 0
+    },
+    "platform": "macOS-15.7.9-arm64-arm-64bit-Mach-O",
+    "python": "3.14.2",
+    "synthetic_fallback": false,
+    "timestamp_utc": "2026-09-02T00:01:21+00:00"
+  },
+  "question": "What are the floor and the ceiling on this substrate?",
+  "requires": [],
+  "requires_ran": [
+    "EXP-057"
+  ],
+  "status": "passed",
+  "success_criterion": "every rung reports through neuronauts.metrics AND the ladder is correctly ordered on finite numbers: oracle ARI above the best proximity rung, proximity at or above random, do-nothing at exactly zero pair recall and oracle at exactly one. A ladder out of order means the evaluation is broken, not that a method is good; a non-finite rung is not a pass.",
+  "tables": {
+    "ladder": {
+      "do_nothing": {
+        "ari": 0.0,
+        "largest_cluster": 1,
+        "n_clusters_pred": 1297,
+        "pair_f1": NaN,
+        "pair_fn": 492,
+        "pair_fp": 0,
+        "pair_precision": NaN,
+        "pair_recall": 0.0,
+        "pair_tp": 0
+      },
+      "oracle": {
+        "ari": 1.0,
+        "largest_cluster": 6,
+        "n_clusters_pred": 947,
+        "pair_f1": 1.0,
+        "pair_fn": 0,
+        "pair_fp": 0,
+        "pair_precision": 1.0,
+        "pair_recall": 1.0,
+        "pair_tp": 492
+      },
+      "proximity_1000nm": {
+        "ari": 0.0,
+        "largest_cluster": 1297,
+        "n_clusters_pred": 1,
+        "n_pairs_accepted": 4170073,
+        "pair_f1": 0.0011701080209477876,
+        "pair_fn": 0,
+        "pair_fp": 839964,
+        "pair_precision": 0.0005853964990433765,
+        "pair_recall": 1.0,
+        "pair_tp": 492
+      },
+      "proximity_2000nm": {
+        "ari": 0.0,
+        "largest_cluster": 1297,
+        "n_clusters_pred": 1,
+        "n_pairs_accepted": 6811764,
+        "pair_f1": 0.0011701080209477876,
+        "pair_fn": 0,
+        "pair_fp": 839964,
+        "pair_precision": 0.0005853964990433765,
+        "pair_recall": 1.0,
+        "pair_tp": 492
+      },
+      "proximity_5000nm": {
+        "ari": 0.0,
+        "largest_cluster": 1297,
+        "n_clusters_pred": 1,
+        "n_pairs_accepted": 6848187,
+        "pair_f1": 0.0011701080209477876,
+        "pair_fn": 0,
+        "pair_fp": 839964,
+        "pair_precision": 0.0005853964990433765,
+        "pair_recall": 1.0,
+        "pair_tp": 492
+      },
+      "random_matched": {
+        "ari": -5.754975762156538e-07,
+        "largest_cluster": 1296,
+        "n_clusters_pred": 2,
+        "n_pairs_accepted": 4170073,
+        "pair_f1": 0.0011695321395054142,
+        "pair_fn": 1,
+        "pair_fp": 838669,
+        "pair_precision": 0.0005851089184422518,
+        "pair_recall": 0.9979674796747967,
+        "pair_tp": 491
+      }
+    }
+  },
+  "title": "Baseline ladder"
+}
