@@ -102,6 +102,51 @@ A first attempt at the cell-type join returned nothing from every table: the
 `target_id` work. Recorded because the first reading was "the tables errored",
 and the cause was the call.
 
+### What of this survives at v117 — the version the method actually runs on
+
+Everything above is measured with v1822 proofread data in hand. A deployed
+method has only v117, so it matters which inputs are version dependent. They
+split three ways, and the split was checked rather than assumed:
+
+| input | depends on the cell segmentation? |
+|---|---|
+| `nucleus_detection_v0` | No — the nucleus segmentation is separate |
+| `nucleus_ref_neuron_svm` | No — features are nucleus volume, foldedness, position |
+| `aibs_metamodel_celltypes_v661` (fine type) | **Yes** — "soma and nucleus features", soma from the cell segmentation at v661 |
+| `evaluable` filter (pure + proofread owner) | **Yes** — v1822 ground truth, evaluation only |
+
+So seeding is available at v117:
+
+| | count |
+|---|---:|
+| Nuclei detected in the cube | 332 |
+| Nucleus supervoxel resolves to a v117 object | **332 (100%)** |
+| …object is in the 279,075-atom population | 324 (98%) |
+| Support vector machine calls it a neuron | 256 |
+| **v117-only seed set, no proofread data used** | **254** |
+| Scoreable (pure + proofread owner at v1822) | 103 |
+
+**Decision (with the user, 2026-09-02): assume the support vector machine labels
+for now, and document the dependency.** The coarse neuron call is the only cell
+type input the method uses, it is version independent, and it agrees with hand
+labels wherever both exist (no neuron/non-neuron disagreement in 107 overlaps).
+
+Two limitations follow, both to be repeated wherever a number from the 103 is
+quoted:
+
+1. **We can score 103 of the 254 seeds a deployed method would start from —
+   41%.** The other 151 lack a proofread owner. They are not a random sample:
+   they are the cells nobody chose to proofread, so any performance measured on
+   the 103 carries that selection bias. Their predicted types are mostly
+   pyramidal (72 layer 2/3, 67 layer 4).
+2. **The support vector machine is the weak link, at about 2–3%.** Six of the
+   254 v117 seeds are called glia by the fine model (3 astrocyte, 2 pericyte,
+   1 oligodendrocyte) — contamination a v117 method inherits and cannot detect.
+   One nucleus the machine rejects is called 23P by the fine model, so it errs
+   in both directions. Of the 70 non-neuronal nuclei a v117 method must reject
+   on the machine alone, the rejections are otherwise consistent with the fine
+   model (microglia 8, astrocyte 16, oligodendrocyte 11, pericyte 7, OPC 6).
+
 ## Re-cut of the truth, all 103 seeded cells
 
 | | count |
