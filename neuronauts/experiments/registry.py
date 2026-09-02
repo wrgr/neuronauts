@@ -146,7 +146,8 @@ REGISTRY: list[Entry] = [
         question="Do the legacy metric implementations agree with metrics/?",
         criterion="agreement to 1e-6, or every difference documented as a "
                   "deliberate convention change",
-        requires=["EXP-058"], inputs=[]),
+        requires_ran=["EXP-058"], inputs=[]),
+        module="neuronauts.experiments.exp059_metric_agreement",
         note="Five of six callers already delegate; experiments/pcfg/"
              "conn_metric.py is the outstanding one."),
 

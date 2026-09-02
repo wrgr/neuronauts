@@ -14,3 +14,4 @@ a gap. Full reports: [`results/reports/`](reports/).
 | EXP-060 | Endpoint filter | fail | best_setting=none, best_recall=0, unfiltered_recall_ceiling=0.1748 | 2.5 | `3f8c6bb98` | 2026-09-02T00:22:22+00:00 |
 | EXP-061 | Directed cone vs proximity ball | fail | best_cone=none, best_reach=0, best_median_panel=None | 4.7 | `677d3d9bf` | 2026-09-02T00:29:51+00:00 |
 | EXP-061 | Directed cone vs proximity ball | fail | best_cone=none, best_reach=0, best_median_panel=None | 4.7 | `677d3d9bf` | 2026-09-02T00:35:17+00:00 |
+| EXP-059 | Metric agreement | pass | n_cases=200, n_quantities_checked=11, n_disagreeing=0 | 0.0 | `06e069e0b` | 2026-09-02T00:47:43+00:00 |
