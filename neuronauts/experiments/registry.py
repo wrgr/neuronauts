@@ -109,9 +109,15 @@ REGISTRY: list[Entry] = [
         question="Is a usable tree-DNA already published for this volume?",
         criterion="same-cell vs different-cell fragment cosine separation at or "
                   "above our own tree-DNA on the harness",
-        requires=["EXP-057"], inputs=[LABELS],
+        requires_ran=["EXP-057"], inputs=[LABELS_NPZ],
         flags={"network": True}),
-        note="Weis et al. 2025 GraphDINO over >30,000 MICrONS excitatory "
+        note="Reclassified to requires_ran under the same rule as EXP-058/060: "
+             "it needs EXP-057's overlay to pair same-cell against "
+             "different-cell fragments, not the synapse-mass density EXP-057 "
+             "failed on. Promoted to the critical path by EXP-061 -- retrieval "
+             "over an embedding has neither radius nor cone, which is the one "
+             "thing geometry cannot do. "
+             "Weis et al. 2025 GraphDINO over >30,000 MICrONS excitatory "
              "neurons. Free class-conditioning for the grammar mixture if the "
              "per-root embeddings are released."),
 
