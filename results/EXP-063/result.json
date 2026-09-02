@@ -1,0 +1,883 @@
+{
+  "elapsed_min": 1.9647204478581746,
+  "id": "EXP-063",
+  "note": "best detector all/gbdt: held-out AUC 0.958 (bar 0.875), size-only 0.483, global-shape rung 0.875. CB2 tiers held out of training: tier 1 (raw-mixed only, n=169) scores AUC 0.788 against strict negatives, tier 0 (no v1822 signal, n=114) scores 0.736 -- tier 0 does not look like the positives to this detector; treat it as unverified, not as noise. Bar 3 not measured here; it is a cut metric and moves to EXP-062.",
+  "observed": {
+    "best_feature_set": "all/gbdt",
+    "best_lenient_precision_at_top2pct": 0.394558,
+    "best_val_auc_strict": 0.957578,
+    "cb2_tier0_auc_vs_strict_neg": 0.736219,
+    "cb2_tier1_auc_vs_strict_neg": 0.787634,
+    "global_shape_val_auc_strict": 0.875125,
+    "n_train_positives": 922,
+    "polarity_val_auc_strict": 0.913743,
+    "size_only_val_auc_strict": 0.483394
+  },
+  "population": {
+    "cb2_by_tier": {
+      "existing_56": 37,
+      "new_mixed_raw_only": 368,
+      "new_mixed_strict": 654,
+      "new_no_v1822_signal": 270
+    },
+    "cb2_tier_in_own_mixed": {
+      "existing_56": 37,
+      "new_mixed_raw_only": 0,
+      "new_mixed_strict": 654,
+      "new_no_v1822_signal": 0
+    },
+    "cb2_touched": 1329,
+    "mixed_proofread": 53,
+    "n_atoms": 20826,
+    "neg_lenient": 18030,
+    "neg_strict": 934,
+    "neg_strict_excluded_as_cb2_touched": 363,
+    "own_mixed": 2149,
+    "split": {
+      "centre_nm": 670487.0625,
+      "n_buffer": 2369,
+      "n_train": 10866,
+      "n_val": 7591
+    },
+    "train": {
+      "neg_strict": 259,
+      "pos": 922
+    },
+    "val": {
+      "neg_lenient": 6357,
+      "neg_strict": 563,
+      "pos": 946
+    }
+  },
+  "provenance": {
+    "argv": [
+      "/Users/wgray13/projects/neuronauts/neuronauts/experiments/exp063_frankenmerge_detection.py"
+    ],
+    "cwd": "/Users/wgray13/projects/neuronauts",
+    "git_branch": "feat/global-merge-assembly",
+    "git_commit": "8b509ef122e0e5dd56ee2ffc60cd4fefbb8106ef",
+    "git_dirty": true,
+    "git_modified_files": [
+      "LAUDE.md",
+      "docs/metrics.md",
+      "docs/threads/embedding_availability.md",
+      "experiments/pcfg/HOLDOUT_RESULTS.md",
+      "experiments/pcfg/README.md",
+      "experiments/pcfg/ablate_merge.py",
+      "experiments/pcfg/atomicity_detector.py",
+      "experiments/pcfg/close_loop_cut.py",
+      "experiments/pcfg/close_loop_merge.py",
+      "experiments/pcfg/conn_metric.py",
+      "experiments/pcfg/continuation_merge.py",
+      "experiments/pcfg/cut_report.py",
+      "experiments/pcfg/fetch_bigdata.py",
+      "experiments/pcfg/global_shape_merge.py",
+      "experiments/pcfg/grammar_regime.py",
+      "experiments/pcfg/group_eval.py",
+      "experiments/pcfg/join_corrector.py",
+      "experiments/pcfg/learned_grammar_neural.py",
+      "experiments/pcfg/recursive_corrector.py",
+      "experiments/pcfg/seam_detector.py"
+    ],
+    "git_untracked_count": 5,
+    "hostname": "DXJ5G9L3W1-ML",
+    "inputs": [
+      {
+        "algo": "quick-sha256",
+        "bytes": 140684671,
+        "hash": "07f8d4363cadde77a6b8d1263e2113431a6c34237b0e81ff7b41269aeb75887f",
+        "mtime_utc": "2026-09-01T22:12:51+00:00",
+        "path": "data/substrate/topology/k10.npz"
+      },
+      {
+        "algo": "quick-sha256",
+        "bytes": 220629200,
+        "hash": "b25c937ca7e90fee2902d90b3aa8eca1e5f799a3d034394755861670dcdd932b",
+        "mtime_utc": "2026-09-02T08:33:09+00:00",
+        "path": "data/substrate/geom/objgeom_k10.npz"
+      },
+      {
+        "algo": "quick-sha256",
+        "bytes": 19923218,
+        "hash": "137f812cd57dadc7732ad23cc472c830b01088b79ad15b9e4e58cb6eb208d48f",
+        "mtime_utc": "2026-09-01T19:58:07+00:00",
+        "path": "data/substrate/c100um/population.npz"
+      },
+      {
+        "algo": "sha256",
+        "bytes": 1321376,
+        "hash": "64f436a008bd0b5b027c28bb1d074eac972dda5acc6194f6e463c88f65a0635a",
+        "mtime_utc": "2026-09-01T22:57:45+00:00",
+        "path": "data/substrate/c100um/labels_v1822.npz"
+      },
+      {
+        "algo": "sha256",
+        "bytes": 15570,
+        "hash": "2218d9832224da46e37dde73994a8c5a3913bbc329a4e15b96a3e7c4b4af7a34",
+        "mtime_utc": "2026-09-02T08:27:46+00:00",
+        "path": "data/substrate/c100um/cb2_seam_positives.npz"
+      }
+    ],
+    "labels_used_for_training": "own v1822 mixed-lineage tally, train side of the spatial split only",
+    "labels_used_only_for_evaluation": false,
+    "packages": {
+      "caveclient": "8.0.1",
+      "matplotlib": "3.10.8",
+      "networkx": "3.6.1",
+      "neuroglancer": "2.41.2",
+      "numpy": "2.4.3",
+      "pandas": "2.3.3",
+      "scipy": "1.17.1",
+      "torch": "2.10.0"
+    },
+    "params": {
+      "auc_bar": 0.875,
+      "feature_sets": {
+        "all": [
+          "pre_frac",
+          "minority_frac",
+          "log_n_pre",
+          "log_n_post",
+          "log_n_syn",
+          "log_n",
+          "log_extent",
+          "pc1_rel",
+          "pc2_rel",
+          "pc3_rel",
+          "bimod",
+          "center_gap",
+          "balance",
+          "log_n_blobs",
+          "largest_blob_frac",
+          "n_l2",
+          "n_edge",
+          "n_comp",
+          "n_iso",
+          "n_end",
+          "n_branch",
+          "n_seg",
+          "n_leaf_seg",
+          "n_cycle",
+          "cable_nm",
+          "cable_nan_seg",
+          "caliber_mean_nm",
+          "log_n_nodes",
+          "log_extent_nm",
+          "aniso_12",
+          "aniso_13",
+          "log_mean_radius_nm",
+          "radius_cv",
+          "bimod_nodes",
+          "center_gap_nodes",
+          "balance_nodes"
+        ],
+        "global_shape": [
+          "log_n",
+          "log_extent",
+          "pc1_rel",
+          "pc2_rel",
+          "pc3_rel",
+          "bimod",
+          "center_gap",
+          "balance",
+          "log_n_blobs",
+          "largest_blob_frac"
+        ],
+        "global_shape_noSize": [
+          "pc1_rel",
+          "pc2_rel",
+          "pc3_rel",
+          "bimod",
+          "center_gap",
+          "balance",
+          "log_n_blobs",
+          "largest_blob_frac"
+        ],
+        "object_geometry": [
+          "log_n_nodes",
+          "log_extent_nm",
+          "aniso_12",
+          "aniso_13",
+          "log_mean_radius_nm",
+          "radius_cv",
+          "bimod_nodes",
+          "center_gap_nodes",
+          "balance_nodes"
+        ],
+        "polarity": [
+          "pre_frac",
+          "minority_frac",
+          "log_n_pre",
+          "log_n_post",
+          "log_n_syn"
+        ],
+        "polarity+shape": [
+          "pre_frac",
+          "minority_frac",
+          "log_n_pre",
+          "log_n_post",
+          "log_n_syn",
+          "log_n",
+          "log_extent",
+          "pc1_rel",
+          "pc2_rel",
+          "pc3_rel",
+          "bimod",
+          "center_gap",
+          "balance",
+          "log_n_blobs",
+          "largest_blob_frac"
+        ],
+        "size_only": [
+          "log_n_syn"
+        ],
+        "topology": [
+          "n_l2",
+          "n_edge",
+          "n_comp",
+          "n_iso",
+          "n_end",
+          "n_branch",
+          "n_seg",
+          "n_leaf_seg",
+          "n_cycle",
+          "cable_nm",
+          "cable_nan_seg",
+          "caliber_mean_nm"
+        ]
+      },
+      "seed": 0,
+      "size_margin": 0.02,
+      "split_axis": 0,
+      "split_buffer_nm": 10000.0,
+      "top_frac": 0.02
+    },
+    "platform": "macOS-15.7.9-arm64-arm-64bit-Mach-O",
+    "python": "3.14.2",
+    "synthetic_fallback": false,
+    "timestamp_utc": "2026-09-02T12:56:48+00:00"
+  },
+  "question": "Does mixed polarity, object shape, or their combination flag a false merge on the harness substrate -- and do CB2's uncorroborated tiers look like frankenmerges to a detector trained without them?",
+  "requires": [
+    "EXP-057B"
+  ],
+  "requires_ran": [
+    "EXP-057",
+    "EXP-070"
+  ],
+  "status": "passed",
+  "success_criterion": "tier>=10 only (size-controlled); positives = atoms our own v1822 tally calls mixed-lineage; strict negatives = pure atoms with a proofread owner, CB2-touched atoms excluded from every negative set; held out by a positives-centred spatial split with a 10 um buffer. PASS when the best non-size feature set reaches held-out AUC >= 0.875 AND exceeds the size-only rung by >= 0.02. Precision at the top 2% is reported against lenient (all-pure) negatives, not gated. Bar 3 (split recall) is a cut metric and moves to EXP-062. CB2 tiers 1 and 0 are scored by the trained detector as a label-validity diagnostic, no bar.",
+  "tables": {
+    "by_feature_set": {
+      "all": {
+        "gbdt": {
+          "lenient": {
+            "ap": 0.311507,
+            "auc": 0.788336,
+            "base_rate": 0.129536,
+            "n": 7303,
+            "n_flagged": 147,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.394558,
+            "recall_at_top2pct": 0.061311
+          },
+          "strict": {
+            "ap": 0.971916,
+            "auc": 0.957578,
+            "base_rate": 0.626905,
+            "n": 1509,
+            "n_flagged": 31,
+            "n_pos": 946,
+            "precision_at_top2pct": 1.0,
+            "recall_at_top2pct": 0.03277
+          },
+          "train_strict": {
+            "ap": 0.991453,
+            "auc": 0.974723,
+            "base_rate": 0.780694,
+            "n": 1181,
+            "n_flagged": 24,
+            "n_pos": 922,
+            "precision_at_top2pct": 1.0,
+            "recall_at_top2pct": 0.02603
+          }
+        },
+        "logistic": {
+          "lenient": {
+            "ap": 0.376473,
+            "auc": 0.809472,
+            "base_rate": 0.129536,
+            "n": 7303,
+            "n_flagged": 147,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.530612,
+            "recall_at_top2pct": 0.082452
+          },
+          "strict": {
+            "ap": 0.969709,
+            "auc": 0.956282,
+            "base_rate": 0.626905,
+            "n": 1509,
+            "n_flagged": 31,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.967742,
+            "recall_at_top2pct": 0.031712
+          },
+          "train_strict": {
+            "ap": 0.986803,
+            "auc": 0.97129,
+            "base_rate": 0.780694,
+            "n": 1181,
+            "n_flagged": 24,
+            "n_pos": 922,
+            "precision_at_top2pct": 0.958333,
+            "recall_at_top2pct": 0.024946
+          }
+        }
+      },
+      "global_shape": {
+        "gbdt": {
+          "lenient": {
+            "ap": 0.270371,
+            "auc": 0.756254,
+            "base_rate": 0.129536,
+            "n": 7303,
+            "n_flagged": 149,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.328859,
+            "recall_at_top2pct": 0.051797
+          },
+          "strict": {
+            "ap": 0.905902,
+            "auc": 0.862483,
+            "base_rate": 0.626905,
+            "n": 1509,
+            "n_flagged": 31,
+            "n_pos": 946,
+            "precision_at_top2pct": 1.0,
+            "recall_at_top2pct": 0.03277
+          },
+          "train_strict": {
+            "ap": 0.973349,
+            "auc": 0.923783,
+            "base_rate": 0.780694,
+            "n": 1181,
+            "n_flagged": 24,
+            "n_pos": 922,
+            "precision_at_top2pct": 1.0,
+            "recall_at_top2pct": 0.02603
+          }
+        },
+        "logistic": {
+          "lenient": {
+            "ap": 0.298229,
+            "auc": 0.767917,
+            "base_rate": 0.129536,
+            "n": 7303,
+            "n_flagged": 147,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.387755,
+            "recall_at_top2pct": 0.060254
+          },
+          "strict": {
+            "ap": 0.910642,
+            "auc": 0.875125,
+            "base_rate": 0.626905,
+            "n": 1509,
+            "n_flagged": 31,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.967742,
+            "recall_at_top2pct": 0.031712
+          },
+          "train_strict": {
+            "ap": 0.965427,
+            "auc": 0.905087,
+            "base_rate": 0.780694,
+            "n": 1181,
+            "n_flagged": 24,
+            "n_pos": 922,
+            "precision_at_top2pct": 1.0,
+            "recall_at_top2pct": 0.02603
+          }
+        }
+      },
+      "global_shape_noSize": {
+        "gbdt": {
+          "lenient": {
+            "ap": 0.216973,
+            "auc": 0.705124,
+            "base_rate": 0.129536,
+            "n": 7303,
+            "n_flagged": 165,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.169697,
+            "recall_at_top2pct": 0.029598
+          },
+          "strict": {
+            "ap": 0.769144,
+            "auc": 0.729392,
+            "base_rate": 0.626905,
+            "n": 1509,
+            "n_flagged": 33,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.666667,
+            "recall_at_top2pct": 0.023256
+          },
+          "train_strict": {
+            "ap": 0.93222,
+            "auc": 0.836234,
+            "base_rate": 0.780694,
+            "n": 1181,
+            "n_flagged": 24,
+            "n_pos": 922,
+            "precision_at_top2pct": 1.0,
+            "recall_at_top2pct": 0.02603
+          }
+        },
+        "logistic": {
+          "lenient": {
+            "ap": 0.293975,
+            "auc": 0.736638,
+            "base_rate": 0.129536,
+            "n": 7303,
+            "n_flagged": 147,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.47619,
+            "recall_at_top2pct": 0.073996
+          },
+          "strict": {
+            "ap": 0.798564,
+            "auc": 0.741863,
+            "base_rate": 0.626905,
+            "n": 1509,
+            "n_flagged": 31,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.935484,
+            "recall_at_top2pct": 0.030655
+          },
+          "train_strict": {
+            "ap": 0.930467,
+            "auc": 0.836954,
+            "base_rate": 0.780694,
+            "n": 1181,
+            "n_flagged": 24,
+            "n_pos": 922,
+            "precision_at_top2pct": 1.0,
+            "recall_at_top2pct": 0.02603
+          }
+        }
+      },
+      "object_geometry": {
+        "gbdt": {
+          "lenient": {
+            "ap": 0.250569,
+            "auc": 0.733809,
+            "base_rate": 0.129536,
+            "n": 7303,
+            "n_flagged": 151,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.284768,
+            "recall_at_top2pct": 0.045455
+          },
+          "strict": {
+            "ap": 0.951089,
+            "auc": 0.91613,
+            "base_rate": 0.626905,
+            "n": 1509,
+            "n_flagged": 41,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.97561,
+            "recall_at_top2pct": 0.042283
+          },
+          "train_strict": {
+            "ap": 0.979207,
+            "auc": 0.947334,
+            "base_rate": 0.780694,
+            "n": 1181,
+            "n_flagged": 25,
+            "n_pos": 922,
+            "precision_at_top2pct": 0.96,
+            "recall_at_top2pct": 0.02603
+          }
+        },
+        "logistic": {
+          "lenient": {
+            "ap": 0.277668,
+            "auc": 0.741532,
+            "base_rate": 0.129536,
+            "n": 7303,
+            "n_flagged": 147,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.37415,
+            "recall_at_top2pct": 0.05814
+          },
+          "strict": {
+            "ap": 0.947641,
+            "auc": 0.910279,
+            "base_rate": 0.626905,
+            "n": 1509,
+            "n_flagged": 31,
+            "n_pos": 946,
+            "precision_at_top2pct": 1.0,
+            "recall_at_top2pct": 0.03277
+          },
+          "train_strict": {
+            "ap": 0.974002,
+            "auc": 0.932545,
+            "base_rate": 0.780694,
+            "n": 1181,
+            "n_flagged": 24,
+            "n_pos": 922,
+            "precision_at_top2pct": 0.958333,
+            "recall_at_top2pct": 0.024946
+          }
+        }
+      },
+      "polarity": {
+        "gbdt": {
+          "lenient": {
+            "ap": 0.357296,
+            "auc": 0.770709,
+            "base_rate": 0.129536,
+            "n": 7303,
+            "n_flagged": 201,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.567164,
+            "recall_at_top2pct": 0.120507
+          },
+          "strict": {
+            "ap": 0.926124,
+            "auc": 0.913596,
+            "base_rate": 0.626905,
+            "n": 1509,
+            "n_flagged": 38,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.921053,
+            "recall_at_top2pct": 0.036998
+          },
+          "train_strict": {
+            "ap": 0.977916,
+            "auc": 0.936193,
+            "base_rate": 0.780694,
+            "n": 1181,
+            "n_flagged": 27,
+            "n_pos": 922,
+            "precision_at_top2pct": 1.0,
+            "recall_at_top2pct": 0.029284
+          }
+        },
+        "logistic": {
+          "lenient": {
+            "ap": 0.377015,
+            "auc": 0.769508,
+            "base_rate": 0.129536,
+            "n": 7303,
+            "n_flagged": 147,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.632653,
+            "recall_at_top2pct": 0.098309
+          },
+          "strict": {
+            "ap": 0.91183,
+            "auc": 0.913743,
+            "base_rate": 0.626905,
+            "n": 1509,
+            "n_flagged": 31,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.806452,
+            "recall_at_top2pct": 0.026427
+          },
+          "train_strict": {
+            "ap": 0.96893,
+            "auc": 0.92894,
+            "base_rate": 0.780694,
+            "n": 1181,
+            "n_flagged": 24,
+            "n_pos": 922,
+            "precision_at_top2pct": 0.916667,
+            "recall_at_top2pct": 0.023861
+          }
+        }
+      },
+      "polarity+shape": {
+        "gbdt": {
+          "lenient": {
+            "ap": 0.336545,
+            "auc": 0.795545,
+            "base_rate": 0.129536,
+            "n": 7303,
+            "n_flagged": 147,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.47619,
+            "recall_at_top2pct": 0.073996
+          },
+          "strict": {
+            "ap": 0.946523,
+            "auc": 0.933875,
+            "base_rate": 0.626905,
+            "n": 1509,
+            "n_flagged": 42,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.97619,
+            "recall_at_top2pct": 0.04334
+          },
+          "train_strict": {
+            "ap": 0.987208,
+            "auc": 0.965056,
+            "base_rate": 0.780694,
+            "n": 1181,
+            "n_flagged": 24,
+            "n_pos": 922,
+            "precision_at_top2pct": 1.0,
+            "recall_at_top2pct": 0.02603
+          }
+        },
+        "logistic": {
+          "lenient": {
+            "ap": 0.373599,
+            "auc": 0.806463,
+            "base_rate": 0.129536,
+            "n": 7303,
+            "n_flagged": 147,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.530612,
+            "recall_at_top2pct": 0.082452
+          },
+          "strict": {
+            "ap": 0.943369,
+            "auc": 0.934855,
+            "base_rate": 0.626905,
+            "n": 1509,
+            "n_flagged": 31,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.935484,
+            "recall_at_top2pct": 0.030655
+          },
+          "train_strict": {
+            "ap": 0.983973,
+            "auc": 0.95523,
+            "base_rate": 0.780694,
+            "n": 1181,
+            "n_flagged": 24,
+            "n_pos": 922,
+            "precision_at_top2pct": 1.0,
+            "recall_at_top2pct": 0.02603
+          }
+        }
+      },
+      "size_only": {
+        "gbdt": {
+          "lenient": {
+            "ap": 0.181475,
+            "auc": 0.647703,
+            "base_rate": 0.129536,
+            "n": 7303,
+            "n_flagged": 630,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.184127,
+            "recall_at_top2pct": 0.122622
+          },
+          "strict": {
+            "ap": 0.607295,
+            "auc": 0.483394,
+            "base_rate": 0.626905,
+            "n": 1509,
+            "n_flagged": 62,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.274194,
+            "recall_at_top2pct": 0.01797
+          },
+          "train_strict": {
+            "ap": 0.836807,
+            "auc": 0.624522,
+            "base_rate": 0.780694,
+            "n": 1181,
+            "n_flagged": 50,
+            "n_pos": 922,
+            "precision_at_top2pct": 0.86,
+            "recall_at_top2pct": 0.046638
+          }
+        },
+        "logistic": {
+          "lenient": {
+            "ap": 0.238208,
+            "auc": 0.702751,
+            "base_rate": 0.129536,
+            "n": 7303,
+            "n_flagged": 147,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.258503,
+            "recall_at_top2pct": 0.040169
+          },
+          "strict": {
+            "ap": 0.555807,
+            "auc": 0.426722,
+            "base_rate": 0.626905,
+            "n": 1509,
+            "n_flagged": 31,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.225806,
+            "recall_at_top2pct": 0.0074
+          },
+          "train_strict": {
+            "ap": 0.809296,
+            "auc": 0.563108,
+            "base_rate": 0.780694,
+            "n": 1181,
+            "n_flagged": 25,
+            "n_pos": 922,
+            "precision_at_top2pct": 0.84,
+            "recall_at_top2pct": 0.022777
+          }
+        }
+      },
+      "topology": {
+        "gbdt": {
+          "lenient": {
+            "ap": 0.269344,
+            "auc": 0.736287,
+            "base_rate": 0.129536,
+            "n": 7303,
+            "n_flagged": 147,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.340136,
+            "recall_at_top2pct": 0.052854
+          },
+          "strict": {
+            "ap": 0.9472,
+            "auc": 0.910825,
+            "base_rate": 0.626905,
+            "n": 1509,
+            "n_flagged": 42,
+            "n_pos": 946,
+            "precision_at_top2pct": 1.0,
+            "recall_at_top2pct": 0.044397
+          },
+          "train_strict": {
+            "ap": 0.975366,
+            "auc": 0.938825,
+            "base_rate": 0.780694,
+            "n": 1181,
+            "n_flagged": 26,
+            "n_pos": 922,
+            "precision_at_top2pct": 0.961538,
+            "recall_at_top2pct": 0.027115
+          }
+        },
+        "logistic": {
+          "lenient": {
+            "ap": 0.316319,
+            "auc": 0.754348,
+            "base_rate": 0.129536,
+            "n": 7303,
+            "n_flagged": 147,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.47619,
+            "recall_at_top2pct": 0.073996
+          },
+          "strict": {
+            "ap": 0.952484,
+            "auc": 0.91773,
+            "base_rate": 0.626905,
+            "n": 1509,
+            "n_flagged": 31,
+            "n_pos": 946,
+            "precision_at_top2pct": 1.0,
+            "recall_at_top2pct": 0.03277
+          },
+          "train_strict": {
+            "ap": 0.974561,
+            "auc": 0.935653,
+            "base_rate": 0.780694,
+            "n": 1181,
+            "n_flagged": 24,
+            "n_pos": 922,
+            "precision_at_top2pct": 0.958333,
+            "recall_at_top2pct": 0.024946
+          }
+        }
+      }
+    },
+    "cb2_tiers": {
+      "_reference": {
+        "mixed_proofread_val": {
+          "auc_vs_strict_neg": 0.941572,
+          "n": 19
+        },
+        "own_mixed_val_mean_score": 2.4051,
+        "strict_neg_val_mean_score": -2.4081
+      },
+      "existing_56": {
+        "auc_vs_strict_neg": 0.954707,
+        "frac_above_median_positive_score": 0.75,
+        "mean_score": 2.6593,
+        "n_val": 12,
+        "n_val_in_own_mixed": 12,
+        "n_val_split_before": 10
+      },
+      "new_mixed_raw_only": {
+        "auc_vs_strict_neg": 0.787634,
+        "frac_above_median_positive_score": 0.142,
+        "mean_score": 0.0909,
+        "n_val": 169,
+        "n_val_in_own_mixed": 0,
+        "n_val_split_before": 133
+      },
+      "new_mixed_strict": {
+        "auc_vs_strict_neg": 0.969143,
+        "frac_above_median_positive_score": 0.5839,
+        "mean_score": 2.5949,
+        "n_val": 298,
+        "n_val_in_own_mixed": 298,
+        "n_val_split_before": 234
+      },
+      "new_no_v1822_signal": {
+        "auc_vs_strict_neg": 0.736219,
+        "frac_above_median_positive_score": 0.1228,
+        "mean_score": -0.2206,
+        "n_val": 114,
+        "n_val_in_own_mixed": 0,
+        "n_val_split_before": 48
+      }
+    },
+    "feature_columns": [
+      "pre_frac",
+      "minority_frac",
+      "log_n_pre",
+      "log_n_post",
+      "log_n_syn",
+      "log_n",
+      "log_extent",
+      "pc1_rel",
+      "pc2_rel",
+      "pc3_rel",
+      "bimod",
+      "center_gap",
+      "balance",
+      "log_n_blobs",
+      "largest_blob_frac",
+      "n_l2",
+      "n_edge",
+      "n_comp",
+      "n_iso",
+      "n_end",
+      "n_branch",
+      "n_seg",
+      "n_leaf_seg",
+      "n_cycle",
+      "cable_nm",
+      "cable_nan_seg",
+      "caliber_mean_nm",
+      "log_n_nodes",
+      "log_extent_nm",
+      "aniso_12",
+      "aniso_13",
+      "log_mean_radius_nm",
+      "radius_cv",
+      "bimod_nodes",
+      "center_gap_nodes",
+      "balance_nodes"
+    ]
+  },
+  "title": "Frankenmerge detection"
+}

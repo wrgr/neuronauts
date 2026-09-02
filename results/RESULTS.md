@@ -20,3 +20,7 @@ a gap. Full reports: [`results/reports/`](reports/).
 | EXP-060B | Object-space atom-pair panel | pass | tier10_5um_recall_at_cap_20=0.12, tier10_5um_recall_uncapped=0.6457, tier10_5um_median_panel_uncapped=3870 | 3.8 | `28039e9f3` | 2026-09-02T02:03:07+00:00 |
 | EXP-057B | ConnectomeBench2 intake | pass | decisions_mapped_to_population_atom=2392, criterion_min_decisions=1000, split_edit_before_decisions=1508 | 0.0 | `fa5db41f8` | 2026-09-02T08:27:46+00:00 |
 | EXP-070 | Object vs endpoint distance | pass | control_reproduces=True, ordering_violations=0, tier10_mst_within_5um_endpoint=0.6486 | 0.1 | `fa5db41f8` | 2026-09-02T08:36:11+00:00 |
+| EXP-063 | Frankenmerge detection | pass | best_feature_set=all/gbdt, best_val_auc_strict=0.9576, size_only_val_auc_strict=0.4834 | 2.0 | `8b509ef12` (dirty) | 2026-09-02T12:56:48+00:00 |
+| EXP-070 | Object vs endpoint distance | error | -- | 0.2 | `8b509ef12` (dirty) | 2026-09-02T12:59:35+00:00 |
+| EXP-070 | Object vs endpoint distance | pass | control_reproduces=True, ordering_violations=0, tier10_mst_within_5um_endpoint=0.6486 | 0.2 | `8b509ef12` (dirty) | 2026-09-02T13:02:32+00:00 |
+| EXP-061 | Directed cone vs proximity ball | fail | best_cone=none, best_reach=0, best_median_panel=None | 5.1 | `8b509ef12` (dirty) | 2026-09-02T13:06:07+00:00 |

@@ -275,13 +275,17 @@ REGISTRY: list[Entry] = [
              "scripts/build_object_geometry.py. Answer: the metric was wrong "
              "but is not the reason proximity failed. Object distance lifts "
              "MST-spanning-link reachability at 5 um from 64.9% to 75.7% "
-             "(tier10) and 47.7% to 56.8% (all), and recovers 280 labelled "
-             "atoms that have NO endpoint row at all, but does not approach "
-             "the 90% bar. It also moves the answer key: 463 of 3,538 spanning "
-             "links on the full population differ between the two metrics, so "
-             "EXP-060B's recall carries an error bar nobody drew. Adopt object "
-             "distance downstream because it is the correct and strictly "
-             "tighter quantity, not because it rescues the ball."),
+             "(tier10) and 43.3% to 56.8% (all, same pair universe for both "
+             "columns -- a first run took the endpoint column over finite "
+             "gaps only and read 47.7%; the QA pass caught it), and recovers "
+             "280 labelled atoms that have NO endpoint row at all, but does "
+             "not approach the 90% bar. It also moves the answer key: on the "
+             "full population 325 object-metric spanning links touch an atom "
+             "the endpoint MST could not see, and ~325 more (138 object-only "
+             "+ 187 endpoint-only, ~9%) are re-routed between atoms both see "
+             "-- so EXP-060B's recall carries an error bar nobody drew. Adopt "
+             "object distance downstream because it is the correct and "
+             "strictly tighter quantity, not because it rescues the ball."),
 
     # --- C. cuts and frankenmerge detection ---------------------------------
     Entry(series="C", est_minutes=90, spec=_s(
@@ -289,7 +293,10 @@ REGISTRY: list[Entry] = [
         question="Do cuts on real L2 adjacency beat MST-geometry cuts, and can "
                  "we pick the right edge?",
         criterion="at least 90% same-lineage pair recall AND at least 50% "
-                  "cross-lineage split recall; seam top-1 above 25%",
+                  "cross-lineage split recall; seam top-1 above 25%; and Bar 3 "
+                  "(frankenmerge split recall) above 0.5 -- moved here from "
+                  "EXP-063 because it is a property of the cut, not of "
+                  "detection",
         requires=["EXP-057B"], requires_ran=["EXP-057"],
         inputs=[TOPOLOGY_K10, LABELS_NPZ, CB2_POSITIVES, OBJGEOM_K10],
         flags={"synthetic_fallback": False}),
@@ -311,22 +318,48 @@ REGISTRY: list[Entry] = [
              "that to 264, and a tier>=1 cut to 508. Choose the split before "
              "the model -- see docs/threads/seam_positive_sample_size.md."),
 
-    Entry(series="C", est_minutes=45, spec=_s(
+    Entry(series="C", est_minutes=15, spec=_s(
         id="EXP-063", title="Frankenmerge detection",
-        question="Does mixed polarity, or a grammar, flag a false merge?",
-        criterion="AUC at least 0.875 and precision at top 2% at least 0.41, "
-                  "beating the global-shape baseline; Bar 3 above 0.5",
-        requires=["EXP-057B"], requires_ran=["EXP-057"],
-        inputs=[TOPOLOGY_K10, LABELS_NPZ, CB2_POSITIVES]),
-        note="Bar adopted from the PCFG report's E1, which is stronger than the "
-             "polarity-only bar first drafted. Polarity is the cheap baseline "
-             "in the same run. Bar 3 has been 0.000 in every real run to date. "
-             "Dependency swapped for the same reason as EXP-062. Of the two "
-             "seam experiments this is the more runnable: its bar is an "
-             "evaluation metric (AUC, precision at top 2%), which spends "
-             "positives on the TEST side, and the unbalanced split leaves "
-             "305-1,045 positives in val depending on the cut -- so it is less "
-             "exposed to the train-side shortfall that gates EXP-062."),
+        question="Does mixed polarity, object shape, or their combination flag "
+                 "a false merge on the harness substrate -- and do CB2's "
+                 "uncorroborated tiers look like frankenmerges to a detector "
+                 "trained without them?",
+        criterion="tier>=10 only (size-controlled); positives = atoms our own "
+                  "v1822 tally calls mixed-lineage; strict negatives = pure "
+                  "atoms with a proofread owner, CB2-touched atoms excluded "
+                  "from every negative set; held out by a positives-centred "
+                  "spatial split with a 10 um buffer. PASS when the best "
+                  "non-size feature set reaches held-out AUC >= 0.875 AND "
+                  "exceeds the size-only rung by >= 0.02. Precision at the top "
+                  "2% reported against lenient negatives, not gated. Bar 3 is "
+                  "a cut metric and moves to EXP-062. CB2 tiers 1 and 0 scored "
+                  "as a label-validity diagnostic, no bar",
+        requires=["EXP-057B"], requires_ran=["EXP-057", "EXP-070"],
+        inputs=[TOPOLOGY_K10, OBJGEOM_K10, POPULATION, LABELS_NPZ,
+               CB2_POSITIVES],
+        flags={"synthetic_fallback": False,
+               "labels_used_only_for_evaluation": False}),
+        module="neuronauts.experiments.exp063_frankenmerge_detection",
+        note="CRITERION AMENDED BEFORE THE FIRST RUN, and why: the first draft "
+             "carried 'precision@2% >= 0.41' and 'Bar 3 above 0.5'. Bar 3 is "
+             "frankenmerge SPLIT recall -- it needs a cut operator this "
+             "experiment does not have and EXP-062 owns; reporting 0.000 for "
+             "it here, as every prior run did, says nothing about detection. "
+             "Precision@2% at the ~60% strict base rate is uninformative, so "
+             "it is reported under lenient negatives and the gate is AUC, "
+             "which is base-rate invariant. The 0.875 came from the PCFG "
+             "report's shape detector on v117 roots at a 3.78% base rate; it "
+             "is kept as the bar and the same ten shape features are run as a "
+             "rung on this substrate (numpy port of global_shape_merge, "
+             "validated against scikit-learn in tests/test_atom_features.py) "
+             "so 'beating the global-shape baseline' is measured here, not "
+             "compared across substrates. Size is the confound: on the full "
+             "population a mixed atom has a median 818 L2 nodes vs 28 for a "
+             "trustworthy negative, so this runs on tier>=10 only (945 vs 809) "
+             "and must beat a size-only rung. The CB2 tier-1/tier-0 scoring is "
+             "the label-validity check EXP-057B's own caveat asked for: those "
+             "tiers are outside the training positive definition, so a "
+             "detector that fires on them is evidence they are real."),
 
     # --- D. scoring ----------------------------------------------------------
     Entry(series="D", est_minutes=120, spec=_s(
