@@ -107,36 +107,36 @@ def fetch_edit_log(
     client = CAVEclient(datastack, auth_token=token) if token else CAVEclient(datastack)
     client.version = int(version)
 
+    # `get_tabular_changelog` (no second underscore) does not exist on current
+    # caveclient -- confirmed by calling it directly and reading the raised
+    # AttributeError, rather than trusting the swallowed empty-list result
+    # this function used to return for every root, silently, since whenever
+    # caveclient's API renamed this. The real method is `get_tabular_change_log`,
+    # and it returns ``{root_id: DataFrame}``, not a bare DataFrame. Verified
+    # against a real gold-proofread owner root: 1,039 real operations, with
+    # operation_id, timestamp (ms since epoch), before_root_ids, after_root_ids,
+    # is_merge, and the proofreader's name.
+    changelog = client.chunkedgraph.get_tabular_change_log(root_id)
+    table = changelog.get(int(root_id)) if isinstance(changelog, dict) else changelog
     operations = []
-    try:
-        changelog = client.chunkedgraph.get_tabular_changelog(root_id)
-        if changelog is not None and len(changelog) > 0:
-            for _, row in changelog.iterrows():
-                op_type = str(row.get("operation_type", row.get("is_merge", "")))
-                # Normalize: CAVE returns is_merge=True/False or operation_type
-                if op_type in ("True", "true", "1", "merge"):
-                    op = "merge"
-                elif op_type in ("False", "false", "0", "split"):
-                    op = "split"
-                else:
-                    continue
+    if table is not None and len(table) > 0:
+        for _, row in table.iterrows():
+            is_merge = row.get("is_merge")
+            op = "merge" if bool(is_merge) else "split"
 
-                before = row.get("before_root_ids", [])
-                after = row.get("after_root_ids", [])
-                if not isinstance(before, (list, tuple, np.ndarray)):
-                    before = [before] if before else []
-                if not isinstance(after, (list, tuple, np.ndarray)):
-                    after = [after] if after else []
+            before = row.get("before_root_ids", [])
+            after = row.get("after_root_ids", [])
+            if not isinstance(before, (list, tuple, np.ndarray)):
+                before = [before] if before else []
+            if not isinstance(after, (list, tuple, np.ndarray)):
+                after = [after] if after else []
 
-                operations.append(EditOperation(
-                    operation=op,
-                    before_root_ids=tuple(int(r) for r in before if int(r) > 0),
-                    after_root_ids=tuple(int(r) for r in after if int(r) > 0),
-                    timestamp=str(row.get("timestamp", None)),
-                ))
-    except Exception:
-        # API may fail for some root IDs; return empty
-        pass
+            operations.append(EditOperation(
+                operation=op,
+                before_root_ids=tuple(int(r) for r in before if int(r) > 0),
+                after_root_ids=tuple(int(r) for r in after if int(r) > 0),
+                timestamp=str(row.get("timestamp", None)),
+            ))
 
     return operations
 

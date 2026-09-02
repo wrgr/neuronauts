@@ -333,19 +333,30 @@ def root_leaves(
     root_id: int,
     *,
     stop_layer: int = 1,
+    bounds: Optional[str] = None,
     token: str = DEFAULT_TOKEN,
 ) -> Optional[np.ndarray]:
     """Return the leaf ids of a root.
 
     ``stop_layer=1`` → supervoxels (finest, timestamp-invariant).
     ``stop_layer=2`` → L2 nodes (a coarser, cheaper proxy for size).
+    ``bounds``, e.g. ``"lo_x-hi_x_lo_y-hi_y_lo_z-hi_z"`` in segmentation
+    coordinates (see ``harness.substrate.region_bounds``), restricts the
+    enumeration to a region. Without it this fetches *every* leaf of the
+    root, which is fine for a small object but not for one that has already
+    absorbed a large amount of tissue -- a real root from a merge-tree walk
+    returned 689,734 supervoxels unbounded. Pass ``bounds`` whenever the
+    caller only needs to know about one region, not the whole object.
     Returns a uint64 ndarray, or ``None`` on failure.
     """
     url = f"{CG_SERVER}/segmentation/api/v1/table/{SEG_TABLE}/node/{root_id}/leaves"
+    params = {"stop_layer": stop_layer}
+    if bounds is not None:
+        params["bounds"] = bounds
     try:
         time.sleep(_REQUEST_SLEEP)
         resp = requests.get(url, headers=_headers(token),
-                            params={"stop_layer": stop_layer}, timeout=120)
+                            params=params, timeout=120)
         if resp.status_code != 200:
             return None
         data = resp.json()
