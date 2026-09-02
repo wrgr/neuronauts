@@ -405,6 +405,44 @@ The same applies to a scoring bar: EXP-058 showed AUROC is a poor target at a
 Order is strict A → B → C → D → E; F after D. Each EXP is one module in
 `neuronauts/experiments/` and one PR.
 
+### 6.3a Two grammars, not one
+
+The PCFG report frames the grammar over **morphology** — productions over the
+observed L2 tree, scoring which edge to cut. There is a second object with the
+same name and a different corpus: a grammar over **proofreading actions**.
+A proofreader's edit stream is a language — split here, merge these two, extend
+along there, mark this as done — with its own vocabulary, its own valid and
+invalid sequences, and its own context dependence. This project's collaborators
+have prior work on that framing.
+
+The two are complementary and their corpora differ, which is the practical
+point:
+
+| | morphology grammar | proofreading-action grammar |
+|---|---|---|
+| Terminals | segments, tips, branch points | edit operations |
+| Learned from | correct gold cells (plentiful: 2,357 pure-gold atoms) | expert decision streams (scarce here: 56 usable seam positives) |
+| Answers | is this object biologically well-formed? where does it break? | what would a proofreader do next, and is this edit plausible? |
+| Corpus | the harness substrate, already built | **ConnectomeBench2's ~716k expert decisions** |
+
+This is why the ConnectomeBench2 intake (EXP-057B) is worth more than a label
+top-up. It is not only extra positives for the seam experiments — it is the
+*corpus for the second grammar*, and the only one at a scale where the
+data-starvation wall (net-negative at 150 objects, clearing zero at 513) is not
+the binding constraint.
+
+It also changes what the grammars are for. Together they support **capability
+testing**: given an object, does the morphology grammar flag it as ill-formed,
+and does the action grammar propose the edit a human would have made? That is a
+benchmark ConnectomeForge can pose even before any assembler is good enough to
+deploy, and it is scoreable against real decisions rather than against our own
+lineage bookkeeping.
+
+Concretely this adds one experiment, gated on 057B's outcome: **EXP-057D**,
+learn a first-order model of the edit language from the MICrONS decision split
+and test whether it predicts held-out proofreader actions above the base rate.
+Cheap, and it either establishes the corpus is usable or shows it is not.
+
 ### 6.4 Relation to the grammar track
 
 Two companion documents landed the same day and are folded in here rather than

@@ -95,3 +95,36 @@ finding rather than an artefact. Both were correct computations of the wrong
 quantity. The check that would have caught it immediately — "how far is the
 *nearest* partner?" — costs one line and was not run because the all-pairs
 number already told a clean story.
+
+---
+
+## Error 3: panel sizes were counted in L2/endpoint space, not object space
+
+*Added after the observation that the numbers "get blown up".* Correct, and by
+up to 19.6x. EXP-061 reported cone panel sizes as counts of **distractor
+endpoints**. The decision unit is the **atom**: a proposer offers candidate
+partner objects, and one partner atom contributing forty endpoints to a cone is
+one candidate, not forty.
+
+| cone | endpoints (as reported) | distinct atoms (correct) | inflation |
+|---|---:|---:|---:|
+| 10 µm, 15° | 44 | 26 | 1.7× |
+| 10 µm, 45° | 370 | 127 | 2.9× |
+| 25 µm, 30° | 2,586 | 469 | 5.5× |
+| 50 µm, 30° | 19,258 | 1,454 | 13.2× |
+| 50 µm, 45° | **42,640** | **2,174** | **19.6×** |
+
+The inflation grows with cone size, because a bigger cone sweeps more of each
+neighbouring arbor rather than more neighbours. The whole tier-10 substrate is
+20,826 atoms, so a panel can never exceed that however many endpoints it
+touches — a reported "42,160" was larger than twice the entire object
+population and should have been caught on sight.
+
+This does not rescue the cone: 2,174 candidate atoms per endpoint is still far
+too many to score. But "the panel would be larger than the problem" was wrong
+as stated, and the correct figure is ~10% of the substrate rather than 2×.
+
+**Rule for every future panel number: report candidates in object space.**
+L2 nodes and endpoints are the geometry the search runs over; atoms are what
+gets decided. Mixing them makes a panel look one to two orders of magnitude
+worse than it is.

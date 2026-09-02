@@ -105,10 +105,12 @@ REGISTRY: list[Entry] = [
              "EXP-062/063, so run it early."),
 
     Entry(series="A", est_minutes=30, spec=_s(
-        id="EXP-057C", title="Published embedding intake",
-        question="Is a usable tree-DNA already published for this volume?",
+        id="EXP-057C", title="SegCLR embedding intake",
+        question="Do the published SegCLR per-segment embeddings separate "
+                 "same-cell from different-cell fragments on our substrate?",
         criterion="same-cell vs different-cell fragment cosine separation at or "
-                  "above our own tree-DNA on the harness",
+                  "above our own tree-DNA (within-type AUC 0.829), on atoms "
+                  "the v117->v343 crosswalk resolves",
         requires_ran=["EXP-057"], inputs=[LABELS_NPZ],
         flags={"network": True}),
         note="Reclassified to requires_ran under the same rule as EXP-058/060: "
@@ -117,9 +119,24 @@ REGISTRY: list[Entry] = [
              "failed on. Promoted to the critical path by EXP-061 -- retrieval "
              "over an embedding has neither radius nor cone, which is the one "
              "thing geometry cannot do. "
-             "Weis et al. 2025 GraphDINO over >30,000 MICrONS excitatory "
-             "neurons. Free class-conditioning for the grammar mixture if the "
-             "per-root embeddings are released."),
+             "RETARGETED from GraphDINO to SegCLR after checking the papers. "
+             "GraphDINO (Weis et al. 2025) is disqualified, verified verbatim "
+             "in its Methods: it removed 6,304 cells predicted to be "
+             "fragmented, and 'we focused on the dendritic skeleton only and "
+             "removed segments labeled as axon'. Its coordinates are "
+             "soma-relative and skeletons are subsampled to 200 nodes assuming "
+             "a whole tree. Our atoms are fragments, often axonal, with no "
+             "soma -- the representation cannot apply. SegCLR is the opposite "
+             "profile: per-segment and fragment-native by construction, axon "
+             "and dendrite equally, and originally trained on segmentation "
+             "v117, our exact version. Public embeddings verified to exist at "
+             "gs://iarpa_microns/minnie/minnie65/embeddings_m343/"
+             "segclr_nm_coord_public_offset_csvzips/ (~220MB shards) with a "
+             "135MB TF2 encoder checkpoint at .../embeddings/models/"
+             "segclr-216000/. Catch: the public release is keyed to v343/v943, "
+             "so it needs a supervoxel crosswalk -- the same mechanism the "
+             "v1822 GT overlay already uses. See "
+             "docs/threads/embedding_availability.md."),
 
     Entry(series="A", est_minutes=90, spec=_s(
         id="EXP-058", title="Baseline ladder",
