@@ -15,7 +15,7 @@ candidates), built and grouped-by-cell exactly as the corrector sees them:
     NET change in partition errors vs do-nothing (positive = actually better than nothing).
 
 Usage:
-    python -m experiments.pcfg_synapse_partitions.group_eval --sidetable data/sidetable_7box.npz
+    python -m experiments.pcfg.group_eval --sidetable data/sidetable_7box.npz
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from experiments.pcfg_synapse_partitions.synapse_correction import (  # noqa: E402
+from experiments.pcfg.synapse_correction import (  # noqa: E402
     SideTable,
     build_correction_pairs,
     summarize_edits,

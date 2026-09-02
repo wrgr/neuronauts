@@ -564,8 +564,11 @@ repeat this spike at larger scale):**
    synapses at 99.8% purity via containment in a certified soma-owned scaffold, no embedding
    needed).
 
-All data for this section lives in the scratchpad
-(`/private/tmp/claude-501/-Users-wgray13-projects-neuronauts/cf09141a-b1df-4e7f-9934-ee973a777a45/scratchpad/segclr/`,
-not the repo): `0.zip` (Step 1-3), `crosswalk_sample_v2.json` (Step 4), `gold_targets.json` /
-`selected_targets.json` / `shards/*.zip` / `auc_result.json` (Step 5). Nothing from this spike
-was committed.
+All data for this section was produced in a session scratchpad under `/tmp` and
+has since been copied to `data/external/segclr/` (gitignored, like the rest of
+`data/`): `crosswalk_sample_v2.json` (Step 4), `gold_targets.json` /
+`selected_targets.json` / `auc_result.json` (Step 5) and the spike scripts under
+`scripts/`. The downloaded embedding shards (`0.zip`, `shards/*.zip`, ~8 GB) are
+re-fetchable from the public bucket and were copied alongside only if disk
+allowed; check `data/external/segclr/` before re-downloading. Nothing from this
+spike is committed.

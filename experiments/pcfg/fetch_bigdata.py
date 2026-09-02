@@ -9,7 +9,7 @@ disk so a relaunch resumes instead of restarting:
   * skeletons                  data/skel_v117 / data/skel_v1718 (per-file cache via fetch)
 Pair with a relaunch loop (run_bigdata.sh) that re-invokes until sidetable_big.npz exists.
 
-    CAVE_TOKEN=... python -m experiments.pcfg_synapse_partitions.fetch_bigdata --n-boxes 27
+    CAVE_TOKEN=... python -m experiments.pcfg.fetch_bigdata --n-boxes 27
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from experiments.pcfg_synapse_partitions.skeleton_topology_merge import fetch_skeletons  # noqa: E402
+from experiments.pcfg.skeleton_topology_merge import fetch_skeletons  # noqa: E402
 
 CENTER = (733_592, 513_592, 595_640)
 SYN_VOX = np.array([4.0, 4.0, 40.0])

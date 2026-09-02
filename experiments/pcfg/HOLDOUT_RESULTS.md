@@ -126,7 +126,7 @@ and there doing nothing is worthless by construction.
 
 ## Code
 
-- `experiments/pcfg_synapse_partitions/learned_grammar.py`
+- `experiments/pcfg/learned_grammar.py`
   - `train_and_eval_holdout(train, eval, val_partitions=…)` — three-region train
     / select / test, bootstrap CI, merge-decision vs do-nothing, checkpoint.
   - `_fragment_neuron`, `build_training_data` — realistic split → merge data.

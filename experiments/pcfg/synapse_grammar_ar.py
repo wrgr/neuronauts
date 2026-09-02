@@ -14,7 +14,7 @@ traversal); the synapses are the tokens the grammar generates.
 
 Trained on real (noisy) neurons; group-by-cell CV; both error types scored by the one grammar.
 
-    python -m experiments.pcfg_synapse_partitions.synapse_grammar_ar --sidetable data/sidetable_7box.npz
+    python -m experiments.pcfg.synapse_grammar_ar --sidetable data/sidetable_7box.npz
 """
 from __future__ import annotations
 
@@ -30,8 +30,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from experiments.pcfg_synapse_partitions.synapse_correction import SideTable  # noqa: E402
-from experiments.pcfg_synapse_partitions.skeleton_topology_merge import bridge_union  # noqa: E402
+from experiments.pcfg.synapse_correction import SideTable  # noqa: E402
+from experiments.pcfg.skeleton_topology_merge import bridge_union  # noqa: E402
 
 SCALE = 10_000.0     # nm; displacements between connected synapses are ~micron-scale
 MAXSYN = 200

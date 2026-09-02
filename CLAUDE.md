@@ -57,13 +57,17 @@ code is correct here, with a check I could show?"* If no, don't write it.
 - Prefer the smallest experiment that answers the question over a big run.
 - Keep secrets (tokens) out of files and commits; pass via env only.
 - Clean up scratch files; don't commit them.
+- Anything fetched or computed that took real time (a corpus scan, a CAVE
+  resolution pass, downloaded embedding shards) goes under `data/external/`
+  (gitignored) before the session ends -- never only in a `/tmp` scratchpad.
+  Two multi-GB spikes (ConnectomeBench2, SegCLR) were nearly lost that way.
 
 ## 2. Project context
 - `docs/roadmap_global_assembly.md` — canonical pipeline overview and
   direction (supersedes `docs/archive/2026-09/program.md`, see
   `docs/consolidation_plan.md` §4.4).
 - `README.md` — project summary and setup.
-- `experiments/pcfg_synapse_partitions/README.md` — PCFG synapse-partition
+- `experiments/pcfg/README.md` — PCFG synapse-partition
   experiment.
 - Data access goes through CAVE (`neuronauts/fetch.py`). The synapse table
   `synapses_pni_2` is ~337M rows; unfiltered spatial queries are heavy and the

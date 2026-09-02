@@ -156,16 +156,31 @@ def _mst(groups, pts) -> set[tuple[int, int]]:
 
 
 def _describe(g: np.ndarray) -> dict:
+    """Gap statistics over a fixed pair universe.
+
+    ``g`` is one gap per pair in the universe; ``inf`` means the pair is
+    unreachable under this metric (an atom with no points of this kind). The
+    reach fractions are taken over the WHOLE universe, so an unreachable pair
+    counts as not reached. A first version took them over finite gaps only,
+    which silently dropped every pair the endpoint metric cannot see from the
+    endpoint denominator while keeping it in the object one -- flattering the
+    metric this experiment argues against by ~4 points on the full population
+    (QA repro: 0.477 -> 0.433 on MST links). Percentiles are over finite gaps,
+    and say so.
+    """
+    n = int(len(g))
     f = np.isfinite(g)
-    if not f.any():
+    if n == 0:
         return {"n": 0}
     x = g[f]
-    return {"n": int(f.sum()),
-            "percentiles_nm": {f"p{q}": round(float(np.percentile(x, q)), 1)
-                               for q in QUANTILES},
-            "reach": {f"within_{int(t)}nm": round(float((x <= t).mean()), 6)
+    return {"n": n,
+            "n_unreachable": int((~f).sum()),
+            "percentiles_nm_finite_only": {
+                f"p{q}": round(float(np.percentile(x, q)), 1) for q in QUANTILES}
+            if f.any() else {},
+            "reach": {f"within_{int(t)}nm": round(float((x <= t).sum() / n), 6)
                       for t in REACH_NM},
-            "frac_within_search_radius": round(float((x <= RADIUS_NM).mean()), 6)}
+            "frac_within_search_radius": round(float((x <= RADIUS_NM).sum() / n), 6)}
 
 
 def _measure(key, topo, objp, labels, root) -> dict:
@@ -189,13 +204,28 @@ def _measure(key, topo, objp, labels, root) -> dict:
                     for i in range(len(g)) for j in range(i + 1, len(g))})
 
     g_ep, g_ob = _gaps(pairs, ep_pts), _gaps(pairs, ob_pts)
-    both = np.isfinite(g_ep) & np.isfinite(g_ob)
+    # The pair universe for the comparison: every pair both of whose atoms have
+    # object geometry. Within it the endpoint gap may be inf -- that pair is
+    # unreachable to an endpoint proposer and is counted as such, not dropped.
+    universe = np.isfinite(g_ob)
+    both = np.isfinite(g_ep) & universe
     violations = int((g_ob[both] > g_ep[both] + 1e-6).sum())
     ties = int((np.abs(g_ob[both] - g_ep[both]) <= 1e-6).sum())
 
     m_ep, m_ob = _mst(groups, ep_pts), _mst(groups, ob_pts)
     links = sorted(m_ob)
     l_ep, l_ob = _gaps(links, ep_pts), _gaps(links, ob_pts)
+    l_universe = np.isfinite(l_ob)
+
+    # Decompose the MST disagreement: a link that touches an atom with no
+    # endpoint row was never available to the endpoint MST at all, which is a
+    # different fact from a link that both metrics could see and routed
+    # differently. A first version reported the sum as "the answer key
+    # changed", overstating the re-routing by about 3x.
+    no_ep_atoms = set(no_ep)
+    obj_only = m_ob - m_ep
+    obj_only_touch_no_ep = sum(1 for a, b in obj_only
+                               if a in no_ep_atoms or b in no_ep_atoms)
 
     out = {
         "n_atoms": int(len(atoms)),
@@ -208,17 +238,27 @@ def _measure(key, topo, objp, labels, root) -> dict:
         "ordering_violations": violations,
         "pairs_where_closest_approach_is_tip_to_tip": ties,
         "frac_tip_to_tip": round(ties / max(int(both.sum()), 1), 6),
-        "same_owner_pairs": {"endpoint": _describe(g_ep),
-                             "object": _describe(g_ob)},
+        "same_owner_pairs": {
+            "n_universe": int(universe.sum()),
+            "n_endpoint_unreachable": int((universe & ~np.isfinite(g_ep)).sum()),
+            "endpoint": _describe(g_ep[universe]),
+            "object": _describe(g_ob[universe])},
         "mst": {
             "n_links_endpoint_metric": len(m_ep),
             "n_links_object_metric": len(m_ob),
             "shared": len(m_ep & m_ob),
             "endpoint_only": len(m_ep - m_ob),
-            "object_only": len(m_ob - m_ep),
+            "object_only": len(obj_only),
+            "object_only_touching_atom_with_no_endpoints": obj_only_touch_no_ep,
+            "object_only_rerouted": len(obj_only) - obj_only_touch_no_ep,
+            "links_rerouted_between_metrics":
+                len(obj_only) - obj_only_touch_no_ep + len(m_ep - m_ob),
             "agreement": round(len(m_ep & m_ob) / max(len(m_ob), 1), 6),
-            "on_object_links": {"endpoint": _describe(l_ep),
-                                "object": _describe(l_ob)},
+            "n_links_universe": int(l_universe.sum()),
+            "n_links_endpoint_unreachable":
+                int((l_universe & ~np.isfinite(l_ep)).sum()),
+            "on_object_links": {"endpoint": _describe(l_ep[l_universe]),
+                                "object": _describe(l_ob[l_universe])},
         },
     }
     e5 = out["same_owner_pairs"]["endpoint"]["frac_within_search_radius"]
@@ -252,7 +292,9 @@ def run(ctx: Context) -> Outcome:
     ref_frac = up.get("frac_true_pairs_within_search_radius",
                       CONTROL_FALLBACK["frac_true_pairs_within_search_radius"])
     got = res["tier10"]["same_owner_pairs"]["endpoint"]
-    got_med = got["percentiles_nm"]["p50"]
+    # tier10 has no endpoint-unreachable pairs, so "finite only" is the whole
+    # universe there and the control is the same number EXP-060 recorded.
+    got_med = got["percentiles_nm_finite_only"]["p50"]
     got_frac = got["frac_within_search_radius"]
     control_ok = (abs(got_med - ref_med) <= CONTROL_TOL_NM
                   and abs(got_frac - ref_frac) <= CONTROL_TOL_FRAC)
@@ -283,10 +325,14 @@ def run(ctx: Context) -> Outcome:
         f"population, and makes {allp['atoms_invisible_to_endpoint_methods']} "
         f"labelled atoms proposable that had no endpoint row at all -- but it "
         f"does not approach EXP-060's 90% bar, so proximity's failure is not an "
-        f"artefact of measuring from tips. It also changes the ground truth: "
-        f"{allp['mst']['object_only']} of {allp['mst']['n_links_object_metric']} "
-        f"spanning links on the full population differ between the two metrics, "
-        f"so EXP-060B's panel was scored against a partly different answer key. "
+        f"artefact of measuring from tips. It also moves the ground truth, in "
+        f"two separable ways: "
+        f"{allp['mst']['object_only_touching_atom_with_no_endpoints']} of "
+        f"{allp['mst']['n_links_object_metric']} object-metric spanning links "
+        f"on the full population touch an atom the endpoint MST could not see "
+        f"at all, and {allp['mst']['links_rerouted_between_metrics']} links "
+        f"are routed differently between atoms both metrics see -- so "
+        f"EXP-060B's panel was scored against a partly different answer key. "
         f"Object distance should replace endpoint distance everywhere "
         f"downstream on those grounds, not because it rescues the ball."
         if passed else
@@ -307,7 +353,12 @@ def run(ctx: Context) -> Outcome:
                 alll["endpoint"]["frac_within_search_radius"],
             "all_mst_within_5um_object":
                 alll["object"]["frac_within_search_radius"],
-            "all_mst_answer_key_changed": allp["mst"]["object_only"],
+            "all_mst_links_touching_no_endpoint_atom":
+                allp["mst"]["object_only_touching_atom_with_no_endpoints"],
+            "all_mst_links_rerouted":
+                allp["mst"]["links_rerouted_between_metrics"],
+            "all_mst_endpoint_unreachable_links":
+                allp["mst"]["n_links_endpoint_unreachable"],
             "atoms_invisible_to_endpoint_methods":
                 allp["atoms_invisible_to_endpoint_methods"],
             "frac_closest_approach_tip_to_tip_all": allp["frac_tip_to_tip"],

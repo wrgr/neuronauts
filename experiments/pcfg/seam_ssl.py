@@ -9,7 +9,7 @@ gives unlimited training data and teaches "what two-cables-joined looks like" wh
 LEARNS the cues itself. Then evaluate ZERO-SHOT on the REAL v117 merges and compare to the
 supervised-from-scratch seam detector -- especially on the axon side.
 
-    python -m experiments.pcfg_synapse_partitions.seam_ssl \
+    python -m experiments.pcfg.seam_ssl \
         --sidetable data/sidetable_big.npz --n-splice 3000 --epochs 8
 """
 from __future__ import annotations
@@ -23,11 +23,11 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from experiments.pcfg_synapse_partitions.synapse_correction import SideTable  # noqa: E402
-from experiments.pcfg_synapse_partitions.close_loop_cut import (  # noqa: E402
+from experiments.pcfg.synapse_correction import SideTable  # noqa: E402
+from experiments.pcfg.close_loop_cut import (  # noqa: E402
     load_skels, disagreement_from_counts, do_nothing_err, root_and_subtrees,
 )
-from experiments.pcfg_synapse_partitions.seam_detector import build_model, build_objects, SCALE  # noqa: E402
+from experiments.pcfg.seam_detector import build_model, build_objects, SCALE  # noqa: E402
 
 
 def load_clean_cells(sidetable, skel_dir, min_syn):

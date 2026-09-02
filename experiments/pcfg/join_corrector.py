@@ -23,8 +23,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from experiments.pcfg_synapse_partitions.synapse_correction import SideTable, cell_components  # noqa: E402
-from experiments.pcfg_synapse_partitions import conn_metric  # noqa: E402
+from experiments.pcfg.synapse_correction import SideTable, cell_components  # noqa: E402
+from experiments.pcfg import conn_metric  # noqa: E402
 
 
 def main():

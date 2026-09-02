@@ -14,7 +14,7 @@ fix, no labels / no hand features / no synthesized merges -- and only makes the 
 Inputs are still raw: [xyz, log radius, is_synapse]. Trained on the noisy corpus; group-by-cell
 CV; do-nothing-relevant precision@k.
 
-    python -m experiments.pcfg_synapse_partitions.skel_ssl_grammar_v2 --sidetable data/sidetable_7box.npz
+    python -m experiments.pcfg.skel_ssl_grammar_v2 --sidetable data/sidetable_7box.npz
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from experiments.pcfg_synapse_partitions.synapse_correction import SideTable  # noqa: E402
+from experiments.pcfg.synapse_correction import SideTable  # noqa: E402
 
 SCALE = 50_000.0
 N_PTS = 384

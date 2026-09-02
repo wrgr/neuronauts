@@ -12,7 +12,7 @@ For each real false-merge object (v117 skeleton + its synapses + v1718 truth):
   * 2-means (reference).
 Scored by Rand-disagreement within-object pair errors vs v1718; net vs do-nothing.
 
-    python -m experiments.pcfg_synapse_partitions.close_loop_cut --sidetable data/sidetable_7box.npz
+    python -m experiments.pcfg.close_loop_cut --sidetable data/sidetable_7box.npz
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from experiments.pcfg_synapse_partitions.synapse_correction import SideTable  # noqa: E402
+from experiments.pcfg.synapse_correction import SideTable  # noqa: E402
 
 
 def load_skels(skel_dir, version):

@@ -16,7 +16,7 @@ Loop:
 net_fixed = do_nothing_pair_errors - corrected_pair_errors  (>0 == actually better than nothing).
 Merge direction only; the split/join half needs the relational model.
 
-    python -m experiments.pcfg_synapse_partitions.close_loop_merge --sidetable data/sidetable_7box.npz
+    python -m experiments.pcfg.close_loop_merge --sidetable data/sidetable_7box.npz
 """
 from __future__ import annotations
 
@@ -29,8 +29,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from experiments.pcfg_synapse_partitions.synapse_correction import SideTable, cell_components  # noqa: E402
-from experiments.pcfg_synapse_partitions.global_shape_merge import global_features  # noqa: E402
+from experiments.pcfg.synapse_correction import SideTable, cell_components  # noqa: E402
+from experiments.pcfg.global_shape_merge import global_features  # noqa: E402
 
 
 def _pairs(n):

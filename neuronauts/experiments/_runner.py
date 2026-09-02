@@ -170,7 +170,9 @@ def _ledger_row(payload: dict) -> str:
         else f"{k}={v}" for k, v in list(obs.items())[:3]) or "--"
     prov = payload.get("provenance") or {}
     commit = (prov.get("commit") or prov.get("git_commit") or "")[:9] or "?"
-    dirty = " (dirty)" if prov.get("dirty") else ""
+    # provenance.git_state() writes ``git_dirty``; ``dirty`` is kept as a
+    # fallback for payloads written before that key was read correctly.
+    dirty = " (dirty)" if prov.get("git_dirty", prov.get("dirty")) else ""
     return (f"| {payload['id']} | {payload['title']} | {mark} | {headline} | "
             f"{payload.get('elapsed_min', 0):.1f} | `{commit}`{dirty} | "
             f"{prov.get('timestamp_utc', '')} |")

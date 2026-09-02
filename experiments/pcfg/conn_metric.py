@@ -26,7 +26,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from experiments.pcfg_synapse_partitions.synapse_correction import SideTable  # noqa: E402
+from experiments.pcfg.synapse_correction import SideTable  # noqa: E402
 
 
 def _C2(n):
@@ -144,7 +144,7 @@ def _print(out):
 # ---------------------------------------------------------------------------
 def self_test(sidetable="data/sidetable_7box.npz", skel_dir="data/skel_v117"):
     from scipy.spatial import cKDTree
-    from experiments.pcfg_synapse_partitions.close_loop_cut import (
+    from experiments.pcfg.close_loop_cut import (
         load_skels, do_nothing_err, root_and_subtrees, disagreement_from_counts,
     )
     d = np.load(sidetable)

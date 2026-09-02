@@ -2,10 +2,15 @@
 
 A false split shows up as two atom endpoints facing each other across a gap.
 The panel enumerates those geometrically, with no ground truth: every
-endpoint that survives a leaf-length / caliber filter is matched to its ``k``
-nearest endpoints of *other* atoms within ``radius_nm``. Endpoint pairs are
-then reduced to one row per atom pair (the closest endpoint pair), which is
-the unit every scorer ranks and every assembler joins.
+endpoint that survives a leaf-length / caliber filter is matched to its
+``k + 1`` nearest endpoints of *any* atom within ``radius_nm``, and same-atom
+hits are dropped afterwards -- so an endpoint crowded by its own atom's tips
+spends part of its budget on them (QA: 3,430 of 5.1M endpoints have all ``k``
+neighbours in their own atom; mean cross-atom neighbours 7.32 of 8). Endpoint
+pairs are then reduced to one row per atom pair, keeping the closest endpoint
+pair *among those discovered*, which is not always the closest endpoint pair
+between the two atoms (3% of rows, median excess 190 nm). That row is the
+unit every scorer ranks and every assembler joins.
 
 Per row the panel carries what a geometric scorer needs -- gap, how squarely
 the two tips face each other, how well each tip points at the other, tip
@@ -167,6 +172,7 @@ def _panel_meta(min_leaf_nm, min_caliber_nm, radius_nm, k, n_ep, n_kept,
               "radius_nm": float(radius_nm), "k": int(k),
               "n_endpoints": int(n_ep), "n_endpoints_kept": int(n_kept),
               "n_endpoint_pairs": int(n_ep_pairs), "n_atom_pairs": int(n_pairs),
-              "selection": "label-blind: k nearest cross-atom endpoints within "
-                           "radius, closest endpoint pair per atom pair"})
+              "selection": "label-blind: k+1 nearest endpoints of any atom "
+                           "within radius, same-atom hits dropped; closest "
+                           "DISCOVERED endpoint pair per atom pair"})
     return m

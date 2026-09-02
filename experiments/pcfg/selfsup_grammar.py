@@ -11,7 +11,7 @@ Trained on clean (v1718) arbor junctions, scored on v117 arbor junctions; report
 AUC(seam | surprise) vs the supervised ceiling (0.85) and the earlier baselines.
 
 Usage:
-    python -m experiments.pcfg_synapse_partitions.selfsup_grammar --sidetable data/sidetable_7box.npz
+    python -m experiments.pcfg.selfsup_grammar --sidetable data/sidetable_7box.npz
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from experiments.pcfg_synapse_partitions.synapse_correction import SideTable  # noqa: E402
+from experiments.pcfg.synapse_correction import SideTable  # noqa: E402
 
 
 def junction_features(pts: np.ndarray, later: np.ndarray):

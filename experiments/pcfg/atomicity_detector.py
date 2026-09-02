@@ -25,8 +25,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from experiments.pcfg_synapse_partitions.synapse_correction import SideTable, cell_components  # noqa: E402
-from experiments.pcfg_synapse_partitions.global_shape_merge import global_features  # noqa: E402
+from experiments.pcfg.synapse_correction import SideTable, cell_components  # noqa: E402
+from experiments.pcfg.global_shape_merge import global_features  # noqa: E402
 
 SCALE = 50_000.0
 N_PTS = 256

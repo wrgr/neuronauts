@@ -12,7 +12,7 @@ or `detector` (the Phase-3 RF p_merge; stop when a child looks like one clean ne
 Cut scorer: `oracle` (disagreement-minimizing edge) -- the realistic learned/abstaining cut
 plugs in via skeleton_cut_op once a trained seam model is supplied.
 
-    python -m experiments.pcfg_synapse_partitions.recursive_corrector --stop pure
+    python -m experiments.pcfg.recursive_corrector --stop pure
 """
 from __future__ import annotations
 
@@ -25,12 +25,12 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from experiments.pcfg_synapse_partitions.synapse_correction import SideTable  # noqa: E402
-from experiments.pcfg_synapse_partitions.close_loop_cut import (  # noqa: E402
+from experiments.pcfg.synapse_correction import SideTable  # noqa: E402
+from experiments.pcfg.close_loop_cut import (  # noqa: E402
     load_skels, disagreement_from_counts, do_nothing_err,
 )
-from experiments.pcfg_synapse_partitions.skeleton_cut_op import prepare_object  # noqa: E402
-from experiments.pcfg_synapse_partitions import conn_metric  # noqa: E402
+from experiments.pcfg.skeleton_cut_op import prepare_object  # noqa: E402
+from experiments.pcfg import conn_metric  # noqa: E402
 
 
 def _best_edge(obj, rows_local, lab_index, nlab, min_side):
@@ -142,7 +142,7 @@ def _candidates(obj, rows_local, cnt, tot, min_side):
 def _train_seam(train_objs, epochs, seed, init_path=None):
     import torch
     import torch.nn.functional as F
-    from experiments.pcfg_synapse_partitions.seam_detector import build_model
+    from experiments.pcfg.seam_detector import build_model
     torch.manual_seed(seed); rng = np.random.default_rng(seed)
     net = build_model(cin=int(train_objs[0]["feat"].shape[1]))
     if init_path:                       # SSL pretrain -> fine-tune: initialize from splice weights
@@ -175,7 +175,7 @@ def _edge_benefit(net, o):
 def run_learned_cv(sidetable, skel_cache, folds, epochs, seed, max_rounds, min_side, tau, topk,
                    axon_tau=0.0, init_path=None):
     from sklearn.model_selection import GroupKFold
-    from experiments.pcfg_synapse_partitions.seam_detector import build_objects
+    from experiments.pcfg.seam_detector import build_objects
     d = np.load(sidetable)
     tab = SideTable(d["syn_id"], d["side"], d["pt"], d["root_v117"], d["root_later"])
     skels = load_skels(skel_cache, 117)
@@ -313,7 +313,7 @@ def main():
 
     detector = None
     if args.stop == "detector":
-        from experiments.pcfg_synapse_partitions.atomicity_detector import AtomicityDetector, build_objects
+        from experiments.pcfg.atomicity_detector import AtomicityDetector, build_objects
         detector = AtomicityDetector().fit(build_objects(args.sidetable))
 
     corrected = tab.root_v117.copy()

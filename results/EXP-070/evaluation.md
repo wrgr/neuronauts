@@ -37,14 +37,20 @@ a rewrite.
 ## What changes
 
 Reachability at the 5 µm search radius — the quantity EXP-060 failed on, and an
-upper bound on what any proximity proposer can recall:
+upper bound on what any proximity proposer can recall. The denominator is the
+same pair universe for both columns (every pair whose atoms both have geometry);
+a pair the endpoint metric cannot see at all, because an atom has no endpoint
+row, counts as *not reached*, not as absent. A first version of this table took
+the endpoint column over finite gaps only, which quietly dropped those pairs
+from its denominator and flattered it by ~4 points on the full population — the
+QA pass caught it, and the corrected numbers are below:
 
 | Substrate | Denominator | Endpoint | **Object** | Gain |
 |---|---|---:|---:|---:|
 | tier ≥10 | all same-owner pairs | 47.4% | **55.5%** | +8.1 |
 | tier ≥10 | MST spanning links | 64.9% | **75.7%** | +10.8 |
-| all tiers | all same-owner pairs | 12.5% | **14.5%** | +2.0 |
-| all tiers | MST spanning links | 47.7% | **56.8%** | +9.1 |
+| all tiers | all same-owner pairs | 10.9% | **14.5%** | +3.6 |
+| all tiers | MST spanning links | 43.3% | **56.8%** | +13.5 |
 
 The MST rows are the ones that matter — `CORRECTION.md` established that
 assembly needs a spanning set, not the same-owner clique. EXP-060B's uncapped
@@ -52,7 +58,10 @@ tier-10 recall of 64.6% sits right on this table's endpoint reachability of
 64.9% (the small difference is its extra filter on endpoints with a non-finite
 tangent), which is the consistency check that the two experiments are measuring
 the same thing. So **the uncapped proximity ceiling on tier ≥10 moves from
-~64.6% to ~75.7%, and on the full population from ~47.4% to ~56.8%.**
+~64.6% to ~75.7%.** On the full population EXP-060B's 47.4% was over its own
+universe — an MST built from endpoints, which cannot contain the 289 atoms that
+have none — so the like-for-like endpoint figure is 43.3%, and the object metric
+takes it to 56.8%.
 
 Two further findings, neither of which is a matter of degree:
 
@@ -69,11 +78,15 @@ is later used to score, so switching metrics moves the ground truth:
 | tier ≥10 | 350 | 348 | 2 | 99.4% |
 | all tiers | 3,538 | 3,075 | 463 | 86.9% |
 
-On tier ≥10 this is negligible. On the full population, **463 of 3,538 spanning
-links differ**, so EXP-060B's panel was scored against a partly different answer
-key than the one the better metric implies. That is not a large enough effect to
-overturn EXP-060B's conclusion, but it does mean its recall figures carry an
-error bar nobody drew.
+On tier ≥10 this is negligible. On the full population 463 object-metric links
+have no counterpart in the endpoint MST, but that number conflates two different
+facts, and the QA pass separated them: **325 of the 463 touch an atom with no
+endpoint row** — they were never available to the endpoint MST at all — while
+**138 object-only plus 187 endpoint-only links (~9%) are genuinely re-routed**
+between atoms both metrics see. So EXP-060B's panel was scored against a partly
+different answer key than the one the better metric implies; the re-routing is
+about a third of what "463 differ" suggests, and it does not overturn
+EXP-060B's conclusion, but its recall figures do carry an error bar nobody drew.
 
 Finally, the closest approach is tip-to-tip on **30.1%** of tier-10 pairs and
 **48.2%** of full-population pairs. The endpoint model's premise — that a false

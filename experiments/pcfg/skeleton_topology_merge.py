@@ -19,7 +19,7 @@ radius stats, 2-means cable-mass bimodality, extent, branch density. Grouped-by-
 size ablation, do-nothing-relevant precision@k. Skeletons cached under --skel-cache.
 
 Usage:
-    python -m experiments.pcfg_synapse_partitions.skeleton_topology_merge \
+    python -m experiments.pcfg.skeleton_topology_merge \
         --sidetable data/sidetable_7box.npz --token $CAVE_TOKEN \
         --skel-cache data/skel_v1718 --sample-clean 250 --max-fm 150
 """
@@ -36,7 +36,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from experiments.pcfg_synapse_partitions.synapse_correction import SideTable  # noqa: E402
+from experiments.pcfg.synapse_correction import SideTable  # noqa: E402
 
 
 import threading

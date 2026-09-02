@@ -13,36 +13,45 @@
 
 ## Result: failed, and the reason is not that the tangent is uninformative
 
+> **Corrected 2026-09-02.** The first write-up of this table compared a
+> best-of-two-directions statistic (the smaller of A's angle to B and B's angle
+> to A) against the chance level for **one** random direction, (1 − cos θ)/2.
+> The QA pass measured the real null — random unit tangents through the same
+> loop, 20 seeds — at about twice that, so the enrichment was overstated ~2×:
+> 3–6× is 2–3×. The reach and panel columns were never affected, and the
+> verdict is unchanged. Details: `docs/threads/qa_pass_2026-09-02.md`.
+
 No cone reached 70% of true pairs at a median panel of ≤20. But the tangent is
-**not** noise — it carries 3–6× more directional information than chance, and
+**not** noise — it carries 2–3× more directional information than chance, and
 saying otherwise would be the easy wrong conclusion.
 
-| cone | reach (within distance) | reach by angle | if direction were random | enrichment | median panel |
+| cone | reach (within distance) | reach by angle | if direction were random (measured) | enrichment | median panel |
 |---|---:|---:|---:|---:|---:|
-| 10 µm, 15° | 6.1% | 10.2% | 1.7% | **6.0×** | 45 |
-| 10 µm, 30° | 15.2% | 28.7% | 6.7% | 4.3× | 175 |
-| 10 µm, 45° | 26.2% | 48.6% | 14.6% | 3.3× | 378 |
-| 25 µm, 15° | 7.9% | 10.2% | 1.7% | 6.0× | 656 |
-| 25 µm, 30° | 19.3% | 28.7% | 6.7% | 4.3× | 2,582 |
-| 25 µm, 45° | 32.7% | 48.6% | 14.6% | 3.3× | 5,680 |
-| 50 µm, 15° | 8.7% | 10.2% | 1.7% | 6.0× | 4,837 |
-| 50 µm, 30° | 24.4% | 28.7% | 6.7% | 4.3× | 19,244 |
-| 50 µm, 45° | **40.2%** | 48.6% | 14.6% | 3.3× | 42,160 |
+| 10 µm, 15° | 6.1% | 10.2% | 3.4% | **3.0×** | 45 |
+| 10 µm, 30° | 15.2% | 28.7% | 13.4% | 2.1× | 175 |
+| 10 µm, 45° | 26.2% | 48.6% | 27.7% | 1.8× | 378 |
+| 25 µm, 15° | 7.9% | 10.2% | 3.4% | 3.0× | 656 |
+| 25 µm, 30° | 19.3% | 28.7% | 13.4% | 2.1× | 2,582 |
+| 25 µm, 45° | 32.7% | 48.6% | 27.7% | 1.8× | 5,680 |
+| 50 µm, 15° | 8.7% | 10.2% | 3.4% | 3.0× | 4,837 |
+| 50 µm, 30° | 24.4% | 28.7% | 13.4% | 2.1× | 19,244 |
+| 50 µm, 45° | **40.2%** | 48.6% | 27.7% | 1.8× | 42,160 |
 
-Angle from the outward tangent to the true partner, against what a uniformly
-random direction would give:
+Angle from the outward tangent to the true partner, against the measured null
+(the better of two random directions, which is what the statistic takes):
 
 | | p10 | p25 | p50 | p75 | p90 |
 |---|---:|---:|---:|---:|---:|
 | **observed** | 14.6° | 27.0° | **45.5°** | 69.1° | 94.4° |
-| if random | 36.9° | 60.0° | 90.0° | 120.0° | 143.1° |
+| if random (measured) | 25.9° | 42.5° | 64.8° | 90.0° | 112.7° |
+| *if random, single direction — as first reported* | *36.9°* | *60.0°* | *90.0°* | *120.0°* | *143.1°* |
 
 The observed distribution is shifted hard toward the tangent at every
 percentile. A tip does tend to point at its continuation.
 
 ## But the shape of the enrichment is the problem
 
-Enrichment is highest exactly where reach is lowest. A 15° cone is 6× better
+Enrichment is highest exactly where reach is lowest. A 15° cone is 3× better
 than chance and finds 10% of partners. A 45° cone finds 48.6% but is 29% of
 the sphere by solid angle — barely a direction at all — and its panel at 50 µm
 is 42,160 distractor endpoints.
@@ -70,7 +79,7 @@ direction. That is a stronger and more useful statement than any of the three
 alone, and it is consistent with the tree-assembly work's 0/32 adjudicated
 links and with hypothesis H3.
 
-Note what is *not* claimed: the tangent still carries 3–6× enrichment, so it
+Note what is *not* claimed: the tangent still carries 2–3× enrichment, so it
 belongs in a **scorer** (EXP-064) as a feature over candidates generated some
 other way. What it cannot do is generate them.
 

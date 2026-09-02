@@ -61,8 +61,12 @@ every threshold, pair precision 0.0006, indistinguishable from random at
 matched edge count. Nothing here touches that. The panel containing the right
 pair does not help if the decision rule cannot pick it out.
 
-**Stands, with a caveat:** EXP-061's angular measurement. The tangent carries
-3–6× enrichment over chance, and the median angle to the partner is 45.5°. But
+**Stands, with two caveats:** EXP-061's angular measurement. The median angle to
+the partner is 45.5°. The enrichment over chance, first written here as 3–6×,
+was against a single-direction null for a best-of-two-directions statistic; the
+2026-09-02 QA pass measured the real null with random tangents through the same
+loop and the enrichment is **~2–3×** (see `docs/threads/qa_pass_2026-09-02.md`
+and the re-run `results/EXP-061/`). Still informative, half as sharp. And
 that too was computed over all pairs; the angle to the *nearest* partner, which
 is the one a proposer must find, has not been measured and could be sharper.
 

@@ -17,7 +17,7 @@ Outputs
 4. Systematic vs idiosyncratic -- concentration of seam transitions (top-bigram lift).
 
 Usage:
-    python -m experiments.pcfg_synapse_partitions.grammar_regime \
+    python -m experiments.pcfg.grammar_regime \
         --sidetable data/sidetable_7box.npz
 """
 from __future__ import annotations
@@ -32,8 +32,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from experiments.pcfg_synapse_partitions.pcfg_partitions import ALPH  # noqa: E402
-from experiments.pcfg_synapse_partitions.synapse_correction import SideTable  # noqa: E402
+from experiments.pcfg.pcfg_partitions import ALPH  # noqa: E402
+from experiments.pcfg.synapse_correction import SideTable  # noqa: E402
 
 _IDX = {c: i for i, c in enumerate(ALPH)}
 

@@ -26,7 +26,21 @@ atoms present as distractors. The comparison is EXP-060's measured proximity
 numbers: 47.4% reachable within 5 um, 17.5% actually proposed at k=8, median
 panel 819.
 
-    uv run python -m neuronauts.experiments.exp061_directed_cone
+**The chance baseline is measured, not assumed.** The reachability statistic
+is a *minimum* over two directions (A's tangent toward B, and B's toward A), so
+the chance that a pair is "reached" with random tangents is not the
+single-direction (1 - cos theta)/2 -- it is the chance that the better of two
+draws lands inside the cone, roughly twice that at small angles. The first run
+used the single-direction number and reported 3-6x enrichment over chance; the
+QA repro with random unit tangents through this same loop measured the real
+null at about twice the stated one, so the enrichment was closer to 2-3x. The
+null is now computed empirically: the same loop, run ``N_NULL`` times with
+random unit tangents in place of the real ones, on the same pairs. The
+closed-form single-direction number is kept in the tables, labelled as what it
+is, so the correction is visible. The pass/fail bar does not involve the null
+and is unchanged.
+
+    python -m neuronauts.experiments.exp061_directed_cone
 """
 
 from __future__ import annotations
@@ -52,6 +66,9 @@ CONES = [
 #: a query against all 5.1M endpoints per endpoint.
 PANEL_SAMPLE = 4000
 SEED = 0
+#: Random-tangent draws for the empirical chance baseline. The loop is cheap
+#: (a few hundred pairs), so this is not a budget decision.
+N_NULL = 20
 
 REACH_BAR = 0.70
 PANEL_BAR = 20.0
@@ -78,6 +95,37 @@ SPEC = Spec(
     flags={"synthetic_fallback": False,
            "labels_used_only_for_evaluation": True},
 )
+
+
+def _reach(pairs, span, epos, etan):
+    """Best-of-two angle to the true partner, and the closest endpoint gap.
+
+    Parameterised on the tangent field so the same code measures the real
+    tangents and the random-direction null; anything the loop does to the
+    statistic (the argmin over endpoints, the min over directions) is then
+    done to the null too.
+    """
+    best_angle = np.full(len(pairs), np.nan)
+    gap = np.full(len(pairs), np.inf)
+    for i, (a, b) in enumerate(pairs):
+        (a0, a1), (b0, b1) = span.get(a, (0, 0)), span.get(b, (0, 0))
+        A, B = epos[a0:a1], epos[b0:b1]
+        if not len(A) or not len(B):
+            continue
+        angs = []
+        for P, T, Q in ((A, etan[a0:a1], B), (B, etan[b0:b1], A)):
+            d, j = cKDTree(Q).query(P, k=1)
+            s = int(np.argmin(d))
+            v = Q[j[s]] - P[s]
+            nv = float(np.linalg.norm(v))
+            if nv <= 0:
+                continue
+            c = float(np.dot(T[s], v / nv))
+            angs.append(np.degrees(np.arccos(np.clip(c, -1.0, 1.0))))
+            gap[i] = min(gap[i], float(d[s]))
+        if angs:
+            best_angle[i] = min(angs)
+    return best_angle, gap
 
 
 def run(ctx: Context) -> Outcome:
@@ -118,28 +166,20 @@ def run(ctx: Context) -> Outcome:
     # For each ordered direction of a true pair, take the endpoint of A closest
     # to B and ask how far off its outward tangent B lies. The pair is reached
     # at half-angle theta if either direction is within theta.
-    best_angle = np.full(len(pairs), np.nan)
-    gap = np.full(len(pairs), np.inf)
-    for i, (a, b) in enumerate(pairs):
-        (a0, a1), (b0, b1) = span.get(a, (0, 0)), span.get(b, (0, 0))
-        A, B = epos[a0:a1], epos[b0:b1]
-        if not len(A) or not len(B):
-            continue
-        angs = []
-        for P, T, Q in ((A, etan[a0:a1], B), (B, etan[b0:b1], A)):
-            d, j = cKDTree(Q).query(P, k=1)
-            s = int(np.argmin(d))
-            v = Q[j[s]] - P[s]
-            nv = float(np.linalg.norm(v))
-            if nv <= 0:
-                continue
-            c = float(np.dot(T[s], v / nv))
-            angs.append(np.degrees(np.arccos(np.clip(c, -1.0, 1.0))))
-            gap[i] = min(gap[i], float(d[s]))
-        if angs:
-            best_angle[i] = min(angs)
-
+    best_angle, gap = _reach(pairs, span, epos, etan)
     ok = np.isfinite(best_angle) & np.isfinite(gap)
+
+    # The chance baseline, through the same code path: random unit tangents
+    # in place of the real ones, same pairs, same closest-endpoint choice, so
+    # the best-of-two-directions structure of the statistic is in the null.
+    rng_null = np.random.default_rng(SEED + 1)
+    null_angles = []
+    for _ in range(N_NULL):
+        rt = rng_null.normal(size=etan.shape)
+        rt /= np.maximum(np.linalg.norm(rt, axis=1, keepdims=True), 1e-12)
+        na, _ = _reach(pairs, span, epos, rt.astype(etan.dtype))
+        null_angles.append(na[ok])
+    null_angles = np.stack(null_angles) if null_angles else np.empty((0, 0))
 
     # --- panel size: distractor endpoints inside the same cone --------------
     rng = np.random.default_rng(SEED)
@@ -176,17 +216,27 @@ def run(ctx: Context) -> Outcome:
             counts.append(int((c >= cos_t).sum()))
         cts = np.asarray(counts, float)
 
-        # A uniformly random direction lands within half-angle theta with
-        # probability (1 - cos theta) / 2. Without this the tangent looks
-        # useless; with it, it is clearly informative but not sharp enough.
-        chance = (1.0 - np.cos(np.radians(half_deg))) / 2.0
+        # Chance is measured (random tangents, same loop). The single-direction
+        # closed form (1 - cos theta)/2 is what the first run used; it is the
+        # wrong null for a best-of-two statistic and is kept only as a record.
+        single = (1.0 - np.cos(np.radians(half_deg))) / 2.0
+        per_seed = ((null_angles <= half_deg).mean(axis=1)
+                    if null_angles.size else np.array([np.nan]))
+        chance = float(np.nanmean(per_seed))
+        chance_sd = float(np.nanstd(per_seed))
 
         key = f"{int(max_d/1000)}um_{int(half_deg)}deg"
         row = {"max_distance_nm": max_d, "half_angle_deg": half_deg,
                "reach_angle_only": round(reach, 6),
-               "reach_if_direction_were_random": round(float(chance), 6),
+               "reach_if_direction_were_random": round(chance, 6),
+               "reach_if_random_sd_over_seeds": round(chance_sd, 6),
+               "naive_single_direction_chance": round(float(single), 6),
+               "closed_form_best_of_two_chance":
+                   round(float(1.0 - (1.0 - single) ** 2), 6),
                "enrichment_over_chance": round(float(reach / chance), 2)
                if chance > 0 else None,
+               "enrichment_as_first_reported": round(float(reach / single), 2)
+               if single > 0 else None,
                "reach_within_distance": round(reach_d, 6),
                "median_panel": float(np.median(cts)),
                "p90_panel": float(np.percentile(cts, 90)),
@@ -207,9 +257,12 @@ def run(ctx: Context) -> Outcome:
 
     ang = {f"p{q}": round(float(np.percentile(best_angle[ok], q)), 1)
            for q in (10, 25, 50, 75, 90)}
-    # Chance percentiles for a uniformly random direction: the angle whose
-    # cumulative (1-cos)/2 equals q/100.
-    ang_chance = {f"p{q}": round(float(np.degrees(np.arccos(1 - 2 * q / 100))), 1)
+    # Chance percentiles from the empirical null (random tangents, same loop).
+    # The first run used the single-direction closed form arccos(1 - 2q/100),
+    # whose median is 90 degrees; the best-of-two median is ~65.5 degrees.
+    ang_chance = {f"p{q}": round(float(np.percentile(null_angles.ravel(), q)), 1)
+                  for q in (10, 25, 50, 75, 90)} if null_angles.size else {}
+    ang_single = {f"p{q}": round(float(np.degrees(np.arccos(1 - 2 * q / 100))), 1)
                   for q in (10, 25, 50, 75, 90)}
     print(f"\n  angle to true partner : "
           + ", ".join(f"{k}={v}deg" for k, v in ang.items()), flush=True)
@@ -235,8 +288,14 @@ def run(ctx: Context) -> Outcome:
         },
         tables={"cone_sweep": rows,
                 "angle_to_true_partner_deg": {
-                    k: {"observed_deg": ang[k], "if_random_deg": ang_chance[k]}
-                    for k in ang}},
+                    k: {"observed_deg": ang[k],
+                        "if_random_deg": ang_chance.get(k),
+                        "if_random_single_direction_deg_as_first_reported":
+                            ang_single[k]}
+                    for k in ang},
+                "null": {"method": "empirical: random unit tangents through "
+                                   "the same reachability loop, same pairs",
+                         "n_seeds": N_NULL, "n_pairs": int(ok.sum())}},
         note=(f"{best} reaches {rows[best]['reach_within_distance']:.1%} at "
               f"median panel {rows[best]['median_panel']:.0f}" if best else
               f"no cone reached {REACH_BAR:.0%} at a median panel of "

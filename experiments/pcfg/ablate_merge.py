@@ -18,7 +18,7 @@ dist-only/size-only is mechanical, not morphological.  Report per-stratum AUC vs
 permutation null for both LogReg and RandomForest.
 
 Usage:
-    python -m experiments.pcfg_synapse_partitions.ablate_merge --sidetable data/sidetable_7box.npz
+    python -m experiments.pcfg.ablate_merge --sidetable data/sidetable_7box.npz
 """
 from __future__ import annotations
 
@@ -30,13 +30,13 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from experiments.pcfg_synapse_partitions.synapse_correction import (  # noqa: E402
+from experiments.pcfg.synapse_correction import (  # noqa: E402
     FEAT_DIM,
     PAIR_DIM,
     SideTable,
     build_correction_pairs,
 )
-from experiments.pcfg_synapse_partitions.run_synapse_correction import evaluate  # noqa: E402
+from experiments.pcfg.run_synapse_correction import evaluate  # noqa: E402
 
 # Feature index map (see synapse_correction._pair_features / PAIR_DIM layout)
 I_DIST = 0

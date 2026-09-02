@@ -99,12 +99,11 @@ print(format_metrics(m, title="PCFG vs learned, val region"))
   connectivity accuracy) is a genuinely different protocol — it operates on
   synapse *sides* joined across two segmentation versions via a `SideTable`,
   not a generic partition — so it wasn't folded into
-  `neuronauts.metrics.connectome`. **Pre-existing, unrelated bug**: this file
-  and `experiments/pcfg/group_eval.py` (and ~20 other files under
-  `experiments/pcfg/`) import from `experiments.pcfg_synapse_partitions`, a
-  package that was renamed to `experiments.pcfg` and no longer exists. That
-  break predates this consolidation and is repo-wide, not metrics-specific;
-  fixing it is a separate task.
+  `neuronauts.metrics.connectome`. (A pre-existing, unrelated break -- this
+  file, `experiments/pcfg/group_eval.py`, and 21 other files under
+  `experiments/pcfg/` still imported from the pre-rename package name
+  `experiments.pcfg_synapse_partitions` -- was fixed in the 2026-09 code-health
+  pass by rewriting those imports to `experiments.pcfg`.)
 - **Purity plotting** (`neuronauts/viz.py::plot_scaffold_purity`,
   `scripts/scaffold_census.py`, `scripts/tier_census.py`) — these compute
   majority-label purity inline for a plot, same math as the new

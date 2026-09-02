@@ -2,8 +2,17 @@
 
 from __future__ import annotations
 
+import importlib.util
+
 import numpy as np
 import pytest
+
+#: Only the evaluate_dna_auc tests need scikit-learn. A module-level
+#: ``importorskip`` placed mid-file used to skip this whole module at
+#: collection -- including the eight tests above it that need nothing -- so
+#: the guard is per-test now.
+needs_sklearn = pytest.mark.skipif(importlib.util.find_spec("sklearn") is None,
+                                   reason="scikit-learn not installed")
 
 from neuronauts.represent.enrich import (
     build_synapse_dna_matrix,
@@ -204,9 +213,7 @@ def test_spatial_proximity_scores_nearby_same_neuron():
 # evaluate_dna_auc
 # ---------------------------------------------------------------------------
 
-sklearn = pytest.importorskip("sklearn", reason="scikit-learn not installed")
-
-
+@needs_sklearn
 def test_evaluate_dna_auc_perfect_separation():
     """Orthogonal per-root DNA → AUC close to 1.0."""
     D = 8
@@ -227,6 +234,7 @@ def test_evaluate_dna_auc_perfect_separation():
     assert result["n_pos"] > 0 and result["n_neg"] > 0
 
 
+@needs_sklearn
 def test_evaluate_dna_auc_includes_baseline():
     """include_baseline=True populates baseline_auc."""
     region = _make_region([1, 1, 1, 2, 2, 2])
@@ -239,6 +247,7 @@ def test_evaluate_dna_auc_includes_baseline():
     assert 0.0 <= result["baseline_auc"] <= 1.0
 
 
+@needs_sklearn
 def test_evaluate_dna_auc_no_dna_fragments():
     """Raises ValueError if no fragment carries a DNA embedding."""
     region = _make_region([1, 1, 2, 2])
@@ -255,6 +264,7 @@ def test_evaluate_dna_auc_no_dna_fragments():
         evaluate_dna_auc(region, [frag])
 
 
+@needs_sklearn
 def test_evaluate_dna_auc_n_no_dna_count():
     """n_no_dna reflects synapses without a matching Fragment DNA."""
     region = _make_region([1, 1, 2, 2, 3, 3])  # 6 synapses

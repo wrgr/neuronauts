@@ -18,5 +18,5 @@ code=$(curl -s -o /dev/null -w "%{http_code}" "https://minnie.microns-daf.com/ma
 echo "[run_bigdata] $(date -u +%H:%M:%S) proxy=$port materialize=$code"
 [ "$code" = "200" ] || { echo "[run_bigdata] materialize down; skip this pass (no load)"; exit 0; }
 
-OMP_NUM_THREADS=4 python -u -m experiments.pcfg_synapse_partitions.fetch_bigdata \
+OMP_NUM_THREADS=4 python -u -m experiments.pcfg.fetch_bigdata \
     --n-boxes 27 --side-um 40 --out data/sidetable_big.npz

@@ -35,7 +35,7 @@ Group-by-cell CV everywhere (union-find over v117<->later co-occurrence); within
 permutation nulls; seeded; CPU-fast.
 
 Usage:
-    python -m experiments.pcfg_synapse_partitions.learned_grammar_neural \
+    python -m experiments.pcfg.learned_grammar_neural \
         --sidetable data/sidetable_7box.npz
 """
 from __future__ import annotations
@@ -53,7 +53,7 @@ print = functools.partial(print, flush=True)  # noqa: A001  unbuffered progress
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from experiments.pcfg_synapse_partitions.synapse_correction import (  # noqa: E402
+from experiments.pcfg.synapse_correction import (  # noqa: E402
     SideTable,
     cell_components,
 )

@@ -176,6 +176,41 @@ def test_endpoint_tangent_points_out_of_the_atom():
     assert np.dot(tan[0], tan[1]) == pytest.approx(-1.0, abs=1e-5)
 
 
+def test_endpoint_tangent_walks_the_segment_from_its_own_end():
+    """A hooked leaf: five nodes along +x then four along +y, one segment.
+
+    A straight run cannot catch a path that starts from the wrong end -- every
+    node is on the same line. This one can: the tangent at the x-end, taken
+    over ``span`` nodes back along its own segment, must lean into the hook,
+    and must agree with the vectorised ``segment_tip_tangents`` that the
+    topology build uses. A first version reversed the interior for BOTH ends,
+    so the x-end's path ran from the far end of the segment (QA found 715 such
+    tips on one shard, all at the 'a' end).
+    """
+    from neuronauts.harness.topology import segment_paths, segment_tip_tangents
+
+    xs = [[100 * i, 0, 0] for i in range(5)]
+    ys = [[400, 100 * j, 0] for j in range(1, 5)]
+    pos = np.array(xs + ys, np.float32)
+    n = len(pos)
+    ids = np.arange(100, 100 + n, dtype=np.uint64)
+    edges = np.array([[ids[i], ids[i + 1]] for i in range(n - 1)], np.uint64)
+    indptr, indices, deg = build_adjacency(ids, edges)
+    t = contract(indptr, indices, deg, pos=pos)
+
+    idx, tan = endpoint_tangents(t, pos, span=5)
+    flat, ptr = segment_paths(t)
+    tip_v, tan_v = segment_tip_tangents(t, flat, ptr, pos, span=5)
+
+    by_loop = {int(i): tan[k] for k, i in enumerate(idx.tolist())}
+    by_vec = {int(i): tan_v[k] for k, i in enumerate(tip_v.tolist())}
+    assert set(by_loop) == set(by_vec) == {0, n - 1}
+    for tip in (0, n - 1):
+        np.testing.assert_allclose(by_loop[tip], by_vec[tip], atol=1e-5)
+    # and the x-end tangent really does lean into the hook, not straight -x
+    assert by_loop[0][0] < 0 and by_loop[0][1] < 0
+
+
 # ---------------------------------------------------------------------------
 # vectorized helpers must agree with the per-segment definition
 # ---------------------------------------------------------------------------

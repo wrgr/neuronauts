@@ -9,7 +9,7 @@ and ITQ, then ask, in grouped-by-cell CV: does a held-out seam context retrieve 
 contexts above base rate? precision@k / base_rate (lift) is the answer -- lift >> 1 means error
 sites are hashable and the index is a usable prior.
 
-    python -m experiments.pcfg_synapse_partitions.seam_hash --sidetable data/sidetable_7box.npz
+    python -m experiments.pcfg.seam_hash --sidetable data/sidetable_7box.npz
 """
 from __future__ import annotations
 
@@ -22,8 +22,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from experiments.pcfg_synapse_partitions.synapse_correction import SideTable, cell_components  # noqa: E402
-from experiments.pcfg_synapse_partitions.close_loop_cut import (  # noqa: E402
+from experiments.pcfg.synapse_correction import SideTable, cell_components  # noqa: E402
+from experiments.pcfg.close_loop_cut import (  # noqa: E402
     load_skels, disagreement_from_counts, do_nothing_err, root_and_subtrees,
 )
 

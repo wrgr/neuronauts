@@ -193,9 +193,15 @@ def endpoint_tangents(topo: AtomTopo, pos: np.ndarray, *, span: int = 5
         for tip, other in ((a, b), (b, a)):
             if topo.deg[tip] != 1:
                 continue
+            # seg_nodes runs from end ``a`` to end ``b``; walking out from
+            # ``b`` means walking it backwards. A first version reversed when
+            # ``interior[0] != tip`` -- always true, since the interior never
+            # contains an endpoint -- so every 'a'-end path started at the far
+            # end of its segment (QA: 715/161,830 tips on one shard, all at
+            # the 'a' end, all on segments with >= span interior nodes).
             interior = topo.seg_nodes[i]
-            path = np.concatenate([[tip], interior[::-1] if interior.size and
-                                   interior[0] != tip else interior, [other]])
+            path = np.concatenate([[tip], interior[::-1] if tip == b else interior,
+                                   [other]])
             path = path.astype(np.int64)[:span + 1]
             p = pos[path]
             good = np.isfinite(p).all(axis=1)

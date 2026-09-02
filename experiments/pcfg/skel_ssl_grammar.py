@@ -16,7 +16,7 @@ corpus (clean-vs-noisy grammar KL was ~0) buys scale. Group-by-cell CV; do-nothi
 precision@k. Skeletons from --skel-cache (grown by the background corpus fetch); synapses from
 the cached SideTable.
 
-    python -m experiments.pcfg_synapse_partitions.skel_ssl_grammar --sidetable data/sidetable_7box.npz
+    python -m experiments.pcfg.skel_ssl_grammar --sidetable data/sidetable_7box.npz
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from experiments.pcfg_synapse_partitions.synapse_correction import SideTable  # noqa: E402
+from experiments.pcfg.synapse_correction import SideTable  # noqa: E402
 
 SCALE = 50_000.0
 N_PTS = 256

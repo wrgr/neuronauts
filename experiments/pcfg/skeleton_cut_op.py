@@ -24,7 +24,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from experiments.pcfg_synapse_partitions.close_loop_cut import (  # noqa: E402
+from experiments.pcfg.close_loop_cut import (  # noqa: E402
     disagreement_from_counts, do_nothing_err,
 )
 
@@ -177,9 +177,9 @@ def main():
     ap.add_argument("--sidetable", default="data/sidetable_7box.npz")
     ap.add_argument("--skel-cache", default="data/skel_v117")
     args = ap.parse_args()
-    from experiments.pcfg_synapse_partitions.close_loop_cut import load_skels
-    from experiments.pcfg_synapse_partitions.synapse_correction import SideTable
-    from experiments.pcfg_synapse_partitions import conn_metric
+    from experiments.pcfg.close_loop_cut import load_skels
+    from experiments.pcfg.synapse_correction import SideTable
+    from experiments.pcfg import conn_metric
 
     d = np.load(args.sidetable)
     tab = SideTable(d["syn_id"], d["side"], d["pt"], d["root_v117"], d["root_later"])

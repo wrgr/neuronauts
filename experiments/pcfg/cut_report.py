@@ -17,8 +17,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from experiments.pcfg_synapse_partitions.synapse_correction import SideTable  # noqa: E402
-from experiments.pcfg_synapse_partitions.close_loop_cut import (  # noqa: E402
+from experiments.pcfg.synapse_correction import SideTable  # noqa: E402
+from experiments.pcfg.close_loop_cut import (  # noqa: E402
     load_skels, disagreement_from_counts, do_nothing_err, root_and_subtrees,
 )
 

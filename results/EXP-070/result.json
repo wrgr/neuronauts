@@ -1,10 +1,12 @@
 {
-  "elapsed_min": 0.14887338876724243,
+  "elapsed_min": 0.15659186840057374,
   "id": "EXP-070",
-  "note": "the metric is materially wrong but not decisively so. Switching endpoint distance for object distance lifts MST-spanning-link reachability at 5 um from 64.9% to 75.7% on tier10 and from 47.7% to 56.8% on the full population, and makes 280 labelled atoms proposable that had no endpoint row at all -- but it does not approach EXP-060's 90% bar, so proximity's failure is not an artefact of measuring from tips. It also changes the ground truth: 463 of 3538 spanning links on the full population differ between the two metrics, so EXP-060B's panel was scored against a partly different answer key. Object distance should replace endpoint distance everywhere downstream on those grounds, not because it rescues the ball.",
+  "note": "the metric is materially wrong but not decisively so. Switching endpoint distance for object distance lifts MST-spanning-link reachability at 5 um from 64.9% to 75.7% on tier10 and from 43.3% to 56.8% on the full population, and makes 280 labelled atoms proposable that had no endpoint row at all -- but it does not approach EXP-060's 90% bar, so proximity's failure is not an artefact of measuring from tips. It also moves the ground truth, in two separable ways: 325 of 3538 object-metric spanning links on the full population touch an atom the endpoint MST could not see at all, and 325 links are routed differently between atoms both metrics see -- so EXP-060B's panel was scored against a partly different answer key. Object distance should replace endpoint distance everywhere downstream on those grounds, not because it rescues the ball.",
   "observed": {
-    "all_mst_answer_key_changed": 463,
-    "all_mst_within_5um_endpoint": 0.477124,
+    "all_mst_endpoint_unreachable_links": 325,
+    "all_mst_links_rerouted": 325,
+    "all_mst_links_touching_no_endpoint_atom": 325,
+    "all_mst_within_5um_endpoint": 0.433296,
     "all_mst_within_5um_object": 0.5684,
     "atoms_invisible_to_endpoint_methods": 280,
     "control_reproduces": true,
@@ -34,12 +36,29 @@
     ],
     "cwd": "/Users/wgray13/projects/neuronauts",
     "git_branch": "feat/global-merge-assembly",
-    "git_commit": "fa5db41f85dc9f13cdff463af45fd9f3fc9acc0b",
+    "git_commit": "8b509ef122e0e5dd56ee2ffc60cd4fefbb8106ef",
     "git_dirty": true,
     "git_modified_files": [
-      "ocs/threads/connectomebench_intake.md",
-      "neuronauts/experiments/registry.py",
-      "results/RESULTS.md"
+      "LAUDE.md",
+      "docs/metrics.md",
+      "docs/threads/embedding_availability.md",
+      "experiments/pcfg/HOLDOUT_RESULTS.md",
+      "experiments/pcfg/README.md",
+      "experiments/pcfg/ablate_merge.py",
+      "experiments/pcfg/atomicity_detector.py",
+      "experiments/pcfg/close_loop_cut.py",
+      "experiments/pcfg/close_loop_merge.py",
+      "experiments/pcfg/conn_metric.py",
+      "experiments/pcfg/continuation_merge.py",
+      "experiments/pcfg/cut_report.py",
+      "experiments/pcfg/fetch_bigdata.py",
+      "experiments/pcfg/global_shape_merge.py",
+      "experiments/pcfg/grammar_regime.py",
+      "experiments/pcfg/group_eval.py",
+      "experiments/pcfg/join_corrector.py",
+      "experiments/pcfg/learned_grammar_neural.py",
+      "experiments/pcfg/recursive_corrector.py",
+      "experiments/pcfg/seam_detector.py"
     ],
     "git_untracked_count": 7,
     "hostname": "DXJ5G9L3W1-ML",
@@ -114,7 +133,7 @@
     "platform": "macOS-15.7.9-arm64-arm-64bit-Mach-O",
     "python": "3.14.2",
     "synthetic_fallback": false,
-    "timestamp_utc": "2026-09-02T08:36:11+00:00"
+    "timestamp_utc": "2026-09-02T13:02:32+00:00"
   },
   "question": "Is the endpoint representation, rather than proximity itself, why candidate generation failed?",
   "requires": [],
@@ -134,14 +153,20 @@
         "mst": {
           "agreement": 0.869135,
           "endpoint_only": 187,
+          "links_rerouted_between_metrics": 325,
           "n_links_endpoint_metric": 3262,
+          "n_links_endpoint_unreachable": 325,
           "n_links_object_metric": 3538,
+          "n_links_universe": 3538,
           "object_only": 463,
+          "object_only_rerouted": 138,
+          "object_only_touching_atom_with_no_endpoints": 325,
           "on_object_links": {
             "endpoint": {
-              "frac_within_search_radius": 0.477124,
-              "n": 3213,
-              "percentiles_nm": {
+              "frac_within_search_radius": 0.433296,
+              "n": 3538,
+              "n_unreachable": 325,
+              "percentiles_nm_finite_only": {
                 "p10": 903.2,
                 "p25": 1681.2,
                 "p50": 5677.2,
@@ -150,19 +175,20 @@
                 "p99": 70579.0
               },
               "reach": {
-                "within_10000nm": 0.624961,
-                "within_1000nm": 0.117336,
-                "within_20000nm": 0.792406,
-                "within_2000nm": 0.291939,
-                "within_50000nm": 0.961407,
-                "within_5000nm": 0.477124,
-                "within_500nm": 0.053533
+                "within_10000nm": 0.567552,
+                "within_1000nm": 0.106557,
+                "within_20000nm": 0.719616,
+                "within_2000nm": 0.265122,
+                "within_50000nm": 0.873092,
+                "within_5000nm": 0.433296,
+                "within_500nm": 0.048615
               }
             },
             "object": {
               "frac_within_search_radius": 0.5684,
               "n": 3538,
-              "percentiles_nm": {
+              "n_unreachable": 0,
+              "percentiles_nm_finite_only": {
                 "p10": 570.9,
                 "p25": 1190.7,
                 "p50": 2948.4,
@@ -191,9 +217,10 @@
         "pairs_where_closest_approach_is_tip_to_tip": 6363,
         "same_owner_pairs": {
           "endpoint": {
-            "frac_within_search_radius": 0.125028,
-            "n": 13197,
-            "percentiles_nm": {
+            "frac_within_search_radius": 0.108774,
+            "n": 15169,
+            "n_unreachable": 1972,
+            "percentiles_nm_finite_only": {
               "p10": 3285.0,
               "p25": 16275.5,
               "p50": 41109.3,
@@ -202,19 +229,22 @@
               "p99": 111361.0
             },
             "reach": {
-              "within_10000nm": 0.182238,
-              "within_1000nm": 0.028643,
-              "within_20000nm": 0.287186,
-              "within_2000nm": 0.072062,
-              "within_50000nm": 0.594756,
-              "within_5000nm": 0.125028,
-              "within_500nm": 0.013033
+              "within_10000nm": 0.158547,
+              "within_1000nm": 0.024919,
+              "within_20000nm": 0.249852,
+              "within_2000nm": 0.062694,
+              "within_50000nm": 0.517437,
+              "within_5000nm": 0.108774,
+              "within_500nm": 0.011339
             }
           },
+          "n_endpoint_unreachable": 1972,
+          "n_universe": 15169,
           "object": {
             "frac_within_search_radius": 0.144835,
             "n": 15169,
-            "percentiles_nm": {
+            "n_unreachable": 0,
+            "percentiles_nm_finite_only": {
               "p10": 1973.3,
               "p25": 15833.6,
               "p50": 40702.3,
@@ -242,14 +272,20 @@
         "mst": {
           "agreement": 0.994286,
           "endpoint_only": 2,
+          "links_rerouted_between_metrics": 4,
           "n_links_endpoint_metric": 350,
+          "n_links_endpoint_unreachable": 0,
           "n_links_object_metric": 350,
+          "n_links_universe": 350,
           "object_only": 2,
+          "object_only_rerouted": 2,
+          "object_only_touching_atom_with_no_endpoints": 0,
           "on_object_links": {
             "endpoint": {
               "frac_within_search_radius": 0.648571,
               "n": 350,
-              "percentiles_nm": {
+              "n_unreachable": 0,
+              "percentiles_nm_finite_only": {
                 "p10": 534.9,
                 "p25": 1217.0,
                 "p50": 2588.1,
@@ -270,7 +306,8 @@
             "object": {
               "frac_within_search_radius": 0.757143,
               "n": 350,
-              "percentiles_nm": {
+              "n_unreachable": 0,
+              "percentiles_nm_finite_only": {
                 "p10": 314.8,
                 "p25": 633.4,
                 "p50": 1314.4,
@@ -301,7 +338,8 @@
           "endpoint": {
             "frac_within_search_radius": 0.473577,
             "n": 492,
-            "percentiles_nm": {
+            "n_unreachable": 0,
+            "percentiles_nm_finite_only": {
               "p10": 730.5,
               "p25": 1615.7,
               "p50": 6526.2,
@@ -319,10 +357,13 @@
               "within_500nm": 0.067073
             }
           },
+          "n_endpoint_unreachable": 0,
+          "n_universe": 492,
           "object": {
             "frac_within_search_radius": 0.554878,
             "n": 492,
-            "percentiles_nm": {
+            "n_unreachable": 0,
+            "percentiles_nm_finite_only": {
               "p10": 406.0,
               "p25": 875.4,
               "p50": 2925.0,

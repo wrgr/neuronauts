@@ -161,10 +161,10 @@ cell-identity leakage that inflated the berlin risk AUC.
 
 ```bash
 # offline sanity check (no token): injects known false-merges + false-splits
-python -m experiments.pcfg_synapse_partitions.run_synapse_correction --synthetic
+python -m experiments.pcfg.run_synapse_correction --synthetic
 
 # real data (needs a CAVE token): v117 synapses in the proofread column -> later roots
-python -m experiments.pcfg_synapse_partitions.run_synapse_correction \
+python -m experiments.pcfg.run_synapse_correction \
     --token $CAVE_TOKEN --later-version 1718 --n-boxes 6 --side-um 30
 ```
 
