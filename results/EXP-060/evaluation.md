@@ -1,5 +1,16 @@
 # EXP-060 — the endpoint filter, and why it could not have worked
 
+
+> **⚠️ Corrected 2026-09-02 — see [CORRECTION.md](../EXP-060/CORRECTION.md).**
+> This experiment measured recall against *all* same-owner pairs. Assembly
+> needs only a spanning set, and against minimum-spanning-tree links the
+> panel proposes 24.6%, not 17.5%. The reported gap distribution (median
+> 6.5 um) is likewise an all-pairs figure; the *nearest* same-owner partner
+> has a median of 1.3 um. And 53% of the missed spanning links lie inside
+> the 5 um radius, missed by the k=8 cap rather than by distance. The
+> conclusion "geometry cannot propose candidates" is withdrawn.
+
+
 ## Result: failed, and the filter was never the problem
 
 The bar — 90% recall of true continuation pairs, at a median panel of ≤20

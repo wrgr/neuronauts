@@ -1,5 +1,16 @@
 # EXP-061 — the directed cone: informative, but not sharp enough
 
+
+> **⚠️ Corrected 2026-09-02 — see [CORRECTION.md](../EXP-060/CORRECTION.md).**
+> This experiment measured recall against *all* same-owner pairs. Assembly
+> needs only a spanning set, and against minimum-spanning-tree links the
+> panel proposes 24.6%, not 17.5%. The reported gap distribution (median
+> 6.5 um) is likewise an all-pairs figure; the *nearest* same-owner partner
+> has a median of 1.3 um. And 53% of the missed spanning links lie inside
+> the 5 um radius, missed by the k=8 cap rather than by distance. The
+> conclusion "geometry cannot propose candidates" is withdrawn.
+
+
 ## Result: failed, and the reason is not that the tangent is uninformative
 
 No cone reached 70% of true pairs at a median panel of ≤20. But the tangent is

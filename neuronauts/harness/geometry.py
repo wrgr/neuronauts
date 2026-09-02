@@ -97,6 +97,20 @@ class AtomGeometryStore:
                 continue
         return out
 
+    def next_index(self, tag: str) -> int:
+        """First unused shard index for ``tag``.
+
+        Shard names must never collide across runs. They used to be
+        ``{tag}_{i}`` with ``i`` counted from zero within the *current* todo
+        list, so a rerun that had fewer atoms to fetch silently overwrote the
+        shards of the first run: a rerun for 350 outstanding atoms replaced a
+        2,000-atom shard and destroyed 1,650 atoms' geometry.
+        """
+        used = {int(f.stem.rsplit("_", 1)[1])
+                for f in self.shard_dir.glob(f"{tag}_*.npz")
+                if f.stem.rsplit("_", 1)[-1].isdigit()}
+        return max(used) + 1 if used else 0
+
     def write_shard(self, tag: str, records: list[dict]) -> Path:
         atom_id, node_ptr, nodes, edge_ptr, edges = [], [0], [], [0], []
         for r in records:
@@ -205,6 +219,7 @@ def fetch_atom_topology(atoms: Iterable[int], seg_bounds, store: AtomGeometrySto
     n_done = 0
     retryable: list[int] = []
     absent: list[int] = []
+    shard_i = store.next_index(tag)          # never reuse an existing name
     for bi in range(0, len(todo), batch):
         chunk = todo[bi:bi + batch]
         with ThreadPoolExecutor(max_workers=workers) as ex:
@@ -223,7 +238,8 @@ def fetch_atom_topology(atoms: Iterable[int], seg_bounds, store: AtomGeometrySto
             else:
                 retryable.append(r["atom"])
         if keep:
-            store.write_shard(f"{tag}_{bi//batch:05d}", keep)
+            store.write_shard(f"{tag}_{shard_i:05d}", keep)
+            shard_i += 1
         n_done += len(keep)
         if verbose:
             el = time.time() - t0

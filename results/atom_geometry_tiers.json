@@ -16,5 +16,14 @@
     "coord_coverage": 0.9999870686703706,
     "caliber_coverage": 0.9999870686703706,
     "elapsed_min": 2.5060460607210797
+  },
+  {
+    "k": 1,
+    "n_atoms": 279075,
+    "n_with_geom": 278725,
+    "total_l2_nodes": 25280616,
+    "coord_coverage": 0.9999823975808184,
+    "caliber_coverage": 0.9999823975808184,
+    "elapsed_min": 150.51599156459173
   }
 ]
