@@ -628,11 +628,28 @@ Literature numbers (FFN, multicut, FlyWire) live in a separate table labelled
 | 2026-09-01 | 0 | **Decision 0 done — the untracked tree is committed** in five reviewed commits: `harness/` (substrate), `report/` (provenance + rendering), `meshing/` (Neuroglancer export), `metrics/` (the consolidation), and the two grammar docs. `neuronauts.{harness,report,meshing}` registered in `pyproject`. Suite after: **7 failed, 1,289 passed, 9 skipped** — the same 7 CellGNN failures as before the work started, so nothing regressed. |
 | 2026-09-01 | 1 | **Metrics consolidated** (parallel session). `line_graph.py`, `treestitch/{partition,connectivity,calibration}.py` and `global_merge/eval/benchmark.py` are now delegating shims over `neuronauts/metrics/`, cross-checked numerically against the pre-consolidation implementations rather than assumed equivalent. 149 tests. `experiments/pcfg/conn_metric.py` still to migrate. |
 | 2026-09-01 | 5 | **Runner landed** (`neuronauts/experiments/_runner.py`). Declares the bar before the run, blocks on unmet prerequisites without executing the body, checks inputs up front, records exceptions instead of swallowing them, stamps provenance, appends exactly one ledger row. A `Spec` with a blank criterion is rejected at construction. 15 tests, one per refusal. EXP-051–056 still to port onto it. |
+| 2026-09-01 | 2 | **Outer-loop / dashboard / viz moved** — the "~12 outer-loop / viz scripts" line of §4.3. 7 shell loops, `generate_dashboard.py`, `export_viz_data.py`, the 5-file `dashboard/` Flask + Streamlit app and 2 stale synthetic viz artifacts → `attic/outer_loop_and_viz/`, each verified individually for callers before moving. `scripts/codex_optimize.py` was named in that line but had already been deleted in `012bb50e6`. Documented in `attic/README.md`; this row was missing from the log. |
+| 2026-09-02 | 2 | **Three unreferenced files moved** (measurement pass). `tools/viz_pipeline.py` → `attic/outer_loop_and_viz/` (588-line box-local CellGNN/path-encoder Plotly viewer; `git grep viz_pipeline` returns nothing outside the file, and `tools/` is not in §3's target layout — it is now empty). `neuronauts/cave_synapse_{counts,degrees}_v1412.py` → `attic/superseded_modules/` (the two predecessors `neuronauts/cave_synapse.py`'s own docstring says it consolidated; no importer, no test import, and the successor was checked to reproduce both byte-for-byte on the existing test fixtures). No shims: there are no call sites to keep working. Suite unchanged at **1 failed, 1,569 passed, 2 skipped** after each move; registry unchanged at 7/18 passed. Criteria and the equivalence check are in `attic/README.md`. |
 
-Still open from Phases 0–2: committing the other three untracked packages (§8
-decision 0), `neuronauts/legacy/` → attic (drags `topology_dataset.py`,
-`shared_grammar_model.py`, `scripts/train.py` and 13 test files, so it belongs
-with Phase 3's splits), and the ~12 outer-loop / viz scripts.
+Still open from Phases 0–2: `neuronauts/legacy/` → attic (drags
+`topology_dataset.py`, `shared_grammar_model.py`, `scripts/train.py` and 19
+test files carrying the 192 `legacy`-marked tests, so it belongs with Phase 3's
+splits).
+
+Two lines that were listed here as open are done and were struck on 2026-09-02:
+the untracked packages are committed (only `exp072_object_proposal.py` and
+`build_object_clouds.py` are untracked now), and the outer-loop / viz scripts
+moved on 2026-09-01 — see the two rows added to the log above.
+
+**Not open, but found while measuring and worth a decision** (2026-09-02):
+`pyproject.toml`'s `[tool.setuptools] packages` still omits
+`neuronauts.metrics`, `neuronauts.experiments` and `neuronauts.global_merge*`.
+The editable install hides this. A wheel built from the current tree was
+installed into a clean venv and `import neuronauts` raised
+`ModuleNotFoundError: No module named 'neuronauts.metrics'` — so the package
+does not install at all today. §8 decision 0 flagged `metrics` and
+`experiments`; `global_merge` (and its `solver`/`data`/`represent`
+subdirectories, which have no `__init__.py`) is additional.
 
 ## 9. This week
 

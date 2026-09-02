@@ -52,6 +52,14 @@ llm = [
 neuronauts = "neuronauts.legacy.run:main"
 
 [tool.setuptools]
+# Kept explicit rather than auto-discovered so an attic move cannot silently
+# ship retired code. The cost is that a NEW package must be added here: the
+# 2026-09-02 audit built a wheel into a clean venv and found `import neuronauts`
+# raising ModuleNotFoundError on `neuronauts.metrics` -- metrics, experiments
+# and global_merge had all been added to the tree and never to this list, and
+# the editable install hid it. Adding a package here without checking the wheel
+# is how that recurs; `pip wheel . && pip install` into a scratch venv is the
+# check.
 packages = [
     "neuronauts",
     "neuronauts.legacy",
@@ -61,6 +69,10 @@ packages = [
     "neuronauts.assemble",
     "neuronauts.meshing",
     "neuronauts.harness",
+    "neuronauts.metrics",
+    "neuronauts.experiments",
+    "neuronauts.global_merge",
+    "neuronauts.global_merge.eval",
     "neuronauts.report",
     "treestitch",
 ]

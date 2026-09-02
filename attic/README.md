@@ -17,7 +17,8 @@ working with a `DeprecationWarning`.
 | [`morpho_grammar/`](morpho_grammar/) | 26 "engines": dual-engine infillers, SANTIAGO grammars, MCTS handshake, Cajal geodesic tracers, global hypothesis search, Hungarian assembler, NEURD/autoproof baselines | **No engine loads a trained checkpoint.** 15 of 26 draw random numbers at runtime; none contains a `torch.load` or a `.pt` path. Every benchmark that consumed them ran on synthetic damage (below). So the reported accuracies are those of randomly initialised models on fabricated errors. | **EXP-069** — same engine, real harness substrate, EXP-064 fixed-panel protocol, trained grammar. Individual ideas (tangent flow, caliber continuity, conservation priors) are expected back sooner as *features* in the EXP-064 scorer bake-off. |
 | [`benchmarks_semi_synthetic/`](benchmarks_semi_synthetic/) | 34 benchmark scripts: `benchmark_exp021`–`exp050` plus 6 unnumbered siblings | Their test worlds are not real. See the audit below. | **EXP-058** replaces them with a real baseline ladder on one substrate. |
 | [`tests/`](tests/) | `test_morpho_grammar.py` | Tests attic code; moved with it so the default suite stays clean. | Moves back with its subject. |
-| [`outer_loop_and_viz/`](outer_loop_and_viz/) | 9 outer-loop scripts (`watch_and_eval.sh`, `eval_at_t099.sh`, `eval_path_models.sh`, `run_feature_ablation.sh`, `run_k_ablation.sh`, `run_timing_pipeline.sh`, `render_whitepaper_pdf.sh`, `generate_dashboard.py`, `export_viz_data.py`); the `dashboard/` Flask + Streamlit app (5 files); two stale synthetic visualizer artifacts in `viz_synthetic_artifacts/` | Shell loops that train/evaluate the box-local CellGNN track outside any tracked pipeline, plus viz tooling built on top of the synthetic-frankenmerge world (§1.4). See the audit below. | No registered route back. `neuronauts/meshing/` (§3) is the live replacement for `dashboard/`'s Neuroglancer views; a dashboard/viz feature returns only as a `report/` or `meshing/` module built against real data. |
+| [`outer_loop_and_viz/`](outer_loop_and_viz/) | 9 outer-loop scripts (`watch_and_eval.sh`, `eval_at_t099.sh`, `eval_path_models.sh`, `run_feature_ablation.sh`, `run_k_ablation.sh`, `run_timing_pipeline.sh`, `render_whitepaper_pdf.sh`, `generate_dashboard.py`, `export_viz_data.py`); `viz_pipeline.py` (was `tools/`); the `dashboard/` Flask + Streamlit app (5 files); two stale synthetic visualizer artifacts in `viz_synthetic_artifacts/` | Shell loops that train/evaluate the box-local CellGNN track outside any tracked pipeline, plus viz tooling built on top of the synthetic-frankenmerge world (§1.4). See the audits below. | No registered route back. `neuronauts/meshing/` (§3) is the live replacement for `dashboard/`'s Neuroglancer views; a dashboard/viz feature returns only as a `report/` or `meshing/` module built against real data. |
+| [`superseded_modules/`](superseded_modules/) | `cave_synapse_counts_v1412.py`, `cave_synapse_degrees_v1412.py` | Predecessors that a later consolidation replaced and then left in the tree. `neuronauts/cave_synapse.py`'s own docstring names them as the two of three single-purpose scripts it consolidated; nothing imports them and no test imports them. See the audit below. | Not a research pathway, so no experiment gates them. They come back only if `neuronauts/cave_synapse.py` turns out to have lost a behaviour they had — and the equivalence check below is the thing to re-run first. |
 
 ## The audit that put the benchmarks here
 
@@ -89,6 +90,61 @@ directory despite the name collision) was not touched: it is imported by
 `attic/outer_loop_and_viz/dashboard/app.py` (now attic code depending on live
 code, which is fine — the dependency does not run the other way).
 
+## The 2026-09-02 pass — three files nothing referenced
+
+Two moves, both chosen by a criterion that can be re-run rather than by
+judgement, and both verified against the same test baseline
+(**1 failed, 1,569 passed, 2 skipped** — the one failure is
+`tests/test_multitask_convergence.py::test_loss_decreases_over_steps`, a
+pre-existing legacy-model regression). The suite reported exactly those counts
+before the pass, after the first move, and after the second.
+
+### `tools/viz_pipeline.py` → `outer_loop_and_viz/viz_pipeline.py`
+
+A 588-line Plotly HTML viewer with three subcommands — `path-encoder`,
+`grammar`, `cell-gnn` — over `neuronauts.dataset_builder.BoxCache`,
+`neuronauts.shared_grammar_model`, and `neuronauts.cell_graph`. It is the same
+box-local CellGNN / path-encoder track, and the same kind of artifact, as the
+`generate_dashboard.py` and `export_viz_data.py` already here; `tools/` does
+not appear anywhere in `docs/consolidation_plan.md` §3's target layout.
+
+Criterion, re-runnable: `git grep -n viz_pipeline` returns **nothing** outside
+the file itself — no importer, no test, no doc, no `Makefile`, no
+`pyproject.toml` entry. `tools/` held this one file and is now empty. Two of
+the three checkpoints its usage block names (`models/path_encoder_v3_ep10.pt`,
+`models/cell_gnn_path16_ep50.pt`) are not in `models/`.
+
+### `neuronauts/cave_synapse_{counts,degrees}_v1412.py` → `superseded_modules/`
+
+These are not a research pathway; they are leftovers of a completed
+consolidation. `neuronauts/cave_synapse.py` opens with:
+
+> Consolidates three former single-purpose scripts
+> (`cave_synapse_degrees_v1412`, `cave_synapse_counts_v1412`,
+> `cave_synapse_degrees_1078_to_1412`) into one module with three flows
+
+The third was already gone; these two were still sitting in the package.
+
+Criterion, and it was checked rather than taken from the docstring:
+
+| Check | Result |
+|---|---|
+| Anything imports them? | No. `git grep` finds only two *docstring* mentions: `neuronauts/cave_synapse.py`'s header (above) and two test docstrings in `tests/test_cave_synapse.py` that name the old modules while importing the new one. |
+| Any test imports them? | No. `tests/test_cave_synapse.py` imports `neuronauts.cave_synapse` only. |
+| Named in any doc as current? | No. |
+| Does the successor actually reproduce them? | **Yes, checked numerically.** Running `tests/test_cave_synapse.py`'s own fixtures through both sides, `cave_synapse.build_degree_root_table` and `cave_synapse_degrees_v1412.build_root_table` returned identical DataFrames, as did `build_counts_root_table` vs `cave_synapse_counts_v1412.build_root_table` (3 fixtures, `DataFrame.equals` → True on all). The successor's function surface is the union of both predecessors', with each `build_root_table` renamed to `build_degree_root_table` / `build_counts_root_table`. |
+
+**No import shim was added, for either move**, because there is nothing to
+shim: no call site exists to keep working. That is a deliberate difference
+from `morpho_grammar/`, whose shim exists because 26 benchmark scripts still
+import it.
+
+**Known stale reference, left alone.** `tests/test_cave_synapse.py`'s two class
+docstrings still say "Test `build_root_table` in `cave_synapse_counts_v1412`"
+/ "`…_degrees_v1412`". They were already stale before this move — the test has
+imported the consolidated module all along — so they are recorded here rather
+than edited, to keep this pass to moves and documentation.
+
 ## What stayed out of the attic
 
 `scripts/benchmark_exp051`–`exp056` are the **fail-closed real-data series**
@@ -113,7 +169,31 @@ python -c "from neuronauts.morpho_grammar.santiago_v2_grammar import *"
 # outer-loop scripts run unchanged from their new path
 bash attic/outer_loop_and_viz/run_k_ablation.sh
 streamlit run attic/outer_loop_and_viz/dashboard/results_explorer.py
+
+# the viz_pipeline viewer still runs from here (it imports live code, not the
+# other way round), though two of the three checkpoints it wants are gone
+python attic/outer_loop_and_viz/viz_pipeline.py grammar \
+    --checkpoint models/grammar_cave_real_50.pt --cache-dir data/boxes_30um
+
+# superseded_modules/ have no importers, so run them as scripts if ever needed
+python attic/superseded_modules/cave_synapse_degrees_v1412.py --help
 ```
 
 The attic is excluded from `pytest` (`testpaths = ["tests"]`). Any result
 produced from here belongs in `results/synthetic/`, never in `results/EXP-*`.
+
+## Bringing something back
+
+`git mv` it to the path it came from — the moves above were all `git mv`, so
+`git log --follow <attic path>` shows the original location and the full
+history is intact:
+
+```bash
+git log --follow --oneline attic/superseded_modules/cave_synapse_counts_v1412.py
+git mv attic/superseded_modules/cave_synapse_counts_v1412.py neuronauts/
+```
+
+Then run `.venv/bin/python -m pytest tests/ -q` and check the counts against
+the baseline recorded above. For a *research* pathway (`morpho_grammar/`,
+`benchmarks_semi_synthetic/`) the mechanical move is not the bar — the bar is
+the registered experiment named in the Contents table.
