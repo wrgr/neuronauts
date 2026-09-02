@@ -1,0 +1,279 @@
+{
+  "elapsed_min": 0.02372911771138509,
+  "id": "EXP-057B",
+  "note": "PASS on the declared bar: 2392 of 2514 in-cube merge/split decisions map onto a v117 root that is a population atom (bar 1000); the strictest cut this module defends -- split_edit before-roots only -- clears it too at 1508 decisions over 1116 distinct atoms, so the pass does not rest on the generous reading. 37/56 of the existing seam positives are independently re-found by this corpus. 574 of the new atoms are both split_edit before-roots and independently called mixed-lineage by our own v1822 crosswalk. Every recomputed count matches the prior session's recorded verdicts exactly (2514 decisions compared, 0 disagreements). CAVEAT, which the pass does not retire: resolution went through one arbitrary supervoxel (leaves[0]) per root, not the decision's edit_point_nm, so these are 'this decision's operand traces back to this atom', NOT 'this atom's synapses are near this decision's edit point'. Nothing here establishes seam LOCATION; a spatial re-check against edit_point_nm is owed before EXP-062 trains a locator on them.",
+  "observed": {
+    "criterion_min_decisions": 1000,
+    "decisions_all_roots_resolved": 2514,
+    "decisions_in_cube": 2514,
+    "decisions_mapped_to_population_atom": 2392,
+    "decisions_touching_existing_56": 73,
+    "distinct_new_candidate_atoms": 2030,
+    "existing_56_atoms_corroborated": 37,
+    "reference_disagreements": 0,
+    "split_edit_before_decisions": 1508,
+    "split_edit_before_distinct_atoms": 1116,
+    "strictest_cut_atoms": 574
+  },
+  "population": {
+    "n_cb2_atoms": 2067,
+    "n_existing_seam_positives": 56,
+    "n_in_cube_decisions": 2514,
+    "n_population_atoms": 279075,
+    "n_unique_roots_resolved": 7220
+  },
+  "provenance": {
+    "argv": [
+      "/Users/wgray13/projects/neuronauts/neuronauts/experiments/exp057b_cb2_intake.py"
+    ],
+    "cwd": "/Users/wgray13/projects/neuronauts",
+    "git_branch": "feat/global-merge-assembly",
+    "git_commit": "fa5db41f85dc9f13cdff463af45fd9f3fc9acc0b",
+    "git_dirty": true,
+    "git_modified_files": [
+      "ocs/threads/connectomebench_intake.md",
+      "neuronauts/experiments/registry.py"
+    ],
+    "git_untracked_count": 3,
+    "hostname": "DXJ5G9L3W1-ML",
+    "inputs": [
+      {
+        "algo": "quick-sha256",
+        "bytes": 77033018,
+        "hash": "c7c0dab6822bc35fcbc6407f16427d248540d2fba4d6a7efa7a965987c1434ae",
+        "mtime_utc": "2026-09-02T08:18:38+00:00",
+        "path": "data/external/cb2/full_mouse_rows_raw.parquet"
+      },
+      {
+        "algo": "sha256",
+        "bytes": 531856,
+        "hash": "f216f33503fe7999ef8f92c40c8f942ebbac944ee1ca9130a392026812487c6d",
+        "mtime_utc": "2026-09-02T08:18:38+00:00",
+        "path": "data/external/cb2/incube_edits.json"
+      },
+      {
+        "algo": "sha256",
+        "bytes": 606480,
+        "hash": "fc90b53f2890b787304f4117b9b45559be07308d9614d48a08702e3922af1d3b",
+        "mtime_utc": "2026-09-02T08:18:38+00:00",
+        "path": "data/external/cb2/final_resolution.json"
+      },
+      {
+        "algo": "sha256",
+        "bytes": 158840,
+        "hash": "3ff5d4dbddce7dde8dd4d0acb2516755cb7c85a61db51653aca999510c67e4b5",
+        "mtime_utc": "2026-09-02T08:18:38+00:00",
+        "path": "data/external/cb2/unique_root_ids.json"
+      },
+      {
+        "algo": "sha256",
+        "bytes": 555827,
+        "hash": "3125d5dab98338e0e0a8d2b0c82afd79d9997bdff4ea79f6fff5aa88e80c3144",
+        "mtime_utc": "2026-09-02T08:18:38+00:00",
+        "path": "data/external/cb2/decision_details.json"
+      },
+      {
+        "algo": "sha256",
+        "bytes": 926,
+        "hash": "e421afabbb82a96f83510dc666f322b4bf01d91a70d503f449971370647a83f3",
+        "mtime_utc": "2026-09-02T08:18:38+00:00",
+        "path": "data/external/cb2/crosswalk_summary.json"
+      },
+      {
+        "algo": "quick-sha256",
+        "bytes": 19923218,
+        "hash": "137f812cd57dadc7732ad23cc472c830b01088b79ad15b9e4e58cb6eb208d48f",
+        "mtime_utc": "2026-09-01T19:58:07+00:00",
+        "path": "data/substrate/c100um/population.npz"
+      },
+      {
+        "algo": "sha256",
+        "bytes": 1321376,
+        "hash": "64f436a008bd0b5b027c28bb1d074eac972dda5acc6194f6e463c88f65a0635a",
+        "mtime_utc": "2026-09-01T22:57:45+00:00",
+        "path": "data/substrate/c100um/labels_v1822.npz"
+      }
+    ],
+    "labels_used_only_for_evaluation": true,
+    "network": false,
+    "packages": {
+      "caveclient": "8.0.1",
+      "matplotlib": "3.10.8",
+      "networkx": "3.6.1",
+      "neuroglancer": "2.41.2",
+      "numpy": "2.4.3",
+      "pandas": "2.3.3",
+      "scipy": "1.17.1",
+      "torch": "2.10.0"
+    },
+    "params": {
+      "criterion_min_decisions": 1000,
+      "edit_types": [
+        "merge_edit",
+        "split_edit"
+      ],
+      "labels_target_version": 1822,
+      "resolution_target_version": 117
+    },
+    "platform": "macOS-15.7.9-arm64-arm-64bit-Mach-O",
+    "python": "3.14.2",
+    "synthetic_fallback": false,
+    "timestamp_utc": "2026-09-02T08:27:46+00:00"
+  },
+  "question": "Can an external corpus lift us past 56 trustworthy seam positives?",
+  "requires": [],
+  "requires_ran": [],
+  "status": "passed",
+  "success_criterion": "at least 1,000 merge or split decisions map onto v117 roots in or near the harness cube",
+  "tables": {
+    "artifact": {
+      "loader": "neuronauts.harness.cb2_positives.load_cb2_positives",
+      "n_atoms": 2067,
+      "path": "data/substrate/c100um/cb2_seam_positives.npz",
+      "tier_counts": {
+        "existing_56": {
+          "atoms": 37,
+          "split_edit_before": 32
+        },
+        "new_mixed_raw_only": {
+          "atoms": 445,
+          "split_edit_before": 331
+        },
+        "new_mixed_strict": {
+          "atoms": 730,
+          "split_edit_before": 574
+        },
+        "new_no_v1822_signal": {
+          "atoms": 855,
+          "split_edit_before": 211
+        },
+        "total": {
+          "atoms": 2067,
+          "split_edit_before": 1148
+        }
+      }
+    },
+    "by_sample_type": {
+      "merge_edit": {
+        "all_resolved": 830,
+        "in_population": 725,
+        "in_population_not_seam56": 719,
+        "in_seam56": 15,
+        "total": 830
+      },
+      "split_edit": {
+        "all_resolved": 1684,
+        "in_population": 1667,
+        "in_population_not_seam56": 1611,
+        "in_seam56": 58,
+        "total": 1684
+      }
+    },
+    "corroboration_any_role": {
+      "existing_56": 0,
+      "n_atoms": 2030,
+      "new_mixed_raw_only": 445,
+      "new_mixed_strict": 730,
+      "new_no_v1822_signal": 855,
+      "pure_by_v1822": 1208
+    },
+    "in_cube_filter_check": {
+      "by_sample_type": {
+        "merge_edit": 830,
+        "split_edit": 1684
+      },
+      "cube_centre_nm": [
+        663000.0,
+        591000.0,
+        860000.0
+      ],
+      "cube_from": "population.npz meta (centre_um, side_um)",
+      "cube_half_width_nm": 50000.0,
+      "hash_set_disagreements": 0,
+      "mouse_rows": 301162,
+      "recorded_decisions": 2514,
+      "rederived_decisions": 2514,
+      "root_or_type_disagreements": 0,
+      "rows_with_no_usable_point": 0,
+      "source": "data/external/cb2/full_mouse_rows_raw.parquet"
+    },
+    "reference_check": {
+      "decisions_compared": 2514,
+      "decisions_in_reference": 2514,
+      "disagreements": 0,
+      "disagreements_by_field": {},
+      "doc_figures_reproduced": {
+        "docs/threads/connectomebench_intake.md \u00a74": {
+          "corroboration_mixed_raw_only": {
+            "doc": 331,
+            "recomputed": 331
+          },
+          "corroboration_mixed_strict": {
+            "doc": 574,
+            "recomputed": 574
+          },
+          "corroboration_no_signal": {
+            "doc": 211,
+            "recomputed": 211
+          },
+          "corroboration_pure": {
+            "doc": 481,
+            "recomputed": 481
+          },
+          "split_edit_before_decisions": {
+            "doc": 1508,
+            "recomputed": 1508
+          },
+          "split_edit_before_distinct_atoms": {
+            "doc": 1116,
+            "recomputed": 1116
+          }
+        }
+      },
+      "reference_decisions": "data/external/cb2/decision_details.json",
+      "reference_summary": "data/external/cb2/crosswalk_summary.json",
+      "summary_diff_detail": {},
+      "summary_disagreements": 0,
+      "summary_fields_compared": 10
+    },
+    "split_edit_before_cut": {
+      "before_root_in_population": 1561,
+      "corroboration": {
+        "existing_56": 0,
+        "n_atoms": 1116,
+        "new_mixed_raw_only": 331,
+        "new_mixed_strict": 574,
+        "new_no_v1822_signal": 211,
+        "pure_by_v1822": 481
+      },
+      "decisions_hitting_existing_56": 53,
+      "decisions_with_new_candidate": 1508,
+      "definition": "decisions whose split_edit before-root resolves into the population",
+      "distinct_existing_56_atoms": 32,
+      "distinct_new_candidate_atoms": 1116,
+      "split_edit_decisions": 1684
+    },
+    "unique_roots": {
+      "breakdown": {
+        "ok_in_population_other": 5950,
+        "ok_in_population_seam56": 169,
+        "ok_not_in_population": 1101
+      },
+      "n_resolved_to_zero": 0,
+      "n_unique_roots": 7220,
+      "n_unresolved": 0,
+      "recorded_cave_run": {
+        "all_retried_successfully": true,
+        "log": "data/external/cb2/final_run_summary.json",
+        "note": "provenance of the declared input final_resolution.json; no network call is made by this experiment",
+        "requests": 14469,
+        "resolution_rate": 1.0,
+        "transient_failure_rate": 0.0019,
+        "transient_failures": 28,
+        "unique_roots_resolved": 7220,
+        "wall_clock_minutes": 31.6
+      }
+    }
+  },
+  "title": "ConnectomeBench2 intake"
+}

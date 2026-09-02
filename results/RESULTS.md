@@ -18,3 +18,5 @@ a gap. Full reports: [`results/reports/`](reports/).
 | EXP-060B | Object-space atom-pair panel | fail | tier10_recall_5um=0.12, tier10_recall_2um=0.12, tier10_median_panel_5um=20 | 1.4 | `b67bd27fd` | 2026-09-02T01:23:49+00:00 |
 | EXP-060B | Object-space atom-pair panel | pass | tier10_5um_recall_at_cap_20=0.12, tier10_5um_recall_uncapped=0.6457, tier10_5um_median_panel_uncapped=3870 | 1.6 | `b67bd27fd` | 2026-09-02T01:33:40+00:00 |
 | EXP-060B | Object-space atom-pair panel | pass | tier10_5um_recall_at_cap_20=0.12, tier10_5um_recall_uncapped=0.6457, tier10_5um_median_panel_uncapped=3870 | 3.8 | `28039e9f3` | 2026-09-02T02:03:07+00:00 |
+| EXP-057B | ConnectomeBench2 intake | pass | decisions_mapped_to_population_atom=2392, criterion_min_decisions=1000, split_edit_before_decisions=1508 | 0.0 | `fa5db41f8` | 2026-09-02T08:27:46+00:00 |
+| EXP-070 | Object vs endpoint distance | pass | control_reproduces=True, ordering_violations=0, tier10_mst_within_5um_endpoint=0.6486 | 0.1 | `fa5db41f8` | 2026-09-02T08:36:11+00:00 |

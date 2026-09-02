@@ -42,6 +42,17 @@ TOPOLOGY_K10 = "data/substrate/topology/k10.npz"
 POPULATION = "data/substrate/c100um/population.npz"
 LABELS = "results/atom_labels_v1822.json"
 LABELS_NPZ = "data/substrate/c100um/labels_v1822.npz"
+TOPOLOGY_KALL = "data/substrate/topology/kall.npz"
+#: The object point cloud -- every L2 node of every atom, not just the skeleton
+#: tips the endpoint table holds. Built by scripts/build_object_geometry.py.
+OBJGEOM_K10 = "data/substrate/geom/objgeom_k10.npz"
+OBJGEOM_KALL = "data/substrate/geom/objgeom_kall.npz"
+CB2_POSITIVES = "data/substrate/c100um/cb2_seam_positives.npz"
+# ConnectomeBench2 intake (EXP-057B). The CAVE lineage resolution is a recorded
+# input, not a step: it was run once and its output is hashed like any file.
+CB2_RAW_ROWS = "data/external/cb2/full_mouse_rows_raw.parquet"
+CB2_INCUBE_EDITS = "data/external/cb2/incube_edits.json"
+CB2_RESOLUTION = "data/external/cb2/final_resolution.json"
 
 
 @dataclass
@@ -91,18 +102,35 @@ REGISTRY: list[Entry] = [
              "(results/atom_labels_v1822.json): 2,357 pure-gold atoms, 2,444 "
              "mixed-lineage, 56 mixed AND proofread-owned."),
 
-    Entry(series="A", est_minutes=30, spec=_s(
+    Entry(series="A", est_minutes=2, spec=_s(
         id="EXP-057B", title="ConnectomeBench2 intake",
         question="Can an external corpus lift us past 56 trustworthy "
                  "seam positives?",
         criterion="at least 1,000 merge or split decisions map onto v117 roots "
                   "in or near the harness cube",
-        requires=[], inputs=[],
-        flags={"network": True}),
+        requires=[],
+        inputs=[CB2_RAW_ROWS, CB2_INCUBE_EDITS, CB2_RESOLUTION, POPULATION,
+               LABELS_NPZ],
+        flags={"network": False}),
+        module="neuronauts.experiments.exp057b_cb2_intake",
         note="716,485 expert proofreading decisions (FlyWire/MICrONS/Fish1/H01). "
              "Its third task, mask segmentation for merge-error correction, is "
-             "our seam-location problem renamed. Gates the sample size of "
-             "EXP-062/063, so run it early."),
+             "our seam-location problem renamed. MEASURED, not projected: of "
+             "2,514 in-cube merge/split decisions, all 7,220 referenced root "
+             "ids resolved to nonzero v117 roots and 2,392 decisions (95.1%) "
+             "put at least one of them inside the 279,075-atom population. The "
+             "strictest cut -- split_edit before-roots, the closest analogue of "
+             "the 56 -- is 1,508 decisions over 1,116 distinct new atoms, 574 "
+             "of which our own v1822 crosswalk independently calls mixed "
+             "lineage; 37 of the existing 56 are re-found by this corpus. "
+             "est_minutes dropped 30 -> 2 because the CAVE lineage resolution "
+             "(31.6 min, 7,220/7,220) was run once and is now a recorded, "
+             "hashed input, so flags={'network': False} is true of the run. "
+             "Emits data/substrate/c100um/cb2_seam_positives.npz (2,067 atoms, "
+             "two strictness axes) for EXP-062/063. Open caveat carried in the "
+             "artifact meta: resolution went through one arbitrary supervoxel "
+             "per root, not the decision's edit_point_nm, so these are not yet "
+             "LOCATED seam positives."),
 
     Entry(series="A", est_minutes=30, spec=_s(
         id="EXP-057C", title="SegCLR embedding intake",
@@ -170,6 +198,21 @@ REGISTRY: list[Entry] = [
 
     # --- B. candidate generation --------------------------------------------
     Entry(series="B", est_minutes=45, spec=_s(
+        id="EXP-060", title="Endpoint filter",
+        question="Which of the 5.1M endpoints are real split sites rather "
+                 "than spines?",
+        criterion="at least 90% recall of true continuation pairs at a median "
+                  "panel size of at most 20; and at most 1% of endpoints kept",
+        requires_ran=["EXP-057"], inputs=[TOPOLOGY_K10, LABELS_NPZ],
+        flags={"synthetic_fallback": False}),
+        module="neuronauts.experiments.exp060_endpoint_filter",
+        note="Redo of EXP-053B on a substrate that has coverage. Bar adopted "
+             "verbatim from the PCFG report's E4. Needs EXP-057's overlay, not "
+             "its density bar: continuation pairs come from the 4,802 "
+             "proofread-owned single-lineage atoms, which EXP-057 confirmed "
+             "exist even as it failed."),
+
+    Entry(series="B", est_minutes=45, spec=_s(
         id="EXP-060B", title="Object-space atom-pair panel",
         question="Does atom-pair reduction recover the spanning links "
                  "endpoint k-NN missed, and does it hold at tier >=1?",
@@ -187,22 +230,10 @@ REGISTRY: list[Entry] = [
              "tier>=10 (sparse, 20,826 atoms) against the true complete "
              "population (279,075 atoms, every atom, unioned from all fetch "
              "tiers). A first run mislabeled k1.npz -- the incremental "
-             "1-4-synapse-only shard, not the union -- as this; fixed."),
-
-    Entry(series="B", est_minutes=60, spec=_s(
-        id="EXP-060", title="Endpoint filter",
-        question="Which of the 5.1M endpoints are real split sites rather "
-                 "than spines?",
-        criterion="at least 90% recall of true continuation pairs at a median "
-                  "panel size of at most 20; and at most 1% of endpoints kept",
-        requires_ran=["EXP-057"], inputs=[TOPOLOGY_K10, LABELS_NPZ],
-        flags={"synthetic_fallback": False}),
-        module="neuronauts.experiments.exp060_endpoint_filter",
-        note="Redo of EXP-053B on a substrate that has coverage. Bar adopted "
-             "verbatim from the PCFG report's E4. Needs EXP-057's overlay, not "
-             "its density bar: continuation pairs come from the 4,802 "
-             "proofread-owned single-lineage atoms, which EXP-057 confirmed "
-             "exist even as it failed."),
+             "1-4-synapse-only shard, not the union -- as this; fixed. "
+             "Moved after EXP-060 in program order: it was listed before its "
+             "own prerequisite, which "
+             "test_prerequisites_come_earlier_in_program_order caught."),
 
     Entry(series="B", est_minutes=45, spec=_s(
         id="EXP-061", title="Directed cone vs proximity ball",
@@ -221,6 +252,37 @@ REGISTRY: list[Entry] = [
              "far partners without the volume. Stratify by the polarity "
              "compartment signal (H1), which is free."),
 
+    Entry(series="B", est_minutes=5, spec=_s(
+        id="EXP-070", title="Object vs endpoint distance",
+        question="Is the endpoint representation, rather than proximity "
+                 "itself, why candidate generation failed?",
+        criterion="the comparison must be sound before it can inform: "
+                  "EXP-060's endpoint control reproduces to within 1 nm and "
+                  "1e-5, and the object gap does not exceed the endpoint gap "
+                  "on ANY measured pair. Passes on those two, then reports "
+                  "reachability and MST agreement under both metrics on both "
+                  "substrates -- a diagnostic, not a threshold",
+        requires_ran=["EXP-060", "EXP-060B"],
+        inputs=[LABELS_NPZ, TOPOLOGY_K10, OBJGEOM_K10,
+               TOPOLOGY_KALL, OBJGEOM_KALL],
+        flags={"synthetic_fallback": False,
+              "labels_used_only_for_evaluation": True}),
+        module="neuronauts.experiments.exp070_object_distance",
+        note="EXP-060/060B/061 all measure distance between ENDPOINTS -- the "
+             "degree-1 nodes of the contracted L2 skeleton -- which is a "
+             "skeleton-space distance, not an object one. The raw fetch always "
+             "held every L2 node of every atom; nothing consumed it until "
+             "scripts/build_object_geometry.py. Answer: the metric was wrong "
+             "but is not the reason proximity failed. Object distance lifts "
+             "MST-spanning-link reachability at 5 um from 64.9% to 75.7% "
+             "(tier10) and 47.7% to 56.8% (all), and recovers 280 labelled "
+             "atoms that have NO endpoint row at all, but does not approach "
+             "the 90% bar. It also moves the answer key: 463 of 3,538 spanning "
+             "links on the full population differ between the two metrics, so "
+             "EXP-060B's recall carries an error bar nobody drew. Adopt object "
+             "distance downstream because it is the correct and strictly "
+             "tighter quantity, not because it rescues the ball."),
+
     # --- C. cuts and frankenmerge detection ---------------------------------
     Entry(series="C", est_minutes=90, spec=_s(
         id="EXP-062", title="Real-L2 cuts and seam location",
@@ -228,25 +290,43 @@ REGISTRY: list[Entry] = [
                  "we pick the right edge?",
         criterion="at least 90% same-lineage pair recall AND at least 50% "
                   "cross-lineage split recall; seam top-1 above 25%",
-        requires=["EXP-057"], requires_ran=["EXP-057B"],
-        inputs=[TOPOLOGY_K10, LABELS_NPZ],
+        requires=["EXP-057B"], requires_ran=["EXP-057"],
+        inputs=[TOPOLOGY_K10, LABELS_NPZ, CB2_POSITIVES, OBJGEOM_K10],
         flags={"synthetic_fallback": False}),
         note="Merges the plan's 062 with the PCFG report's E2/E3. EXP-056 "
-             "falsified every single global edge-length threshold. Correctly "
-             "blocked: EXP-057 measured 56 trustworthy seam positives, 15 of "
-             "them in train, against a seam GNN that was net-negative at 150. "
-             "EXP-057B is the unblock."),
+             "falsified every single global edge-length threshold. "
+             "DEPENDENCY SWAPPED, deliberately: was requires=[EXP-057] + "
+             "requires_ran=[EXP-057B], now the reverse. EXP-057's failing bar "
+             "was about the DENSITY of proofread synapse mass (16.2% vs 30%); "
+             "what this experiment actually needs is a COUNT of trustworthy "
+             "seam positives, which EXP-057B now supplies from an external "
+             "corpus. So EXP-057B is the one that must have passed, and "
+             "EXP-057 is the one whose overlay must merely exist -- the same "
+             "rule already applied to EXP-058/060/057C. "
+             "SAMPLE SIZE IS STILL THE OPEN RISK, measured not assumed: under "
+             "EXP-057's own split (axis 0, population median, 20 um buffer) "
+             "the strictest cut gives 143 train positives, below the 513 at "
+             "which this repo's seam GNN first cleared zero. Re-centring the "
+             "split on the positives and narrowing the buffer to 10 um takes "
+             "that to 264, and a tier>=1 cut to 508. Choose the split before "
+             "the model -- see docs/threads/seam_positive_sample_size.md."),
 
     Entry(series="C", est_minutes=45, spec=_s(
         id="EXP-063", title="Frankenmerge detection",
         question="Does mixed polarity, or a grammar, flag a false merge?",
         criterion="AUC at least 0.875 and precision at top 2% at least 0.41, "
                   "beating the global-shape baseline; Bar 3 above 0.5",
-        requires=["EXP-057"], requires_ran=["EXP-057B"],
-        inputs=[TOPOLOGY_K10, LABELS_NPZ]),
+        requires=["EXP-057B"], requires_ran=["EXP-057"],
+        inputs=[TOPOLOGY_K10, LABELS_NPZ, CB2_POSITIVES]),
         note="Bar adopted from the PCFG report's E1, which is stronger than the "
              "polarity-only bar first drafted. Polarity is the cheap baseline "
-             "in the same run. Bar 3 has been 0.000 in every real run to date."),
+             "in the same run. Bar 3 has been 0.000 in every real run to date. "
+             "Dependency swapped for the same reason as EXP-062. Of the two "
+             "seam experiments this is the more runnable: its bar is an "
+             "evaluation metric (AUC, precision at top 2%), which spends "
+             "positives on the TEST side, and the unbalanced split leaves "
+             "305-1,045 positives in val depending on the cut -- so it is less "
+             "exposed to the train-side shortfall that gates EXP-062."),
 
     # --- D. scoring ----------------------------------------------------------
     Entry(series="D", est_minutes=120, spec=_s(

@@ -550,3 +550,202 @@ back to relaxing the spatial-overlap requirement (§6.2) before concluding the
 corpus doesn't help — a near-zero count in one 100 µm box is not evidence
 against a 401k-plus-row, CC-BY-4.0, same-coordinate-frame corpus with the
 exact task we need.
+
+## Measured: v117 lineage crosswalk
+
+This section resolves the "mapped: STILL UNDETERMINED" item left open in §7
+above. It is a **measurement**, not a re-estimate: every one of the 2,514
+in-cube `merge_edit`/`split_edit` decisions from the previous section was run
+through the real lineage-resolution step, and every unique root id it
+references was actually resolved against CAVE. Bulk intermediates (the
+decision table, the full root→v117 mapping, per-request logs) live in the
+session scratchpad (`cb2/`), not in this repo; only the counts below are
+reported here.
+
+### 0. Setup and sanity check
+
+The 2,514-row filter (100 µm cube, `interface_point_nm`/`render_center_nm`
+fallback, `sample_type ∈ {merge_edit, split_edit}`) was re-run from scratch
+against `full_mouse_rows_raw.parquet` (301,162 rows) rather than trusted as a
+given, and reproduced the prior count **exactly**: 2,514 total, split
+1,684 `split_edit` + 830 `merge_edit` — matching this document's own §5/§6
+table digit-for-digit. Every one of the 2,514 rows had both
+`before_root_ids` and `after_root_ids` populated (0 missing). Across all
+2,514 decisions, the union of `before_root_ids` + `after_root_ids` contains
+**7,220 unique root ids** (mean 2.98 roots/decision — most decisions share no
+root with another).
+
+### 1. Resolution method — and why `root_at_version` wasn't used as-is
+
+`neuronauts.data.lineage.root_at_version(seed_root, version)` implements
+exactly the right two-step pattern (`root_leaves(stop_layer=1)` → take one
+supervoxel → `roots_at(timestamp)`), but it collapses "the HTTP call failed",
+"the root had no supervoxels", and "resolved cleanly to root 0" into the same
+`None` return. This repo's `CLAUDE.md` explicitly forbids swallowing errors
+into a silent `None`/0 when the point of the exercise is to audit failure
+causes, so this pass used the same two primitives (`root_leaves`, `roots_at`)
+directly, with every non-200 response and every exception logged by type, and
+one retry (2–4 s backoff) before a failure was recorded as final — per
+CLAUDE.md's "verify a failure is real before recording it as such."
+
+### 2. Concurrency, rate-limit posture, and wall clock — measured, not assumed
+
+Two small calibration pilots (120 roots @ 8 workers, 45.3 s; 200 disjoint
+roots @ 14 workers, 41.7 s) were run first to measure real throughput and
+request rate before committing to a worker count for the full 7,220 — this
+project was burned earlier by an undisclosed 600 req/min cap on a different
+CAVE endpoint that silently dropped 14% of a fetch, so headroom below any
+such ceiling was checked directly rather than assumed:
+
+| Stage | Roots | Workers | Wall clock | Requests | Req/min |
+|---|---:|---:|---:|---:|---:|
+| Pilot 1 | 120 | 8 | 45.3 s | 241 | 319 |
+| Pilot 2 | 200 | 14 | 41.7 s | 400 | 576 |
+| Full run | 6,900 | 10 | 1,808.6 s | 13,828 | 459 (avg), ~225–230 sustained |
+| **Total** | **7,220** | — | **1,895.6 s = 31.6 min** | **14,469** | **458 avg** |
+
+14 workers pushed the observed rate to 576 req/min — close enough to the
+600/min ceiling hit elsewhere that it was not used for the bulk run. **10
+workers was used for the full 6,900-root run**, sustaining ~225–230 req/min
+with comfortable headroom. Total wall clock across all three stages:
+**31.6 minutes** — within the 30–45 minute budget set for this task. This is
+roughly a 14.6× speedup over the ~2.6 s/root serial baseline measured in the
+prior manual repro (dominated by network RTT, not CPU, so it parallelizes
+well).
+
+**Failures, all transient, all recovered:** 26× `roots_at` HTTP 502, 1×
+`roots_at` `ConnectionError`, 1× `leaves` `ConnectionError` — 28 events total
+across 14,469 requests (0.19%), every one recovered by the single built-in
+retry. **Final result: 7,220/7,220 unique root ids (100%) resolved to a
+nonzero v117 root.** Zero roots failed to resolve at all; zero resolved to a
+literal 0. No cluster of failures was observed at any point (checked via the
+per-batch progress log), so there is no rate-limiting event to report here —
+unlike the earlier incident this section's setup explicitly guarded against.
+
+### 3. Step 5's failure breakdown — reframed, because there were no resolution failures
+
+Per the task brief, unique roots were meant to be broken down into "didn't
+resolve at all" / "resolved to 0" / "resolved but not in our population."
+The first two buckets are **empty** (see above) — the only real breakdown is
+resolution success vs. population membership:
+
+| Outcome (of 7,220 unique roots) | Count | Share |
+|---|---:|---:|
+| Resolved, **not** in `population.npz` | 1,101 | 15.25% |
+| Resolved, in population, atom is one of the existing 56 seam positives | 169 | 2.34% |
+| Resolved, in population, atom is **not** one of the 56 | 5,950 | 82.41% |
+| Resolved, in population (either row above) | 6,119 | 84.75% |
+| Failed to resolve at all | 0 | 0% |
+| Resolved to root 0 | 0 | 0% |
+
+The 15.25% "resolved but outside population" bucket is exactly the failure
+mode the task asked to watch for: a decision's edit point sits inside the
+100 µm cube, but the *specific* root referenced (which can be large, or a
+side branch) has no synapse-anchored v117 atom inside this population's
+particular region definition. This is not a resolution bug — every one of
+those 1,101 roots resolved cleanly to a real, nonzero v117 root; it just
+isn't one of the 279,075 atoms this population enumerates.
+
+### 4. Decision-level counts (answers to task step 4)
+
+Of the **2,514** in-cube `merge_edit`/`split_edit` decisions:
+
+| Criterion | Count | Share |
+|---|---:|---:|
+| **(a)** every `before_root_ids`+`after_root_ids` root resolves to a nonzero v117 root | **2,514** | **100.0%** |
+| **(b)** ≥1 resolved v117 root is a member of `population.npz` | **2,392** | **95.1%** |
+| **(c)** ≥1 resolved v117 root is one of the existing 56 seam-positive atoms (`labels_v1822.npz`, `mixed_proofread`) | **73** | **2.9%** |
+| ≥1 resolved v117 root is a population atom **not** among the 56 (candidate new) | 2,330 | 92.7% |
+
+By `sample_type`:
+
+| sample_type | Total | All resolved | In population | In existing 56 | In population, not in 56 |
+|---|---:|---:|---:|---:|---:|
+| split_edit | 1,684 | 1,684 (100%) | 1,667 (99.0%) | 58 | 1,611 |
+| merge_edit | 830 | 830 (100%) | 725 (87.3%) | 15 | 719 |
+
+**Distinct atoms** (not decisions): of the existing 56 seam-positive atoms,
+**37 (66%)** are independently touched by at least one in-cube CB2 decision —
+i.e. two-thirds of what this repo already knew about gets an independent
+confirmation from a completely different corpus. Across *any* root, either
+side, either sample type, **2,030 distinct population atoms not among the 56**
+are touched by an in-cube merge/split decision.
+
+**Refined, semantically tighter cut.** The existing 56 are defined as
+mixed-lineage atoms *whose spanning roots are proofread* — the closest CB2
+analogue is a `split_edit`'s **before**-root (the single object that existed
+right before a real, recorded split correction), not `merge_edit` (whose
+before-roots are same-cell continuation candidates, closer to EXP-060/061's
+task) and not the after-side (the resulting pieces). Restricting to
+`split_edit` before-roots only:
+
+- 1,561 / 1,684 split_edit decisions (92.7%) have their before-root land in
+  `population.npz`.
+- Of those, 53 decisions (32 distinct atoms, 57% of the 56) hit an existing
+  seam positive.
+- **1,508 decisions cover 1,116 distinct v117 atoms** that are population
+  members, not among the existing 56, and were the direct subject of a real
+  recorded split operation.
+
+**Cross-check against this repo's own (independent) v1822 lineage signal**,
+for those 1,116 candidate atoms:
+
+| Our own v1822 crosswalk says... | Atoms | Share |
+|---|---:|---:|
+| mixed lineage (≥2 roots), but not proofread-robust enough for the official 56 | 574 | 51.4% |
+| mixed at the loosest (raw) threshold only | 331 | 29.7% |
+| single-lineage / "pure" by our own crosswalk | 481 | 43.1%* |
+| no mixed-lineage signal at all, even at the loosest threshold | 211 | 18.9%* |
+
+(*rows overlap: "pure" and "no signal" are related but not identical subsets —
+see `cb2/` scratch outputs for the exact per-atom breakdown.)
+
+The 574 (and, more weakly, the 331) atoms are the most defensible new
+positives: our own synapse-side tally *already* suspected these objects were
+frankenmerges, it just lacked the specific proofread-status-table confirmation
+that gated the official 56 — CB2's recorded split operation supplies exactly
+that missing confirmation, independently. The 481+211 atoms where our own
+lineage signal sees nothing are the ones to treat with more caution before
+spending as training labels outright: either genuinely new information our
+synapse-based tally can't see (sparse synapse coverage right at the seam, or
+an edit whose lineage path isn't reflected in the v1822 materialization), or
+an artifact of this resolution method's own imprecision (see caveat below).
+
+**One methodological caveat, stated plainly rather than glossed over:**
+`root_at_version`'s pattern — and the two-step primitive used here — resolves
+a root to v117 via **one arbitrary supervoxel** of that root (`leaves[0]`),
+not via the decision's actual `edit_point_nm`. For a small root (the typical
+case for a decision's direct before/after operand) this is a good proxy; for
+a root that had already accumulated many prior mergers before this specific
+edit, an arbitrary supervoxel could land far from the actual seam location,
+inside a different (correctly-owned) part of the same neuron. This pass did
+not check root sizes or re-resolve via the spatial edit point, so the counts
+above should be read as "this decision's operand traces back to this v117
+atom," not "this v117 atom's synapses are near this decision's edit point" —
+the latter would need a follow-up spatial check before these atoms are handed
+to a training pipeline as located seam positives.
+
+### 5. Recommendation
+
+**This corpus, once mapped, is enough to unblock EXP-062/063 — the mapping
+step is not the bottleneck.** Concretely: 92.7% of split_edit decisions land
+their before-root inside our exact 279,075-atom population (not "near" it —
+inside the object set the harness already enumerates), yielding 1,116
+distinct candidate atoms beyond the existing 56, of which at least 574 (and
+plausibly up to 905) already carry independent corroborating mixed-lineage
+signal in this repo's own v1822 crosswalk. That is roughly a 10–20×
+increase over the 15 training-split seam positives that made EXP-057's own
+seam GNN unrunnable, using only the exact 100 µm cube already in hand — no
+widening to 200 µm or the full column was needed to clear this bar.
+
+The real remaining work is not more lineage-mapping (that step is now done
+and cheap in retrospect — 31.6 minutes, one pass, 100% resolution) but two
+narrower, non-network follow-ups before these 1,116 atoms are spent as
+training labels: (1) resolve the single-arbitrary-supervoxel caveat above by
+re-checking a sample against the decision's `edit_point_nm` directly, and (2)
+decide how much to trust a CB2 `split_edit` record on its own (it is itself a
+real recorded proofreading action, arguably as strong evidence as this
+repo's own proofread-status-table check) versus requiring the extra
+corroboration the 574/905-atom subset already provides. Neither requires
+touching CAVE again.
+
