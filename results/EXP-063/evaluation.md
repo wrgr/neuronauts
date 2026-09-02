@@ -15,7 +15,13 @@ ConnectomeBench2's corroboration tiers as held-out positives.
 - **Substrate:** tier ≥10 only (20,826 atoms). This is the size control: on the
   full population a mixed atom has a median 818 L2 nodes and a trustworthy
   negative 28, so "is it big" would be near-perfect there. Tier ≥10 puts a floor
-  under both classes (945 vs 809), and a size-only rung is run anyway.
+  under both classes and a size-only rung is run anyway. **Corrected after a
+  peer review:** the strict-negative set this run actually uses — pure,
+  proofread-owned, with CB2-touched atoms excluded — has a median of **382**
+  level-2 nodes against 945 for the positives, not the 809 first quoted here.
+  That 809 included the 363 CB2-touched atoms (median 2,826) that the run then
+  removes. A size gap remains, so the bar must beat the stronger of two size
+  rungs.
 - **Positives:** atoms our own v1822 tally calls mixed-lineage (`labels.mixed`,
   n_roots ≥ 2): 2,149.
 - **Strict negatives:** pure atoms with a proofread owner, **minus any atom a
@@ -39,7 +45,8 @@ ConnectomeBench2's corroboration tiers as held-out positives.
 
 | Feature set | GBDT | Logistic |
 |---|---:|---:|
-| size only (log n synapses) | 0.483 | 0.427 |
+| size only — log n synapses | 0.483 | 0.427 |
+| size only — n level-2 nodes | **0.654** | 0.558 |
 | **polarity** (pre/post fraction, 5 cols) | **0.914** | **0.914** |
 | global shape — the PCFG report's detector | 0.862 | 0.875 |
 | global shape without size/extent | 0.729 | 0.742 |
@@ -50,9 +57,16 @@ ConnectomeBench2's corroboration tiers as held-out positives.
 
 Three things to read off this:
 
-1. **Size carries nothing on this substrate** (0.48 — chance). The detection
-   is shape, not scale. The global-shape rung's own strength here comes from
-   `log_extent` and the cluster terms, not `log_n`.
+1. **Size carries less than the stack, but it is not nothing — and the first
+   version of this page said it was.** Log of the synapse count scores 0.483,
+   below chance, and this document originally read that as "size carries
+   nothing on this substrate." The peer review pointed out that log-synapse-
+   count is the weakest available size proxy; the honest one is the object's
+   level-2 node count, which scores **0.654** on its own. So detection is
+   mostly shape rather than scale, but scale is a real signal and the bar now
+   has to beat 0.654 rather than 0.483. The verdict is unaffected — the stack
+   reaches 0.958 — and the global-shape rung's own strength still comes from
+   `log_extent` and the cluster terms rather than `log_n`.
 2. **Polarity alone, at 0.914, beats the published shape detector at 0.875.**
    H8 — "a mixed-polarity atom is a frankenmerge flag" — is supported, on held-out
    tissue, with five columns of free synapse counts. The consolidation plan had
@@ -112,7 +126,7 @@ about detection.
 **A 3-seed CI.** Both models are deterministic given the split, and the split is
 deterministic. The variance that matters is across splits, and 259 training
 negatives is too few to sub-sample honestly. The numbers above are one split;
-the margin over the bar (0.958 vs 0.875) and over the size rung (0.48) is large
+the margin over the bar (0.958 vs 0.875) and over the stronger size rung (0.654) is large
 enough that a plausible split-to-split swing does not threaten the verdict, and
 small enough differences between feature sets (topology vs object geometry, say)
 should not be read as rankings.

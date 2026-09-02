@@ -409,6 +409,35 @@ REGISTRY: list[Entry] = [
              "near-isotropic mip-2 (32x32x40 nm) read once its full-cube "
              "enumeration lands; mip-5 results before that are superseded."),
 
+    Entry(series="B", est_minutes=30, spec=_s(
+        id="EXP-074", title="Soma-seeded growth, distance only",
+        question="Can a grower seeded at a cell body recover that cell's in-box "
+                 "root process, and does it know when to stop?",
+        criterion="two populations scored separately, never pooled. On the 67 "
+                  "cells that need joining, at radius 2 um: recovery of target "
+                  "fragments at least 60% AND purity at least 80%, counting "
+                  "only labelled objects added. On the 36 already-whole cells, "
+                  "add nothing in at least 70%. Distance alone -- no "
+                  "compartment, caliber, direction or learned score",
+        requires_ran=["EXP-071", "EXP-072"],
+        inputs=[OBJECT_CLOUDS, OBJECTS_V117, TOPOLOGY_KALL, LABELS_NPZ],
+        flags={"synthetic_fallback": False,
+               "labels_used_only_for_evaluation": True}),
+        module="neuronauts.experiments.exp074_seeded_growth",
+        note="The first experiment scored on the task a grammar performs, after "
+             "EXP-060 through EXP-073 all scored pairwise join-finding and "
+             "collapsed at ~0.09% precision. Target is box_truth.seeded_target: "
+             "the seed's own in-box component, with compartment-crossing links "
+             "dropped. Bars derive from the 103-cell census in "
+             "docs/threads/exp074_spec.md -- 60% recovery because 80% of scored "
+             "links are within 2 um and that is the distance-only ceiling; 80% "
+             "purity is a judgement, stated as one; 70% abstention is set low "
+             "because nothing has ever measured it. Scoring separates recovered "
+             "/ contamination / unknown, because unlabelled connective cable is "
+             "neither right nor wrong and folding it either way would hide the "
+             "result. Deliberately not a grammar: it exists so EXP-075's "
+             "grammar has something to be measured against."),
+
     # --- C. cuts and frankenmerge detection ---------------------------------
     Entry(series="C", est_minutes=90, spec=_s(
         id="EXP-062", title="Real-L2 cuts and seam location",
