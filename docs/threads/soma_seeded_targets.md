@@ -203,3 +203,101 @@ score it as "complete, abstain" rather than as a miss.
 - The seeded framing needs its own experiment (EXP-074): a soma-seeded grower
   scored against `seeded_target`, with "complete, abstain" as a recorded
   outcome. Not yet written.
+
+## What the 103 environments look like
+
+All 103 cards built (`scripts/build_cell_cards.py`), each with the cell's box
+structure, its split links with gap and compartment, its shared frankenmerged
+objects, and its full proofreading change log. Aggregated by
+`scripts/aggregate_cell_cards.py`.
+
+### A third of the seeds have nothing to join
+
+| challenge type | cells |
+|---|---:|
+| axon splits present | 40 |
+| **already whole** | **36** |
+| dendrite-only splits | 21 |
+| frankenmerge-heavy | 3 |
+| other | 3 |
+
+For 36 of 103 cells the soma's fragment already holds the cell's entire in-box
+arbor. They are the smaller-in-box cells (median 1,478 level-2 nodes against
+1,811; 4 fragments against 6) — the cell simply does not extend far into the
+cube beyond its soma piece. **"Complete, abstain" is therefore a third of the
+task**, and a grower that cannot recognize it will invent joins for a third of
+its seeds. It has to be a scored outcome, not an edge case.
+
+### Compartment sets the scale, and one category is not what it looks like
+
+232 split links across the 103 targets:
+
+| link | count | gap median | p90 | max |
+|---|---:|---:|---:|---:|
+| axon–axon | 129 | 1,314 nm | 5,282 | 29,749 |
+| dendrite–dendrite | 71 | **826 nm** | 1,846 | 4,319 |
+| axon–dendrite | 32 | **7,574 nm** | 21,280 | 26,136 |
+
+Dendrite continuations are tight — half under 826 nm, ninety percent under
+1.85 µm. Axon continuations are about 1.6× wider. **This is the grammar's
+case in one table:** what gap to expect is a function of which compartment you
+are in, and no single distance threshold expresses that.
+
+The third row is different in kind. Compartment-crossing links are **6.3× wider**
+than same-compartment ones (7,574 nm against 1,202 nm) and make up 13.8% of the
+target's links. A real continuation does not change compartment — an axon does
+not become a dendrite — so these are almost certainly the minimum spanning tree
+bridging two sub-arbors at their nearest approach rather than tracing a join
+that exists. **They are probably not targets at all**, and a grower scored
+against them is being asked to make a join no proofreader made. Excluding them
+moves the median gap only from 1,274 to 1,202 nm, so the cost of dropping them
+is small and the honesty gain is large. Recommended for EXP-074; not yet done,
+because it changes the truth set and should be a recorded decision rather than a
+quiet filter.
+
+### Reach
+
+| gap | share of the 232 links |
+|---|---:|
+| ≤ 0.5 µm | 19.0% |
+| ≤ 1 µm | 34.9% |
+| ≤ 2 µm | **70.7%** |
+| ≤ 5 µm | 84.5% |
+| ≤ 10 µm | 93.1% |
+
+### Proofreading effort does not predict in-box difficulty
+
+Edits per cell are substantial — median 514, p90 1,179, max 1,940, with a median
+171 edit points falling inside the cube. But they are uncorrelated with local
+difficulty: edits against number of split links r = +0.08, against shared
+frankenmerged objects r = −0.00, against in-box size r = −0.10. Edit count
+describes the whole cell, most of which is outside the cube, so it cannot serve
+as a difficulty proxy for a box-local method. Useful to know before anyone
+weights training data by it.
+
+### By cell class
+
+| class | n | already whole | links (median) | shared merged objects | edits (median) |
+|---|---:|---:|---:|---:|---:|
+| 4P | 44 | 19 | 1 | 0 | 744 |
+| 23P | 41 | 12 | 2 | 0 | 340 |
+| BC | 8 | 1 | 2 | 0 | 234 |
+| MC | 5 | 1 | 1 | 1 | 244 |
+| BPC | 3 | 2 | 0 | 0 | 61 |
+| NGC | 1 | 0 | 6 | 6 | 275 |
+
+Layer 4 pyramidal cells are most often already whole (19 of 44); interneurons
+almost never are (2 of 14). The single neurogliaform cell is the hardest
+environment in the cube — 6 split links and 6 shared frankenmerged objects, two
+of them large (7,440 and 2,439 level-2 nodes, each shared with three other
+cells) — which is what a dense space-filling axon plexus does to a segmentation.
+
+### Representatives
+
+| role | cell | class | fragments | components | target | links | shared merged | edits |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| already whole | …788476 | 23P | 4 | 3 | 0 | 0 | 0 | 647 |
+| dendrite-only splits | …650282 | 4P | 5 | 2 | 4 | 3 | 0 | 791 |
+| axon splits + frankenmerge | …445786 | BC | 21 | 5 | 15 | 14 | 4 | 1,175 |
+| compartment-crossing | …581835 | 4P | 15 | 5 | 10 | 9 | 0 | 1,940 |
+| dense plexus | …954248 | NGC | 12 | 6 | 7 | 6 | 6 | 275 |

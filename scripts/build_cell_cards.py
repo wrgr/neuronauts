@@ -22,10 +22,16 @@ COMP = {1: "soma", 2: "axon", 3: "dendrite", 4: "apical"}
 seeds = {int(s["root_v1822"]): s for s in json.load(open(X / "soma_viz/seed_census.json"))["seeds"] if s["evaluable"]}
 g = np.load(R / "data/substrate/geom/objgeom_kall.npz", allow_pickle=False)
 ol2, opos, oa, optr = g["l2_id"], g["pos_nm"], g["atom_id"], g["node_ptr"]
+ores = g["resolved"]        # a few L2 nodes carry no coordinate; objgeom.points()
+                            # drops them and so must this -- feeding NaN to a
+                            # cKDTree raises, which is how the first run died at card 23
 o = np.argsort(ol2); ol2s, oposs = ol2[o], opos[o]; l2atom = np.repeat(oa, np.diff(optr))[o]
 row_of = {int(a): k for k, a in enumerate(oa.tolist())}
 def atom_pts(a):
-    k = row_of.get(int(a)); return opos[optr[k]:optr[k+1]] if k is not None else np.empty((0, 3))
+    k = row_of.get(int(a))
+    if k is None: return np.empty((0, 3))
+    sl = slice(int(optr[k]), int(optr[k + 1]))
+    return opos[sl][ores[sl]]
 att = np.load(X / "soma_viz/connective_l2_attrs.npz", allow_pickle=False); c_ = np.argsort(att["l2_id"]); cl2s, cposs = att["l2_id"][c_], att["pos_nm"][c_]
 lab = load_labels(R / "data/substrate/c100um/labels_v1822.npz")
 t = np.load(R / "data/substrate/topology/kall.npz", allow_pickle=False); atoms = t["atom_id"]
@@ -69,6 +75,9 @@ def build(cell):
     E = np.load(gf, allow_pickle=False)["edges"]; nodes = np.unique(E); pos = {int(v): k for k, v in enumerate(nodes.tolist())}
     P, known, natom = positions_for(nodes); positioned = float(np.isfinite(P).all(axis=1).mean())
     card["coverage"]["graph"] = True; card["coverage"]["nodes_positioned"] = round(positioned, 4)
+    # set here, not inside the links block: a cell with nothing to join still HAS a
+    # skeleton, and reporting 67/103 coverage when all 103 were fetched is misleading
+    card["coverage"]["skeleton"] = (X / f"cell_skeletons/{cell}_skv4.npz").exists()
     members = set(ids[ow == cell].tolist())
     frag = np.array([int(x) if int(x) in members else 0 for x in natom.tolist()], np.int64)
     ei = np.array([[pos[int(a)], pos[int(b)]] for a, b in E.tolist()])
@@ -81,6 +90,9 @@ def build(cell):
     links = []
     if len(tgt) > 1:
         pts = {f: atom_pts(f) for f in tgt}; trees = {f: cKDTree(p) for f, p in pts.items() if len(p)}
+        # every p is already finite (atom_pts applies `resolved`); assert rather
+        # than trust, because a silent NaN here would corrupt every gap measured
+        assert all(np.isfinite(p).all() for p in pts.values() if len(p)), "non-finite atom points"
         n = len(tgt); D = np.full((n, n), np.inf); closest = {}
         for a_ in range(n):
             for b_ in range(a_ + 1, n):
@@ -89,11 +101,14 @@ def build(cell):
                     d, jj = trees[fb].query(pts[fa], k=1); k = int(np.argmin(d)); D[a_, b_] = D[b_, a_] = float(d[k]); closest[(a_, b_)] = (pts[fa][k], pts[fb][jj[k]])
         intree, rest = [0], list(range(1, n))
         skf = X / f"cell_skeletons/{cell}_skv4.npz"; sk = np.load(skf, allow_pickle=False) if skf.exists() else None
-        sktree = cKDTree(sk["vertices"]) if sk is not None else None
+        skv = sk["vertices"] if sk is not None else None
+        skok = np.isfinite(skv).all(axis=1) if skv is not None else None
+        sktree = cKDTree(skv[skok]) if skv is not None and skok.any() else None
+        skcomp = sk["compartment"][skok] if sk is not None and "compartment" in sk.files else None
         card["coverage"]["skeleton"] = sk is not None
         def comp_at(p):
-            if sktree is None: return None
-            return COMP.get(int(sk["compartment"][sktree.query(p)[1]]), "?")
+            if sktree is None or skcomp is None or not np.isfinite(p).all(): return None
+            return COMP.get(int(skcomp[sktree.query(p)[1]]), "?")
         while rest:
             _, a_, b_ = min((D[p, q], p, q) for p in intree for q in rest)
             pa, pb = closest[(min(a_, b_), max(a_, b_))]
