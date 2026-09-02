@@ -638,10 +638,10 @@ AUROC to 0.76 at the cost of 95% of atoms.
 
 ## Relationship to other threads
 
-- Complements [tree_dna](../tree_dna/README.md): morphology (shape) + connectivity
+- Complements [tree_dna](../../docs/threads/tree_dna.md): morphology (shape) + connectivity
   (partners) are independent evidence for "same neuron".
 - Feeds the same global-assembly goal as
-  [cell_assignment](../cell_assignment/README.md) and the co-assignment /
+  [cell_assignment](../../docs/threads/cell_assignment.md) and the co-assignment /
   stitch branches (`synapse-coassign`, `abstract-tree-stitch`).
 
 ## Graduation

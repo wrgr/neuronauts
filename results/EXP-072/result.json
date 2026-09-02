@@ -1,0 +1,748 @@
+{
+  "elapsed_min": 10.367212553819021,
+  "id": "EXP-072",
+  "note": "bar not met: widened 63.6% (bar 50%), control 71.1%, gain -7.4% (bar +20%). Widening the substrate is not sufficient for proposal by distance alone",
+  "observed": {
+    "best_direct_recall_any_setting": 0.176537,
+    "gain_from_widening": -0.07445,
+    "median_panel_at_bar": 20.0,
+    "median_reachable_labelled_at_bar": 1586.0,
+    "n_spanning_links": 3546,
+    "population_only_chained_precision_at_bar": 0.000514,
+    "population_only_chained_recall_at_bar": 0.710942,
+    "widened_chained_precision_at_bar": 0.000566,
+    "widened_chained_recall_at_bar": 0.636492,
+    "widened_direct_recall_at_bar": 0.033559
+  },
+  "population": {
+    "n_labelled_atoms": 4801,
+    "n_objects_in_population": 277081,
+    "n_objects_total": 909888,
+    "n_spanning_links": 3546
+  },
+  "provenance": {
+    "argv": [
+      "/Users/wgray13/projects/neuronauts/neuronauts/experiments/exp072_object_proposal.py"
+    ],
+    "cwd": "/Users/wgray13/projects/neuronauts",
+    "git_branch": "feat/global-merge-assembly",
+    "git_commit": "81aec2b81d570605bdca171fbd76740a72a00911",
+    "git_dirty": true,
+    "git_modified_files": [
+      "euronauts/experiments/registry.py",
+      "results/RESULTS.md"
+    ],
+    "git_untracked_count": 3,
+    "hostname": "DXJ5G9L3W1-ML",
+    "inputs": [
+      {
+        "algo": "quick-sha256",
+        "bytes": 191644932,
+        "hash": "2047718c20150f632839f435db88eed9d99f4807f61cf9bdff582e9a52a8022f",
+        "mtime_utc": "2026-09-02T01:50:26+00:00",
+        "path": "data/substrate/topology/kall.npz"
+      },
+      {
+        "algo": "sha256",
+        "bytes": 1321376,
+        "hash": "64f436a008bd0b5b027c28bb1d074eac972dda5acc6194f6e463c88f65a0635a",
+        "mtime_utc": "2026-09-01T22:57:45+00:00",
+        "path": "data/substrate/c100um/labels_v1822.npz"
+      },
+      {
+        "algo": "quick-sha256",
+        "bytes": 266213819,
+        "hash": "f38af2e0209d1cd1638dff50dfe262e0e48a56d0f0cd1443a2e5d4861adde41c",
+        "mtime_utc": "2026-09-02T15:43:03+00:00",
+        "path": "data/substrate/c100um/object_clouds_mip5.npz"
+      },
+      {
+        "algo": "sha256",
+        "bytes": 3543832,
+        "hash": "564159a3796326a1b3080ff034f48f12a52ab21777b28e037969ae32814dd1f2",
+        "mtime_utc": "2026-09-02T15:35:04+00:00",
+        "path": "data/substrate/c100um/objects_v117_mip5.npz"
+      }
+    ],
+    "labels_used_only_for_evaluation": true,
+    "packages": {
+      "caveclient": "8.0.1",
+      "matplotlib": "3.10.8",
+      "networkx": "3.6.1",
+      "neuroglancer": "2.41.2",
+      "numpy": "2.4.3",
+      "pandas": "2.3.3",
+      "scipy": "1.17.1",
+      "torch": "2.10.0"
+    },
+    "params": {
+      "bar_cap": 20,
+      "bar_chained_recall": 0.5,
+      "bar_hops": 3,
+      "bar_margin": 0.2,
+      "bar_radius_nm": 2000.0,
+      "caps": [
+        5,
+        10,
+        20,
+        50,
+        100
+      ],
+      "hops": [
+        1,
+        2,
+        3
+      ],
+      "min_voxels": 2,
+      "radii_nm": [
+        1000.0,
+        2000.0
+      ]
+    },
+    "platform": "macOS-15.7.9-arm64-arm-64bit-Mach-O",
+    "python": "3.14.2",
+    "synthetic_fallback": false,
+    "timestamp_utc": "2026-09-02T15:54:19+00:00"
+  },
+  "question": "Does proposing at the object level, over every v117 object rather than only synapse-carrying ones, reach the spanning links at a usable panel size?",
+  "requires": [
+    "EXP-071"
+  ],
+  "requires_ran": [
+    "EXP-060B",
+    "EXP-070"
+  ],
+  "status": "failed",
+  "success_criterion": "on the widened substrate, chained recall of MST spanning links at radius 2 um, panel cap 20 and at most 3 hops must exceed 50%, AND beat the population-only control -- the same code on the old object set -- by at least 20%, AND keep the median number of reachable LABELLED atoms at or under 50. The third clause was added before the run: chained recall without a bound on what it reaches is EXP-058's union-find result, which scored recall 1.0 at pair precision 0.0006 by collapsing the population into one cluster. The proposer uses distance alone -- no tangent, caliber, grammar or learned score",
+  "tables": {
+    "by_substrate": {
+      "population_only": {
+        "r1000_cap10": {
+          "cap": 10,
+          "chained_h1": {
+            "median_reachable_labelled": 1.0,
+            "n_pairs": 5573,
+            "p90_reachable_labelled": 4.0,
+            "precision": 0.011305,
+            "recall": 0.017766
+          },
+          "chained_h2": {
+            "median_reachable_labelled": 104.0,
+            "n_pairs": 378993,
+            "p90_reachable_labelled": 383.0,
+            "precision": 0.001488,
+            "recall": 0.159052
+          },
+          "chained_h3": {
+            "median_reachable_labelled": 593.0,
+            "n_pairs": 1718378,
+            "p90_reachable_labelled": 1545.0,
+            "precision": 0.00069,
+            "recall": 0.334179
+          },
+          "direct_precision_labelled_pairs": 0.011305,
+          "direct_recall": 0.017766,
+          "median_panel": 10.0,
+          "n_direct_labelled_pairs": 5573,
+          "p90_panel": 10.0,
+          "radius_nm": 1000.0
+        },
+        "r1000_cap100": {
+          "cap": 100,
+          "chained_h1": {
+            "median_reachable_labelled": 11.0,
+            "n_pairs": 44697,
+            "p90_reachable_labelled": 33.0,
+            "precision": 0.013759,
+            "recall": 0.173435
+          },
+          "chained_h2": {
+            "median_reachable_labelled": 2248.0,
+            "n_pairs": 5371674,
+            "p90_reachable_labelled": 3017.0,
+            "precision": 0.000547,
+            "recall": 0.829103
+          },
+          "chained_h3": {
+            "median_reachable_labelled": 4794.0,
+            "n_pairs": 11464885,
+            "p90_reachable_labelled": 4799.0,
+            "precision": 0.000309,
+            "recall": 0.999154
+          },
+          "direct_precision_labelled_pairs": 0.013759,
+          "direct_recall": 0.173435,
+          "median_panel": 100.0,
+          "n_direct_labelled_pairs": 44697,
+          "p90_panel": 100.0,
+          "radius_nm": 1000.0
+        },
+        "r1000_cap20": {
+          "cap": 20,
+          "chained_h1": {
+            "median_reachable_labelled": 3.0,
+            "n_pairs": 11019,
+            "p90_reachable_labelled": 8.0,
+            "precision": 0.013613,
+            "recall": 0.042301
+          },
+          "chained_h2": {
+            "median_reachable_labelled": 322.0,
+            "n_pairs": 864246,
+            "p90_reachable_labelled": 642.0,
+            "precision": 0.001284,
+            "recall": 0.313029
+          },
+          "chained_h3": {
+            "median_reachable_labelled": 2014.0,
+            "n_pairs": 4900871,
+            "p90_reachable_labelled": 3096.0,
+            "precision": 0.000514,
+            "recall": 0.710942
+          },
+          "direct_precision_labelled_pairs": 0.013613,
+          "direct_recall": 0.042301,
+          "median_panel": 20.0,
+          "n_direct_labelled_pairs": 11019,
+          "p90_panel": 20.0,
+          "radius_nm": 1000.0
+        },
+        "r1000_cap5": {
+          "cap": 5,
+          "chained_h1": {
+            "median_reachable_labelled": 1.0,
+            "n_pairs": 2736,
+            "p90_reachable_labelled": 2.0,
+            "precision": 0.010599,
+            "recall": 0.008178
+          },
+          "chained_h2": {
+            "median_reachable_labelled": 25.0,
+            "n_pairs": 142285,
+            "p90_reachable_labelled": 242.0,
+            "precision": 0.001624,
+            "recall": 0.065144
+          },
+          "chained_h3": {
+            "median_reachable_labelled": 83.0,
+            "n_pairs": 477910,
+            "p90_reachable_labelled": 653.0,
+            "precision": 0.000858,
+            "recall": 0.115623
+          },
+          "direct_precision_labelled_pairs": 0.010599,
+          "direct_recall": 0.008178,
+          "median_panel": 5.0,
+          "n_direct_labelled_pairs": 2736,
+          "p90_panel": 5.0,
+          "radius_nm": 1000.0
+        },
+        "r1000_cap50": {
+          "cap": 50,
+          "chained_h1": {
+            "median_reachable_labelled": 7.0,
+            "n_pairs": 26008,
+            "p90_reachable_labelled": 19.0,
+            "precision": 0.015764,
+            "recall": 0.115623
+          },
+          "chained_h2": {
+            "median_reachable_labelled": 1125.0,
+            "n_pairs": 2835136,
+            "p90_reachable_labelled": 1717.0,
+            "precision": 0.000794,
+            "recall": 0.634518
+          },
+          "chained_h3": {
+            "median_reachable_labelled": 4571.0,
+            "n_pairs": 10697215,
+            "p90_reachable_labelled": 4759.0,
+            "precision": 0.000327,
+            "recall": 0.986464
+          },
+          "direct_precision_labelled_pairs": 0.015764,
+          "direct_recall": 0.115623,
+          "median_panel": 50.0,
+          "n_direct_labelled_pairs": 26008,
+          "p90_panel": 50.0,
+          "radius_nm": 1000.0
+        },
+        "r2000_cap10": {
+          "cap": 10,
+          "chained_h1": {
+            "median_reachable_labelled": 1.0,
+            "n_pairs": 5573,
+            "p90_reachable_labelled": 4.0,
+            "precision": 0.011305,
+            "recall": 0.017766
+          },
+          "chained_h2": {
+            "median_reachable_labelled": 104.0,
+            "n_pairs": 378993,
+            "p90_reachable_labelled": 383.0,
+            "precision": 0.001488,
+            "recall": 0.159052
+          },
+          "chained_h3": {
+            "median_reachable_labelled": 593.0,
+            "n_pairs": 1718378,
+            "p90_reachable_labelled": 1545.0,
+            "precision": 0.00069,
+            "recall": 0.334179
+          },
+          "direct_precision_labelled_pairs": 0.011305,
+          "direct_recall": 0.017766,
+          "median_panel": 10.0,
+          "n_direct_labelled_pairs": 5573,
+          "p90_panel": 10.0,
+          "radius_nm": 2000.0
+        },
+        "r2000_cap100": {
+          "cap": 100,
+          "chained_h1": {
+            "median_reachable_labelled": 13.0,
+            "n_pairs": 48309,
+            "p90_reachable_labelled": 34.0,
+            "precision": 0.014573,
+            "recall": 0.198534
+          },
+          "chained_h2": {
+            "median_reachable_labelled": 2461.0,
+            "n_pairs": 5953515,
+            "p90_reachable_labelled": 3149.0,
+            "precision": 0.000507,
+            "recall": 0.851664
+          },
+          "chained_h3": {
+            "median_reachable_labelled": 4798.0,
+            "n_pairs": 11507010,
+            "p90_reachable_labelled": 4800.0,
+            "precision": 0.000308,
+            "recall": 0.999436
+          },
+          "direct_precision_labelled_pairs": 0.014573,
+          "direct_recall": 0.198534,
+          "median_panel": 100.0,
+          "n_direct_labelled_pairs": 48309,
+          "p90_panel": 100.0,
+          "radius_nm": 2000.0
+        },
+        "r2000_cap20": {
+          "cap": 20,
+          "chained_h1": {
+            "median_reachable_labelled": 3.0,
+            "n_pairs": 11019,
+            "p90_reachable_labelled": 8.0,
+            "precision": 0.013613,
+            "recall": 0.042301
+          },
+          "chained_h2": {
+            "median_reachable_labelled": 322.0,
+            "n_pairs": 864252,
+            "p90_reachable_labelled": 642.0,
+            "precision": 0.001284,
+            "recall": 0.313029
+          },
+          "chained_h3": {
+            "median_reachable_labelled": 2014.0,
+            "n_pairs": 4900879,
+            "p90_reachable_labelled": 3096.0,
+            "precision": 0.000514,
+            "recall": 0.710942
+          },
+          "direct_precision_labelled_pairs": 0.013613,
+          "direct_recall": 0.042301,
+          "median_panel": 20.0,
+          "n_direct_labelled_pairs": 11019,
+          "p90_panel": 20.0,
+          "radius_nm": 2000.0
+        },
+        "r2000_cap5": {
+          "cap": 5,
+          "chained_h1": {
+            "median_reachable_labelled": 1.0,
+            "n_pairs": 2736,
+            "p90_reachable_labelled": 2.0,
+            "precision": 0.010599,
+            "recall": 0.008178
+          },
+          "chained_h2": {
+            "median_reachable_labelled": 25.0,
+            "n_pairs": 142285,
+            "p90_reachable_labelled": 242.0,
+            "precision": 0.001624,
+            "recall": 0.065144
+          },
+          "chained_h3": {
+            "median_reachable_labelled": 83.0,
+            "n_pairs": 477910,
+            "p90_reachable_labelled": 653.0,
+            "precision": 0.000858,
+            "recall": 0.115623
+          },
+          "direct_precision_labelled_pairs": 0.010599,
+          "direct_recall": 0.008178,
+          "median_panel": 5.0,
+          "n_direct_labelled_pairs": 2736,
+          "p90_panel": 5.0,
+          "radius_nm": 2000.0
+        },
+        "r2000_cap50": {
+          "cap": 50,
+          "chained_h1": {
+            "median_reachable_labelled": 7.0,
+            "n_pairs": 26258,
+            "p90_reachable_labelled": 19.0,
+            "precision": 0.016071,
+            "recall": 0.119007
+          },
+          "chained_h2": {
+            "median_reachable_labelled": 1139.0,
+            "n_pairs": 2870069,
+            "p90_reachable_labelled": 1726.0,
+            "precision": 0.000786,
+            "recall": 0.636492
+          },
+          "chained_h3": {
+            "median_reachable_labelled": 4584.0,
+            "n_pairs": 10739908,
+            "p90_reachable_labelled": 4763.0,
+            "precision": 0.000326,
+            "recall": 0.986464
+          },
+          "direct_precision_labelled_pairs": 0.016071,
+          "direct_recall": 0.119007,
+          "median_panel": 50.0,
+          "n_direct_labelled_pairs": 26258,
+          "p90_panel": 50.0,
+          "radius_nm": 2000.0
+        }
+      },
+      "widened": {
+        "r1000_cap10": {
+          "cap": 10,
+          "chained_h1": {
+            "median_reachable_labelled": 1.0,
+            "n_pairs": 4470,
+            "p90_reachable_labelled": 3.0,
+            "precision": 0.011857,
+            "recall": 0.014946
+          },
+          "chained_h2": {
+            "median_reachable_labelled": 68.0,
+            "n_pairs": 276060,
+            "p90_reachable_labelled": 305.0,
+            "precision": 0.001536,
+            "recall": 0.119571
+          },
+          "chained_h3": {
+            "median_reachable_labelled": 371.0,
+            "n_pairs": 1182513,
+            "p90_reachable_labelled": 1216.0,
+            "precision": 0.000747,
+            "recall": 0.249013
+          },
+          "direct_precision_labelled_pairs": 0.011857,
+          "direct_recall": 0.014946,
+          "median_panel": 10.0,
+          "n_direct_labelled_pairs": 4470,
+          "p90_panel": 10.0,
+          "radius_nm": 1000.0
+        },
+        "r1000_cap100": {
+          "cap": 100,
+          "chained_h1": {
+            "median_reachable_labelled": 10.0,
+            "n_pairs": 40499,
+            "p90_reachable_labelled": 30.0,
+            "precision": 0.013877,
+            "recall": 0.158488
+          },
+          "chained_h2": {
+            "median_reachable_labelled": 1993.0,
+            "n_pairs": 4835425,
+            "p90_reachable_labelled": 2768.0,
+            "precision": 0.000585,
+            "recall": 0.798082
+          },
+          "chained_h3": {
+            "median_reachable_labelled": 4788.0,
+            "n_pairs": 11428279,
+            "p90_reachable_labelled": 4799.0,
+            "precision": 0.00031,
+            "recall": 0.99859
+          },
+          "direct_precision_labelled_pairs": 0.013877,
+          "direct_recall": 0.158488,
+          "median_panel": 100.0,
+          "n_direct_labelled_pairs": 40499,
+          "p90_panel": 100.0,
+          "radius_nm": 1000.0
+        },
+        "r1000_cap20": {
+          "cap": 20,
+          "chained_h1": {
+            "median_reachable_labelled": 2.0,
+            "n_pairs": 9505,
+            "p90_reachable_labelled": 7.0,
+            "precision": 0.01252,
+            "recall": 0.033559
+          },
+          "chained_h2": {
+            "median_reachable_labelled": 256.0,
+            "n_pairs": 719707,
+            "p90_reachable_labelled": 575.0,
+            "precision": 0.001374,
+            "recall": 0.278906
+          },
+          "chained_h3": {
+            "median_reachable_labelled": 1586.0,
+            "n_pairs": 3986112,
+            "p90_reachable_labelled": 2694.0,
+            "precision": 0.000566,
+            "recall": 0.636492
+          },
+          "direct_precision_labelled_pairs": 0.01252,
+          "direct_recall": 0.033559,
+          "median_panel": 20.0,
+          "n_direct_labelled_pairs": 9505,
+          "p90_panel": 20.0,
+          "radius_nm": 1000.0
+        },
+        "r1000_cap5": {
+          "cap": 5,
+          "chained_h1": {
+            "median_reachable_labelled": 0.0,
+            "n_pairs": 1969,
+            "p90_reachable_labelled": 2.0,
+            "precision": 0.012697,
+            "recall": 0.00705
+          },
+          "chained_h2": {
+            "median_reachable_labelled": 9.0,
+            "n_pairs": 69930,
+            "p90_reachable_labelled": 73.0,
+            "precision": 0.002016,
+            "recall": 0.039763
+          },
+          "chained_h3": {
+            "median_reachable_labelled": 24.0,
+            "n_pairs": 205488,
+            "p90_reachable_labelled": 281.0,
+            "precision": 0.001066,
+            "recall": 0.06176
+          },
+          "direct_precision_labelled_pairs": 0.012697,
+          "direct_recall": 0.00705,
+          "median_panel": 5.0,
+          "n_direct_labelled_pairs": 1969,
+          "p90_panel": 5.0,
+          "radius_nm": 1000.0
+        },
+        "r1000_cap50": {
+          "cap": 50,
+          "chained_h1": {
+            "median_reachable_labelled": 6.0,
+            "n_pairs": 23420,
+            "p90_reachable_labelled": 18.0,
+            "precision": 0.015201,
+            "recall": 0.100395
+          },
+          "chained_h2": {
+            "median_reachable_labelled": 974.0,
+            "n_pairs": 2464693,
+            "p90_reachable_labelled": 1538.0,
+            "precision": 0.000862,
+            "recall": 0.599267
+          },
+          "chained_h3": {
+            "median_reachable_labelled": 4400.0,
+            "n_pairs": 10213146,
+            "p90_reachable_labelled": 4703.0,
+            "precision": 0.000338,
+            "recall": 0.974055
+          },
+          "direct_precision_labelled_pairs": 0.015201,
+          "direct_recall": 0.100395,
+          "median_panel": 50.0,
+          "n_direct_labelled_pairs": 23420,
+          "p90_panel": 50.0,
+          "radius_nm": 1000.0
+        },
+        "r2000_cap10": {
+          "cap": 10,
+          "chained_h1": {
+            "median_reachable_labelled": 1.0,
+            "n_pairs": 4470,
+            "p90_reachable_labelled": 3.0,
+            "precision": 0.011857,
+            "recall": 0.014946
+          },
+          "chained_h2": {
+            "median_reachable_labelled": 68.0,
+            "n_pairs": 276060,
+            "p90_reachable_labelled": 305.0,
+            "precision": 0.001536,
+            "recall": 0.119571
+          },
+          "chained_h3": {
+            "median_reachable_labelled": 371.0,
+            "n_pairs": 1182513,
+            "p90_reachable_labelled": 1216.0,
+            "precision": 0.000747,
+            "recall": 0.249013
+          },
+          "direct_precision_labelled_pairs": 0.011857,
+          "direct_recall": 0.014946,
+          "median_panel": 10.0,
+          "n_direct_labelled_pairs": 4470,
+          "p90_panel": 10.0,
+          "radius_nm": 2000.0
+        },
+        "r2000_cap100": {
+          "cap": 100,
+          "chained_h1": {
+            "median_reachable_labelled": 11.0,
+            "n_pairs": 42787,
+            "p90_reachable_labelled": 31.0,
+            "precision": 0.014631,
+            "recall": 0.176537
+          },
+          "chained_h2": {
+            "median_reachable_labelled": 2131.0,
+            "n_pairs": 5204001,
+            "p90_reachable_labelled": 2858.0,
+            "precision": 0.000555,
+            "recall": 0.815003
+          },
+          "chained_h3": {
+            "median_reachable_labelled": 4795.0,
+            "n_pairs": 11481080,
+            "p90_reachable_labelled": 4800.0,
+            "precision": 0.000309,
+            "recall": 0.999154
+          },
+          "direct_precision_labelled_pairs": 0.014631,
+          "direct_recall": 0.176537,
+          "median_panel": 100.0,
+          "n_direct_labelled_pairs": 42787,
+          "p90_panel": 100.0,
+          "radius_nm": 2000.0
+        },
+        "r2000_cap20": {
+          "cap": 20,
+          "chained_h1": {
+            "median_reachable_labelled": 2.0,
+            "n_pairs": 9505,
+            "p90_reachable_labelled": 7.0,
+            "precision": 0.01252,
+            "recall": 0.033559
+          },
+          "chained_h2": {
+            "median_reachable_labelled": 256.0,
+            "n_pairs": 719707,
+            "p90_reachable_labelled": 575.0,
+            "precision": 0.001374,
+            "recall": 0.278906
+          },
+          "chained_h3": {
+            "median_reachable_labelled": 1586.0,
+            "n_pairs": 3986112,
+            "p90_reachable_labelled": 2694.0,
+            "precision": 0.000566,
+            "recall": 0.636492
+          },
+          "direct_precision_labelled_pairs": 0.01252,
+          "direct_recall": 0.033559,
+          "median_panel": 20.0,
+          "n_direct_labelled_pairs": 9505,
+          "p90_panel": 20.0,
+          "radius_nm": 2000.0
+        },
+        "r2000_cap5": {
+          "cap": 5,
+          "chained_h1": {
+            "median_reachable_labelled": 0.0,
+            "n_pairs": 1969,
+            "p90_reachable_labelled": 2.0,
+            "precision": 0.012697,
+            "recall": 0.00705
+          },
+          "chained_h2": {
+            "median_reachable_labelled": 9.0,
+            "n_pairs": 69930,
+            "p90_reachable_labelled": 73.0,
+            "precision": 0.002016,
+            "recall": 0.039763
+          },
+          "chained_h3": {
+            "median_reachable_labelled": 24.0,
+            "n_pairs": 205488,
+            "p90_reachable_labelled": 281.0,
+            "precision": 0.001066,
+            "recall": 0.06176
+          },
+          "direct_precision_labelled_pairs": 0.012697,
+          "direct_recall": 0.00705,
+          "median_panel": 5.0,
+          "n_direct_labelled_pairs": 1969,
+          "p90_panel": 5.0,
+          "radius_nm": 2000.0
+        },
+        "r2000_cap50": {
+          "cap": 50,
+          "chained_h1": {
+            "median_reachable_labelled": 6.0,
+            "n_pairs": 23490,
+            "p90_reachable_labelled": 18.0,
+            "precision": 0.015198,
+            "recall": 0.100677
+          },
+          "chained_h2": {
+            "median_reachable_labelled": 979.0,
+            "n_pairs": 2476149,
+            "p90_reachable_labelled": 1540.0,
+            "precision": 0.000859,
+            "recall": 0.599831
+          },
+          "chained_h3": {
+            "median_reachable_labelled": 4404.0,
+            "n_pairs": 10229534,
+            "p90_reachable_labelled": 4705.0,
+            "precision": 0.000338,
+            "recall": 0.974055
+          },
+          "direct_precision_labelled_pairs": 0.015198,
+          "direct_recall": 0.100677,
+          "median_panel": 50.0,
+          "n_direct_labelled_pairs": 23490,
+          "p90_panel": 50.0,
+          "radius_nm": 2000.0
+        }
+      }
+    },
+    "clouds_meta": {
+      "base_version": 117,
+      "centre_um": [
+        663,
+        591,
+        860
+      ],
+      "elapsed_min": 1.0,
+      "mip": 5,
+      "n_objects": 909888,
+      "n_points": 73090557,
+      "note": "label-blind; synapse-free objects included. Sampling is the supervoxel decomposition, coarser than an L2 node cloud and chosen because the question is object-to-object closest approach, not skeleton structure. A mip-5 voxel is 256x256x160 nm (1.6:1) against the L2 chunk's 10:1, so these clouds are less direction-distorted than the skeleton path.",
+      "point": "one per supervoxel, its voxel centroid in nm",
+      "resolution_nm": [
+        256.0,
+        256.0,
+        160.0
+      ],
+      "side_um": 100.0,
+      "svmap": "data/substrate/c100um/objects_v117_mip5_svmap.npz",
+      "timestamp": 1623399000
+    }
+  },
+  "title": "Object-level proposal on the widened substrate"
+}

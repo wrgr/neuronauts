@@ -145,18 +145,41 @@ def main() -> int:
               f"{time.time()-tstart:5.1f}s  {int(keep.sum()):>9,} supervoxels  "
               f"eta {(len(slabs)-i-1)/max(rate,1e-9)/60:5.1f}m", flush=True)
 
-    parts_sv, parts_n = [], []
+    # Merge by hash bucket, never all at once. At mip 2 the 100 um cube is 417
+    # slabs of ~1.5M supervoxels each -- concatenating them is ~10 GB before the
+    # argsort, which is where a first version of this would have died. Bucketing
+    # on `sv % N_BUCKETS` bounds memory by the largest bucket and lets each one
+    # be deduplicated independently.
+    N_BUCKETS = 64
+    bdir = slab_dir / "buckets"
+    bdir.mkdir(exist_ok=True)
     for i in range(len(slabs)):
         with np.load(slab_dir / f"slab_{i:04d}.npz", allow_pickle=False) as z:
-            parts_sv.append(z["sv"]); parts_n.append(z["n"])
-    cat_sv = np.concatenate(parts_sv) if parts_sv else np.zeros(0, np.uint64)
-    cat_n = np.concatenate(parts_n) if parts_n else np.zeros(0, np.int64)
-    del parts_sv, parts_n
-    order_sv = np.argsort(cat_sv)
-    cat_sv, cat_n = cat_sv[order_sv], cat_n[order_sv]
-    sv, starts = np.unique(cat_sv, return_index=True)
-    svc = np.add.reduceat(cat_n, starts) if len(sv) else np.zeros(0, np.int64)
-    del cat_sv, cat_n
+            s, c = z["sv"], z["n"]
+        b = (s % np.uint64(N_BUCKETS)).astype(np.int64)
+        for k in range(N_BUCKETS):
+            m = b == k
+            if m.any():
+                with open(bdir / f"b{k:02d}.bin", "ab") as fh:
+                    fh.write(np.stack([s[m].view(np.int64), c[m]], axis=1)
+                             .astype(np.int64).tobytes())
+    sv_parts, n_parts = [], []
+    for k in range(N_BUCKETS):
+        f = bdir / f"b{k:02d}.bin"
+        if not f.exists():
+            continue
+        raw = np.fromfile(f, dtype=np.int64).reshape(-1, 2)
+        s, c = raw[:, 0].view(np.uint64), raw[:, 1]
+        o = np.argsort(s)
+        s, c = s[o], c[o]
+        u, st = np.unique(s, return_index=True)
+        sv_parts.append(u)
+        n_parts.append(np.add.reduceat(c, st))
+        f.unlink()
+    bdir.rmdir()
+    sv = np.concatenate(sv_parts) if sv_parts else np.zeros(0, np.uint64)
+    svc = np.concatenate(n_parts) if n_parts else np.zeros(0, np.int64)
+    del sv_parts, n_parts
     print(f"\nvolume read done: {len(sv):,} distinct supervoxels "
           f"({(time.time()-t0)/60:.1f} min)")
 

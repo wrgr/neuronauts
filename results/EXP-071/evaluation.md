@@ -32,9 +32,22 @@ eligible; the 40 largest of the remainder were used.
 | Connective L2 nodes unknown to the population | 39,613 |
 | …resolving to a v117 object | 77.2% |
 | Distinct objects holding that material | 2,147 |
-| **…absent from the population** | **2,147 (100%)** |
+| ~~…absent from the population~~ (see below) | ~~2,147 (100%)~~ |
 | Median L2 nodes per missing object | 5 |
 | Share of connective nodes in objects with ≥2 L2 nodes | 98.6% |
+
+**In nanometres, because hops are not a distance.** The level-2 chunk is
+2048 × 2048 × 20480 nm — 10:1 longer in z — so a hop count inherits a
+direction-dependent scale, and "3 hops" was the wrong unit to lead with.
+Measured on the object clouds for the same 40 cells (546 fragments): the
+nearest labelled sibling is a median **1,604 nm** away (lateral 1,223 nm, axial
+840 nm); 58% are within 2 µm and **72% within 5 µm**. A single level-2 hop
+displaces a median 1,485 nm, and only 20% of hops move further in z than in
+xy — the tall chunk works *against* the anisotropy, because a neurite running
+in z stays inside one node longer. The imaging itself is 8 × 8 × 40 nm; the
+units here are nm on all axes, which is a statement about coordinates, not
+about the data being isotropic. (Details: the anisotropy check in the
+2026-09-02 QA thread.)
 
 Three things follow, in order of how much they change.
 
@@ -50,6 +63,18 @@ objects with two or more. For comparison, a *population* atom has a median of 4
 L2 nodes. These are perfectly ordinary fragments, the same size as what the
 harness already carries. They are excluded by one rule and one rule only: they
 own no synapse whose centre falls in the cube.
+
+> **Withdrawn, and replaced by a real test.** The struck row above — "2,147
+> objects, 100% absent from the population" — is an **identity, not a result**:
+> `objgeom_kall` holds every level-2 node of every population atom, so a node it
+> does not know cannot resolve to a population atom, and bar clause 3 could not
+> fail. A peer review caught it. The claim it was standing in for has since been
+> measured properly at the path level: of the 230 distinct bridging nodes on
+> ≤3-hop nearest-sibling paths, **230 (100%) resolve to a real v117 object, none
+> existed only after a later edit, and none is in the population.** That could
+> have come out the other way — had they been level-2 ids minted by the merge
+> that joined the two fragments, the finding would have been circular. See
+> `CORRECTION.md`.
 
 **The denominator trap repeated itself, on a new substrate.** Measured over the
 same-owner clique the median is **54.8 hops**; measured to the nearest sibling
@@ -106,5 +131,7 @@ resolution was chosen by measurement rather than caution — recall was scored p
 object-size bucket against the known population, and objects with two or more
 level-2 nodes are recovered at 100% from mip 2 through mip 5, so mip 5 is used
 and single-voxel dust (97% recovered) is the only thing knowingly at risk. On a
-12 µm cube it finds **4,279 objects absent from the population against 1,939
-present**, holding 6.7% of the segmented volume.
+12 µm cube it finds **1,476 objects absent from the population against 1,915
+present**, holding 6.2% of the segmented volume (at mip 4 the same cube gives
+4,279 / 1,939 / 6.7% — the difference is single-voxel dust, see CORRECTION.md
+§What the object count means).

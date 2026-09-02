@@ -60,8 +60,8 @@ progression"), `docs/roadmap_global_assembly.md`, `docs/grammar_harness_handoff.
 `docs/consolidation_plan.md`, and the stale-reference note in
 `docs/stage_ownership.md` §"Legacy quarantine plan." Every reference that was
 an actual relative link into one of these files (in `CLAUDE.md`,
-`neuronauts/coassign/README.md`, `experiments/cell_assignment/README.md`,
-`experiments/tree_dna/README.md`, `models/README.md`,
+`neuronauts/coassign/README.md`, `docs/threads/cell_assignment.md`,
+`docs/threads/tree_dna.md`, `models/README.md`,
 `docs/coassign_slides.md`, and a docstring in
 `neuronauts/represent/enrich.py`) was repointed here.
 

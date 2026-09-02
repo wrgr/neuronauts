@@ -61,15 +61,72 @@ fragments, and the proximity experiments were measuring across that hole — is
 not in question. The *magnitude* of the omission, as a count of objects, was
 inflated about 15× by the scope mismatch.
 
-## Still open
+## Closed: the "100% absent" clause was an identity, and the path-level test now stands in its place
 
-The path-level version of the claim has not been measured: of the objects lying
-specifically **on a nearest-sibling path** (rather than anywhere in the cell),
-how many are in-cube and how many are in the population? EXP-071 reports the
-aggregate, not the per-path breakdown, and the aggregate is what this correction
-rescopes. That measurement is cheap — the cell graphs are cached under
-`data/external/cell_l2_graphs/` and need no network — and it is the number
-EXP-072 actually depends on.
+A peer review found that bar clause 3 — "at least 80% of the objects holding the
+connective material absent from the population" — **could not fail**.
+`objgeom_kall` holds every level-2 node of every population atom, so a node it
+does not know cannot resolve to a population atom. `frac_objects_missing == 1.0`
+was an identity, not a measurement, and the evaluation presented it as a result.
+That clause is withdrawn as evidence.
+
+The claim it was standing in for is path-level, and it had not been measured:
+on the nearest-sibling paths, is the bridging material (a) real v117 objects the
+population omitted, or (b) level-2 ids re-minted by the very merge edit that
+joined the two fragments — which never existed at v117 and so could not be in
+any population? (b) would make the whole finding circular.
+
+Measured, on the 40 held-out cells, from the cached graphs with one `roots_at`
+call:
+
+| | |
+|---|---:|
+| Nearest-sibling paths of ≤3 hops | 295 |
+| Interior nodes on them, unknown to the population | 351 (230 distinct) |
+| Interior nodes on them that a population atom owns | **0** |
+| …of the 230, **resolving to a real v117 root** | **230 (100%)** |
+| …that did not exist at v117 (re-minted by a later edit) | **0** |
+| Distinct v117 objects they belong to | 230, **none in the population** |
+
+So (a): every short-path bridge is an ordinary v117 object that existed at v117
+and that the synapse-anchored population did not enumerate. The claim holds on
+the paths that matter, on evidence that could have come out the other way.
+
+Two honest riders. The zero known-interior count is *forced* — two v117 atoms
+never share a level-2 edge, so a short path's interior is unknown by
+construction; what was not forced, and is the real result, is that those nodes
+resolve at v117 rather than being edit artifacts. And this covers ≤3-hop paths
+(295 of 491 fragments); longer paths run substantially through *known* population
+atoms, most of them mixed-lineage, which is a different situation and is not
+covered by this test.
+
+## What the object count means
+
+The enumeration's raw count — "909,888 v117 objects in the 100 µm cube" — reads
+as a stable count of objects. It is not: it is the count of distinct v117 root
+ids with at least one voxel at mip 5, and it is dominated by debris.
+
+| threshold | objects | in population | new |
+|---|---:|---:|---:|
+| ≥1 voxel | 909,888 | 277,081 | 632,807 |
+| ≥5 voxels | 413,539 | 236,590 | 176,949 |
+| ≥10 voxels | 293,790 | 189,779 | 104,011 |
+| ≥100 voxels | 65,437 | 61,153 | 4,284 |
+
+(One mip-5 voxel is 0.0105 µm³.) 287,461 of the 909,888 (31.6%) are
+single-voxel; the 496,349 objects under 5 voxels together hold 0.91% of the
+segmented volume, while the 279,075-atom population holds 94.4% of it.
+
+The count is also resolution-dependent. At 40 µm, mip 5 finds 63,482 objects
+and mip 2 finds 192,474 — a 3× swing from resolution alone — while the counts
+that matter for anything downstream barely move: ≥0.1 µm³ gives 5,792 at mip 5
+against 6,041 at mip 2, and ≥1 µm³ gives 256 against 263.
+
+**The stable, honest statement:** the enumeration finds ~104,000 objects
+≥0.1 µm³ (and ~4,500 ≥1 µm³) that are absent from the population, holding
+5.6% of the segmented volume. The raw count of root ids touched (909,888 at
+mip 5) is dominated by sub-5-voxel debris and is not a stable property of the
+cube.
 
 ## For anything downstream
 

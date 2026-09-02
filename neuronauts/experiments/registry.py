@@ -48,6 +48,12 @@ TOPOLOGY_KALL = "data/substrate/topology/kall.npz"
 OBJGEOM_K10 = "data/substrate/geom/objgeom_k10.npz"
 OBJGEOM_KALL = "data/substrate/geom/objgeom_kall.npz"
 CB2_POSITIVES = "data/substrate/c100um/cb2_seam_positives.npz"
+#: The widened, label-blind object set: every v117 object with a voxel in the
+#: region, synapse-free ones included, plus object clouds read straight from the
+#: segmentation volume. Built by scripts/enumerate_region_objects.py and
+#: scripts/build_object_clouds.py.
+OBJECTS_V117 = "data/substrate/c100um/objects_v117_mip5.npz"
+OBJECT_CLOUDS = "data/substrate/c100um/object_clouds_mip5.npz"
 # ConnectomeBench2 intake (EXP-057B). The CAVE lineage resolution is a recorded
 # input, not a step: it was run once and its output is hashed like any file.
 CB2_RAW_ROWS = "data/external/cb2/full_mouse_rows_raw.parquet"
@@ -280,9 +286,11 @@ REGISTRY: list[Entry] = [
              "gaps only and read 47.7%; the QA pass caught it), and recovers "
              "280 labelled atoms that have NO endpoint row at all, but does "
              "not approach the 90% bar. It also moves the answer key: on the "
-             "full population 325 object-metric spanning links touch an atom "
-             "the endpoint MST could not see, and ~325 more (138 object-only "
-             "+ 187 endpoint-only, ~9%) are re-routed between atoms both see "
+             "full population, 325 links touch an atom with no endpoint row "
+             "(this equals the count of endpoint-unreachable links by "
+             "construction), and separately 138 object-only + 187 "
+             "endpoint-only = 325 links are re-routed between atoms both "
+             "metrics see -- the two 325s are a coincidence, not one number "
              "-- so EXP-060B's recall carries an error bar nobody drew. Adopt "
              "object distance downstream because it is the correct and "
              "strictly tighter quantity, not because it rescues the ball."),
@@ -309,19 +317,97 @@ REGISTRY: list[Entry] = [
              "cube, so the connective cable -- a passing neurite with no "
              "synapse of its own -- is never enumerated. Walking the proofread "
              "cell's own L2 graph instead, the nearest labelled sibling is a "
-             "median 2 hops away and every object holding the material in "
-             "between is missing from the population. Direct atom-to-atom L2 "
-             "contacts are ZERO by construction and always will be: had the "
-             "chunkedgraph joined two atoms they would be one atom, so "
+             "median 3 hops away (probe: 2 and ~102) and every object holding "
+             "the material in between is missing from the population. Direct "
+             "atom-to-atom L2 contacts are ZERO by construction and always "
+             "will be: had the chunkedgraph joined two atoms they would be "
+             "one atom, so "
              "'is there a contact' is the wrong query -- which is why this "
              "reports hop distance instead. Note the denominator trap repeats "
-             "here: the clique median is ~102 hops against a nearest-sibling "
-             "median of 2, the same error CORRECTION.md caught in EXP-060. "
+             "here: the clique median is 54.75 hops against a nearest-sibling "
+             "median of 3, the same error CORRECTION.md caught in EXP-060. "
              "The bar was set by a hand probe on the twelve cells with the most "
              "fragments and is tested here on cells that probe never saw. "
              "Consequence: candidate generation was being asked to bridge a gap "
              "the SUBSTRATE created, so the fix is upstream of every scorer and "
              "solver -- see scripts/enumerate_region_objects.py."),
+
+    Entry(series="B", est_minutes=45, spec=_s(
+        id="EXP-072", title="Object-level proposal on the widened substrate",
+        question="Does proposing at the object level, over every v117 object "
+                 "rather than only synapse-carrying ones, reach the spanning "
+                 "links at a usable panel size?",
+        criterion="on the widened substrate, chained recall of MST spanning "
+                  "links at radius 2 um, panel cap 20 and at most 3 hops must "
+                  "exceed 50%, AND beat the population-only control by at "
+                  "least 20 points, AND keep the median number of reachable "
+                  "LABELLED atoms at or under 50. The third clause was added "
+                  "before the run: chained recall without a bound on what it "
+                  "reaches is EXP-058's union-find result, which scored recall "
+                  "1.0 at pair precision 0.0006 by collapsing the population "
+                  "into one cluster",
+        requires=["EXP-071"], requires_ran=["EXP-060B", "EXP-070"],
+        inputs=[TOPOLOGY_KALL, LABELS_NPZ, OBJECT_CLOUDS, OBJECTS_V117],
+        flags={"synthetic_fallback": False,
+               "labels_used_only_for_evaluation": True}),
+        module="neuronauts.experiments.exp072_object_proposal",
+        note="The test of whether EXP-071's substrate fix is SUFFICIENT, not "
+             "just necessary. Proposer is deliberately stupid -- objects within "
+             "a radius, ranked by closest approach, capped. No tangent, "
+             "caliber, grammar or learned score, so a gain is attributable to "
+             "the substrate alone. A 40 um probe already says it is not "
+             "sufficient: at r=2 um chained recall rises 10.9% -> 100% as the "
+             "cap goes 5 -> 100, while precision sits at 0.08-0.13% throughout "
+             "and the reachable-labelled set goes 21 -> 703 of 704. Dense "
+             "neuropil means chaining reaches everything. Direct recall is also "
+             "WORSE than EXP-060B's 12% at the same cap, because the panel "
+             "budget now gets spent on connective and dust objects physically "
+             "closer than the true partner -- more objects ranked by distance "
+             "alone is actively harmful. Read together with EXP-071: the "
+             "substrate omission was real and fixing it is necessary, but "
+             "distance over a complete object set still cannot propose. What "
+             "is missing is structural constraint, which is what the skeleton "
+             "layer was always for. A physical dust floor (synapse-free "
+             "objects under 0.041 um^3 dropped, synapse-carriers exempt) is "
+             "canonical from the second run on; a sweep on the 40 um mip-2 "
+             "substrate (results/EXP-072/probe_40um_mip2_dust_floor.md) "
+             "showed it removes 87% of objects and moves precision by nothing "
+             "-- the collapse is the synapse-carrying population connecting "
+             "itself at 2 um, not debris."),
+
+    Entry(series="B", est_minutes=60, spec=_s(
+        id="EXP-073", title="Constrained chaining: does structure prune the panel?",
+        question="Do cheap structural constraints on the bridging object make "
+                 "the chained panel sparse enough to use, where distance alone "
+                 "could not?",
+        criterion="EXP-072's bar, unchanged, so the two are a direct A/B: "
+                  "chained recall of MST spanning links at radius 2 um, cap 20, "
+                  "at most 3 hops must exceed 50% while the median number of "
+                  "reachable LABELLED atoms stays at or under 50. Constraints "
+                  "are hard filters on the bridging object computed from the "
+                  "object clouds -- cable-like (elongated, bounded extent), "
+                  "through (the two fragments attach at opposite ends of the "
+                  "bridge), collinear. No skeleton, no fetch, nothing learned",
+        requires=["EXP-071"], requires_ran=["EXP-072"],
+        inputs=[TOPOLOGY_KALL, LABELS_NPZ, OBJECT_CLOUDS, OBJECTS_V117],
+        flags={"synthetic_fallback": False,
+               "labels_used_only_for_evaluation": True}),
+        module="neuronauts.experiments.exp073_constrained_chain",
+        note="The user's hypothesis, made falsifiable: skeletons were never "
+             "mainly a distance substrate, they carry structure -- tree-ness, "
+             "degree, the one-soma rule, caliber continuity -- and structure is "
+             "exactly what EXP-072's collapse lacks. This tests the cheapest "
+             "form of it, at the OBJECT level (no L2 graph, no skeleton fetch): "
+             "is the bridge a piece of cable, and do the two fragments hang off "
+             "opposite ends of it? Hard filters, because EXP-060B's problem was "
+             "panel SIZE, and a filter that prunes at near-zero recall cost is "
+             "worth more there than a scorer that ranks. Both this and EXP-072 "
+             "now apply a physical dust floor -- synapse-free objects under "
+             "0.041 um^3 (1,000 voxels at 32x32x40 nm) are dropped, "
+             "synapse-carriers exempt -- after the first runs thresholded at 2 "
+             "read voxels, which excluded nothing. Canonical substrate is the "
+             "near-isotropic mip-2 (32x32x40 nm) read once its full-cube "
+             "enumeration lands; mip-5 results before that are superseded."),
 
     # --- C. cuts and frankenmerge detection ---------------------------------
     Entry(series="C", est_minutes=90, spec=_s(

@@ -18,15 +18,15 @@ Two kinds of threads:
 | Thread | Status | Kind | Code | Entry point | Checkpoints |
 |--------|--------|------|------|-------------|-------------|
 | [fingerprints](fingerprints/README.md) | external | branch | `claude/neuron-fingerprints-connectivity-jg95xp` (unmerged) | see thread README | — |
-| [tree_dna](tree_dna/README.md) | incubating | core seed + branch | `neuronauts/path_edge_encoder.py` + `claude/tree-dna-phase-1-G1DNn` | `train.py train-path-encoder` | `path_encoder_v3*` (local) |
-| [error_correction](error_correction/README.md) | active | core | `neuronauts/edit_history.py`, `cave_root_mapping.py`, `path_dataset.py` | `train.py fetch-cave-edits-from-cache` | — (training signal) |
+| [tree_dna](../docs/threads/tree_dna.md) | incubating | core seed + branch | `neuronauts/path_edge_encoder.py` + `claude/tree-dna-phase-1-G1DNn` | `train.py train-path-encoder` | `path_encoder_v3*` (local) |
+| [error_correction](../docs/threads/error_correction.md) | active | core | `neuronauts/edit_history.py`, `cave_root_mapping.py`, `path_dataset.py` | `train.py fetch-cave-edits-from-cache` | — (training signal) |
 | [pcfg](pcfg/README.md) | active | experiment | `experiments/pcfg/` | `run_experiment.py` | — (non-neural) |
-| [grammar](grammar/README.md) | active | core | `neuronauts/grammar.py`, `shared_grammar_model.py` | `train.py train` | `grammar_cave_real_50`, `shared_grammar_*`, `gat_skeleton_50e` |
-| [cell_assignment](cell_assignment/README.md) | active (default) | core | `neuronauts/cell_graph.py`, `assembly.py` | `train.py train-cell-gnn` | `cell_gnn_seg`, `cell_gnn_5feat`, `cell_gnn_real` |
+| [grammar](../docs/threads/grammar.md) | active | core | `neuronauts/grammar.py`, `shared_grammar_model.py` | `train.py train` | `grammar_cave_real_50`, `shared_grammar_*`, `gat_skeleton_50e` |
+| [cell_assignment](../docs/threads/cell_assignment.md) | active (default) | core | `neuronauts/cell_graph.py`, `assembly.py` | `train.py train-cell-gnn` | `cell_gnn_seg`, `cell_gnn_5feat`, `cell_gnn_real` |
 | [root_neighborhood](root_neighborhood/README.md) | incubating | experiment | `experiments/root_neighborhood/` | `train.py build-dataset --strategy proofread-core` | `shared_grammar_root_neighborhood_run001` |
 | [soma_graph](soma_graph/README.md) | incubating | experiment | `experiments/soma_graph/` | `smoke_test.py` | — |
 | [minnie_column](minnie_column/README.md) | active (data) | experiment | `experiments/minnie_column/` | see its README | — |
-| [topology](topology/README.md) | optional | core | `neuronauts/topology_model.py`, `topology_dataset.py` | `scripts/train_topology_model.py` | — (smoke only) |
+| [topology](../docs/threads/topology.md) | optional | core | `neuronauts/topology_model.py`, `topology_dataset.py` | `scripts/train_topology_model.py` | — (smoke only) |
 | legacy (v1) | quarantined | — | `neuronauts/legacy/` | `neuronauts` console script | — |
 
 **Status legend:** *active* = part of the current workflow · *active (default)*

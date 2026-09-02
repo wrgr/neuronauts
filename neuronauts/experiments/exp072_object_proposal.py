@@ -6,8 +6,8 @@ EXP-060B is the number to beat: reducing by atom instead of endpoint, a panel of
 (skeleton tips, not objects) and fixing it moved the ceiling without moving the
 verdict. EXP-071 then found the actual cause: the population admits a v117 object
 only if it owns a synapse in the cube, so the connective cable — a passing
-neurite with no synapse of its own — was never enumerated, and every one of the
-2,147 objects holding it was missing.
+neurite with no synapse of its own — was never enumerated, and every object
+holding it that lies inside the cube (146 of them) was missing.
 
 This re-runs the proposal measurement with both corrections and nothing else new:
 
@@ -73,11 +73,19 @@ HOPS = (1, 2, 3)
 #: the closest approach to a neighbour is found from a spread sample. Sampled on
 #: a fixed stride, not randomly, so the run is reproducible.
 MAX_SEED_POINTS = 64
-#: Objects below this many voxels are dropped from the panel. EXP-071 measured
-#: the connective cable at a median of 5 L2 nodes with 98.6% of its mass in
-#: objects of 2+ nodes, so single-voxel dust can go without losing the material
-#: that matters -- and it is most of the point count.
-MIN_VOXELS = 2
+#: Dust floor, in PHYSICAL units so it means the same thing at every read mip.
+#: An object that owns no synapse in the cube and is smaller than this is
+#: treated as debris and kept out of the panel; an object that owns a synapse
+#: stays whatever its size, because a synapse is evidence of real structure and
+#: that test is label-blind (it comes from the synapse table, not proofreading).
+#: 0.041 um^3 is 1,000 voxels at 32x32x40 nm -- about a micron of 200-nm
+#: neurite -- the user's suggested floor. A first version thresholded at 2 read
+#: voxels, which at mip 2 is 8e-5 um^3 and excludes nothing; the panel was
+#: filling with sub-micron specks physically closer than any true partner.
+MIN_VOLUME_UM3 = 0.041
+#: Swept in the probe so the floor's effect on precision and reach is visible
+#: rather than assumed; the registered run uses MIN_VOLUME_UM3.
+VOLUME_SWEEP_UM3 = (0.0, 0.01, 0.041, 0.1, 0.5)
 
 BAR_CHAINED_RECALL = 0.50
 BAR_MARGIN_OVER_CONTROL = 0.20
@@ -113,7 +121,9 @@ SPEC = Spec(
     requires=["EXP-071"], requires_ran=["EXP-060B", "EXP-070"],
     inputs=[TOPOLOGY, LABELS_NPZ, CLOUDS, OBJECTS],
     params={"radii_nm": list(RADII_NM), "caps": list(CAPS), "hops": list(HOPS),
-            "min_voxels": MIN_VOXELS, "bar_chained_recall": BAR_CHAINED_RECALL,
+            "min_volume_um3": MIN_VOLUME_UM3,
+            "volume_sweep_um3": list(VOLUME_SWEEP_UM3),
+            "bar_chained_recall": BAR_CHAINED_RECALL,
             "bar_margin": BAR_MARGIN_OVER_CONTROL,
             "bar_radius_nm": BAR_RADIUS_NM, "bar_cap": BAR_CAP,
             "bar_hops": BAR_HOPS},
@@ -124,7 +134,13 @@ SPEC = Spec(
 
 def load_clouds(path):
     with np.load(Path(path), allow_pickle=False) as z:
-        return (z["object_id"], z["node_ptr"], z["pos_nm"], z["n_voxels"],
+        # "n_voxels_per_point" is the current key; older clouds (built before
+        # scripts/build_object_clouds.py renamed it) still carry "n_voxels" --
+        # per-POINT here, unlike the per-OBJECT "n_voxels" that
+        # enumerate_region_objects.py writes to a different file.
+        nvox = (z["n_voxels_per_point"] if "n_voxels_per_point" in z.files
+               else z["n_voxels"])
+        return (z["object_id"], z["node_ptr"], z["pos_nm"], nvox,
                 json.loads(bytes(z["meta"]).decode()) if "meta" in z else {})
 
 
@@ -204,7 +220,7 @@ def _cap_panel(nmap, cap):
             for a, v in nmap.items()}
 
 
-def _chained(panel, truth, labelled, owner_of, max_hops):
+def _chained(panel, truth, labelled, max_hops):
     """Reachability through the panel graph within ``h`` hops -- with its cost.
 
     Edges run between any two objects the panel links, labelled or not, so a
@@ -269,12 +285,14 @@ def _chained(panel, truth, labelled, owner_of, max_hops):
     return out
 
 
-def measure(clouds_path, objects_path, topo_path, labels_path, *, verbose=True):
+def measure(clouds_path, objects_path, topo_path, labels_path, *, verbose=True,
+            min_volume_um3=MIN_VOLUME_UM3):
     """The whole measurement, factored out so a sub-volume can be probed with it."""
     obj_id, ptr, pos, nvox, meta = load_clouds(clouds_path)
     with np.load(Path(objects_path), allow_pickle=False) as z:
         in_pop_id, in_pop = z["object_id"], z["in_population"]
     pop_set = set(in_pop_id[in_pop].tolist())
+    voxel_um3 = float(np.prod(meta["resolution_nm"])) / 1e9
 
     with np.load(Path(topo_path), allow_pickle=False) as z:
         atoms = z["atom_id"]
@@ -308,13 +326,17 @@ def measure(clouds_path, objects_path, topo_path, labels_path, *, verbose=True):
     # Getting that wrong broadcasts a per-point mask against a per-object one.
     per = np.diff(ptr)
     obj_voxels = np.add.reduceat(nvox, ptr[:-1]) if len(ptr) > 1 else nvox
-    big = obj_voxels >= MIN_VOXELS
+    obj_um3 = obj_voxels * voxel_um3
+    has_synapse = np.isin(obj_id, in_pop_id[in_pop])
+    big = has_synapse | (obj_um3 >= min_volume_um3)
     point_obj = np.repeat(obj_id, per)
     point_big = np.repeat(big, per)
     labelled_set = set(ids.tolist())
     if verbose:
-        print(f"  objects {len(obj_id):,}; >= {MIN_VOXELS} voxels: "
-              f"{int(big.sum()):,} ({big.mean():.1%})", flush=True)
+        print(f"  objects {len(obj_id):,}; kept {int(big.sum()):,} "
+              f"({big.mean():.1%}) = synapse-carrying {int(has_synapse.sum()):,} "
+              f"+ synapse-free >= {min_volume_um3:g} um^3 "
+              f"{int((big & ~has_synapse).sum()):,}", flush=True)
 
     results = {}
     for label, restrict in (("widened", None), ("population_only", pop_set)):
@@ -341,7 +363,7 @@ def measure(clouds_path, objects_path, topo_path, labels_path, *, verbose=True):
                 # comparable with the chained figure
                 lab_pairs = {p for p in pairs
                              if p[0] in labelled_set and p[1] in labelled_set}
-                ch = _chained(panel, truth, labelled_set, None, max(HOPS))
+                ch = _chained(panel, truth, labelled_set, max(HOPS))
                 sizes = np.array([len(v) for v in panel.values()], float)
                 rows[f"r{int(r)}_cap{cap}"] = {
                     "radius_nm": r, "cap": cap,
@@ -366,7 +388,9 @@ def measure(clouds_path, objects_path, topo_path, labels_path, *, verbose=True):
     return {"results": results, "n_truth": len(truth),
             "n_labelled": int(len(ids)), "clouds_meta": meta,
             "n_objects_total": int(len(obj_id)),
-            "n_objects_in_population": int(len(pop_set))}
+            "n_objects_in_population": int(len(pop_set)),
+            "min_volume_um3": float(min_volume_um3),
+            "n_objects_in_panel_substrate": int(big.sum())}
 
 
 def run(ctx: Context) -> Outcome:

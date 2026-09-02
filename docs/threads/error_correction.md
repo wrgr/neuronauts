@@ -10,8 +10,8 @@ fixed false merges and false splits. Each edit is a free label:
   across those chains is a valid same-cell path the model *should* join.
 
 This is the "transfer function from raw segmentation to proofread truth" that
-trains the [tree-DNA](../tree_dna/README.md) and
-[grammar](../grammar/README.md) threads. Merge-only training makes the model
+trains the [tree-DNA](tree_dna.md) and
+[grammar](grammar.md) threads. Merge-only training makes the model
 distrust every junction; the split positives are what force it to rely on real
 trajectory features.
 

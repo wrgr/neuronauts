@@ -25,6 +25,19 @@ and deliberately so: the question these clouds answer is how close two objects
 come to each other, and for that the sampling only has to be fine relative to the
 gaps being measured.
 
+The per-point voxel count is saved as ``n_voxels_per_point`` -- not ``n_voxels``,
+which ``enumerate_region_objects.py`` already uses for its per-OBJECT voxel
+count in a different file; the two must not be confused. Clouds built before
+this key was renamed still load (``exp072_object_proposal.load_clouds`` reads
+either), and are otherwise unaffected.
+
+Clouds built before the half-voxel centring fix below are offset from the
+independent objgeom coordinates by half a voxel -- 128/128/80 nm at mip 5,
+16/16/20 nm at mip 2 -- toward the voxel corner rather than its centre. That
+offset is uniform across every point, so it is harmless for cloud-vs-cloud
+distance measurements (EXP-072/073) and only matters when comparing against
+another coordinate source.
+
     python scripts/build_object_clouds.py --side-um 100 --mip 5
 """
 
@@ -142,10 +155,12 @@ def main() -> int:
 
     keep = hit & (n > 0)
     root = root[keep]
+    # +0.5: sx/n etc. are a mean voxel-grid INDEX, so without the half-voxel
+    # shift the result lands on a voxel corner, not its centre.
     pts_nm = np.stack([
-        (sx[keep] / n[keep] + lo[0]) * res[0],
-        (sy[keep] / n[keep] + lo[1]) * res[1],
-        (sz[keep] / n[keep] + lo[2]) * res[2]], axis=1).astype(np.float32)
+        (sx[keep] / n[keep] + lo[0] + 0.5) * res[0],
+        (sy[keep] / n[keep] + lo[1] + 0.5) * res[1],
+        (sz[keep] / n[keep] + lo[2] + 0.5) * res[2]], axis=1).astype(np.float32)
     nvox = n[keep].astype(np.int64)
 
     # --- CSR by object --------------------------------------------------------
@@ -158,7 +173,10 @@ def main() -> int:
         "centre_um": list(args.centre_um), "side_um": args.side_um,
         "mip": args.mip, "resolution_nm": res.tolist(),
         "timestamp": V117_TIMESTAMP, "base_version": 117,
-        "point": "one per supervoxel, its voxel centroid in nm",
+        "point": "one per supervoxel, its voxel centroid in nm; "
+                 "n_voxels_per_point holds that supervoxel's voxel count "
+                 "(per POINT, not per object -- see "
+                 "enumerate_region_objects.py's per-object n_voxels)",
         "n_objects": int(len(obj)), "n_points": int(len(pts_nm)),
         "svmap": str(svmap),
         "note": "label-blind; synapse-free objects included. Sampling is the "
@@ -170,7 +188,7 @@ def main() -> int:
         "elapsed_min": round((time.time() - t0) / 60, 1),
     }
     np.savez_compressed(out, object_id=obj, node_ptr=ptr, pos_nm=pts_nm,
-                        n_voxels=nvox,
+                        n_voxels_per_point=nvox,
                         meta=np.frombuffer(json.dumps(meta).encode(), np.uint8))
     for f in sorted(work.glob("cent_*.npz")):
         f.unlink()

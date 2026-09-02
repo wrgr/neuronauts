@@ -21,12 +21,24 @@ substrate, with three things the report could not do:
    do they look like frankenmerges? That is the label-validity check EXP-057B's
    own caveat asked for.
 
-**Size is the confound and is controlled by substrate.** On the full population
-a mixed atom has a median 818 L2 nodes and a trustworthy negative 28, so "is it
-big" is nearly a perfect classifier there and would flatter every feature set.
-Tier >=10 puts a floor under both classes (945 vs 809) and is the only substrate
-this experiment runs on; a size-only rung is reported anyway, and the bar
-requires beating it.
+**Size is the confound, and the substrate only partly controls it.** On the full
+population a mixed atom has a median 818 L2 nodes and a trustworthy negative 28,
+so "is it big" is nearly a perfect classifier there and would flatter every
+feature set. Tier >=10 puts a floor under both classes and is the only substrate
+this experiment runs on. But the peer review measured the strict-negative set
+this run actually uses -- pure, proofread-owned, CB2-touched atoms excluded --
+at a median of **382** L2 nodes against 945 for the positives, not the 809 a
+first draft quoted (that figure included the 363 CB2-touched atoms, median
+2,826, which line ~234 then removes). So a size gap remains, and the bar has to
+beat the stronger of two size-only rungs: log(n synapses), and n L2 nodes. The
+verdict below clears both by a wide margin; the text is corrected so the
+control is stated as it is, not as it was hoped.
+
+One further honesty note: the best feature set is chosen on the validation set
+and its validation AUC is what is reported -- fourteen feature-set x model
+combinations, one split. That is optimistic selection. The margin over the bar
+(0.958 vs 0.875) is large enough that it does not threaten the verdict; small
+differences between feature sets should not be read as rankings.
 
 **Two things this experiment deliberately does not do.**
 
@@ -89,7 +101,13 @@ AUC_BAR = 0.875                # the PCFG report's shape detector, on its substr
 SIZE_MARGIN = 0.02             # must beat log(n) alone by this much
 
 FEATURE_SETS = {
+    #: Two size rungs, because the peer review caught the first one being the
+    #: weakest possible control: log(n synapses) alone scored AUC 0.48, below
+    #: chance, while log(n L2 nodes) alone scores ~0.65. The confound the
+    #: docstring names is object SIZE, and n_l2 is the honest proxy for it.
+    #: The bar must beat the stronger of the two.
     "size_only":          ["log_n_syn"],
+    "size_only_l2":       ["n_l2"],
     "polarity":           POLARITY_COLS,
     "global_shape":       GLOBAL_SHAPE_COLS,
     "global_shape_noSize": [GLOBAL_SHAPE_COLS[i] for i in GLOBAL_SHAPE_SHAPE_COLS],
@@ -311,10 +329,11 @@ def run(ctx: Context) -> Outcome:
     def auc_of(name, mname="gbdt"):
         return rows[name][mname]["strict"]["auc"]
 
-    size_auc = max(auc_of("size_only", m) for m in ("gbdt", "logistic"))
+    size_auc = max(auc_of(s, m) for s in ("size_only", "size_only_l2")
+                   for m in ("gbdt", "logistic"))
     best_name, best_model, best_auc = None, None, -1.0
     for name in FEATURE_SETS:
-        if name == "size_only":
+        if name in ("size_only", "size_only_l2"):
             continue
         for m in ("gbdt", "logistic"):
             a = auc_of(name, m)

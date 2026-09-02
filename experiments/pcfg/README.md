@@ -2,7 +2,7 @@
 
 > **Status: active** (experiment thread). One of the project's research threads —
 > see the index in [`../README.md`](../README.md). A cheap, non-neural baseline
-> for the merge decision the [grammar](../grammar/README.md) thread learns.
+> for the merge decision the [grammar](../../docs/threads/grammar.md) thread learns.
 
 Applies a Berlin-style bigram grammar to **synapse half-partitions** to learn
 `f(v117) → v18xx` merge prediction.  No neural network, no EM volume, no agent simulation.

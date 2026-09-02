@@ -8,7 +8,7 @@ assembly on: fragments carry global coordinates and a shape signature, so they
 can be stitched across box seams.
 
 > **tree-DNA ≠ fingerprints.** tree-DNA is *morphology* (the fragment's own
-> shape); [fingerprints](../fingerprints/README.md) is *connectivity* (who it
+> shape); [fingerprints](../../experiments/fingerprints/README.md) is *connectivity* (who it
 > synapses with). Two independent cues; different branches.
 
 **Status:** incubating — a core seed lives in this tree; the full encoder is on a
@@ -26,7 +26,7 @@ branch (PR #17).
   commits ahead / 24 behind `main`.
 - **Successor:** the PR's own notes say the box-local approach is superseded by
   **`claude/synapse-coassign`** (correlation-clustering co-assignment) — see
-  [cell_assignment](../cell_assignment/README.md). Resolve PR #17 by extracting
+  [cell_assignment](cell_assignment.md). Resolve PR #17 by extracting
   the encoder and closing in favor of the co-assignment frontier, or rebasing.
 
 ## Run (the merged seed)
@@ -39,7 +39,7 @@ python scripts/train.py train-path-encoder \
   --output models/scratch/path_encoder.pt --epochs 10 --seed 42
 ```
 
-The embedding feeds [cell_assignment](../cell_assignment/README.md) via
+The embedding feeds [cell_assignment](cell_assignment.md) via
 `--path-encoder-checkpoint`.
 
 ## Checkpoints

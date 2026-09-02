@@ -1,7 +1,7 @@
 {
-  "elapsed_min": 1.9647204478581746,
+  "elapsed_min": 2.003379495938619,
   "id": "EXP-063",
-  "note": "best detector all/gbdt: held-out AUC 0.958 (bar 0.875), size-only 0.483, global-shape rung 0.875. CB2 tiers held out of training: tier 1 (raw-mixed only, n=169) scores AUC 0.788 against strict negatives, tier 0 (no v1822 signal, n=114) scores 0.736 -- tier 0 does not look like the positives to this detector; treat it as unverified, not as noise. Bar 3 not measured here; it is a cut metric and moves to EXP-062.",
+  "note": "best detector all/gbdt: held-out AUC 0.958 (bar 0.875), size-only 0.654, global-shape rung 0.875. CB2 tiers held out of training: tier 1 (raw-mixed only, n=169) scores AUC 0.788 against strict negatives, tier 0 (no v1822 signal, n=114) scores 0.736 -- tier 0 does not look like the positives to this detector; treat it as unverified, not as noise. Bar 3 not measured here; it is a cut metric and moves to EXP-062.",
   "observed": {
     "best_feature_set": "all/gbdt",
     "best_lenient_precision_at_top2pct": 0.394558,
@@ -11,7 +11,7 @@
     "global_shape_val_auc_strict": 0.875125,
     "n_train_positives": 922,
     "polarity_val_auc_strict": 0.913743,
-    "size_only_val_auc_strict": 0.483394
+    "size_only_val_auc_strict": 0.653845
   },
   "population": {
     "cb2_by_tier": {
@@ -55,29 +55,29 @@
     ],
     "cwd": "/Users/wgray13/projects/neuronauts",
     "git_branch": "feat/global-merge-assembly",
-    "git_commit": "8b509ef122e0e5dd56ee2ffc60cd4fefbb8106ef",
+    "git_commit": "81aec2b81d570605bdca171fbd76740a72a00911",
     "git_dirty": true,
     "git_modified_files": [
       "LAUDE.md",
-      "docs/metrics.md",
-      "docs/threads/embedding_availability.md",
-      "experiments/pcfg/HOLDOUT_RESULTS.md",
+      "docs/archive/2026-09/README.md",
+      "docs/consolidation_plan.md",
+      "experiments/cell_assignment/README.md -> docs/threads/cell_assignment.md",
+      "experiments/error_correction/README.md -> docs/threads/error_correction.md",
+      "experiments/grammar/README.md -> docs/threads/grammar.md",
+      "experiments/topology/README.md -> docs/threads/topology.md",
+      "experiments/tree_dna/README.md -> docs/threads/tree_dna.md",
+      "experiments/README.md",
+      "experiments/fingerprints/README.md",
       "experiments/pcfg/README.md",
-      "experiments/pcfg/ablate_merge.py",
-      "experiments/pcfg/atomicity_detector.py",
-      "experiments/pcfg/close_loop_cut.py",
-      "experiments/pcfg/close_loop_merge.py",
-      "experiments/pcfg/conn_metric.py",
-      "experiments/pcfg/continuation_merge.py",
-      "experiments/pcfg/cut_report.py",
-      "experiments/pcfg/fetch_bigdata.py",
-      "experiments/pcfg/global_shape_merge.py",
-      "experiments/pcfg/grammar_regime.py",
-      "experiments/pcfg/group_eval.py",
-      "experiments/pcfg/join_corrector.py",
-      "experiments/pcfg/learned_grammar_neural.py",
-      "experiments/pcfg/recursive_corrector.py",
-      "experiments/pcfg/seam_detector.py"
+      "experiments/root_neighborhood/README.md",
+      "experiments/soma_graph/README.md",
+      "neuronauts/experiments/exp063_frankenmerge_detection.py",
+      "neuronauts/experiments/exp070_object_distance.py",
+      "neuronauts/experiments/exp071_connective_gap.py",
+      "neuronauts/experiments/exp072_object_proposal.py",
+      "neuronauts/experiments/registry.py",
+      "results/EXP-071/CORRECTION.md",
+      "results/EXP-071/evaluation.md"
     ],
     "git_untracked_count": 5,
     "hostname": "DXJ5G9L3W1-ML",
@@ -231,6 +231,9 @@
         "size_only": [
           "log_n_syn"
         ],
+        "size_only_l2": [
+          "n_l2"
+        ],
         "topology": [
           "n_l2",
           "n_edge",
@@ -255,7 +258,7 @@
     "platform": "macOS-15.7.9-arm64-arm-64bit-Mach-O",
     "python": "3.14.2",
     "synthetic_fallback": false,
-    "timestamp_utc": "2026-09-02T12:56:48+00:00"
+    "timestamp_utc": "2026-09-02T17:08:53+00:00"
   },
   "question": "Does mixed polarity, object shape, or their combination flag a false merge on the harness substrate -- and do CB2's uncorroborated tiers look like frankenmerges to a detector trained without them?",
   "requires": [
@@ -728,6 +731,72 @@
             "n_pos": 922,
             "precision_at_top2pct": 0.84,
             "recall_at_top2pct": 0.022777
+          }
+        }
+      },
+      "size_only_l2": {
+        "gbdt": {
+          "lenient": {
+            "ap": 0.232382,
+            "auc": 0.729481,
+            "base_rate": 0.129536,
+            "n": 7303,
+            "n_flagged": 1508,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.244032,
+            "recall_at_top2pct": 0.389006
+          },
+          "strict": {
+            "ap": 0.72966,
+            "auc": 0.653845,
+            "base_rate": 0.626905,
+            "n": 1509,
+            "n_flagged": 43,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.581395,
+            "recall_at_top2pct": 0.026427
+          },
+          "train_strict": {
+            "ap": 0.906308,
+            "auc": 0.777002,
+            "base_rate": 0.780694,
+            "n": 1181,
+            "n_flagged": 50,
+            "n_pos": 922,
+            "precision_at_top2pct": 0.96,
+            "recall_at_top2pct": 0.052061
+          }
+        },
+        "logistic": {
+          "lenient": {
+            "ap": 0.276511,
+            "auc": 0.74831,
+            "base_rate": 0.129536,
+            "n": 7303,
+            "n_flagged": 147,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.408163,
+            "recall_at_top2pct": 0.063425
+          },
+          "strict": {
+            "ap": 0.639347,
+            "auc": 0.55768,
+            "base_rate": 0.626905,
+            "n": 1509,
+            "n_flagged": 31,
+            "n_pos": 946,
+            "precision_at_top2pct": 0.580645,
+            "recall_at_top2pct": 0.019027
+          },
+          "train_strict": {
+            "ap": 0.882874,
+            "auc": 0.73482,
+            "base_rate": 0.780694,
+            "n": 1181,
+            "n_flagged": 24,
+            "n_pos": 922,
+            "precision_at_top2pct": 0.958333,
+            "recall_at_top2pct": 0.024946
           }
         }
       },

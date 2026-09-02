@@ -9,7 +9,7 @@ a soft-F1 surrogate of the terminal line-graph metric.
 
 **Status:** active (core thread). Pairwise merge accuracy is strong (~85–87%);
 the open problem is translating that into global line-graph F1 (see
-[cell_assignment](../cell_assignment/README.md) and the roadmap).
+[cell_assignment](cell_assignment.md) and the roadmap).
 
 ## Code (lives in core)
 

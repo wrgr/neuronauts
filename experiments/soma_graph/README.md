@@ -2,7 +2,7 @@
 
 > Experiment thread — see the index in [`../README.md`](../README.md). This is
 > the connectome (neuron × neuron) stage; its node features are the slot
-> [tree-DNA](../tree_dna/README.md) (morphology) and
+> [tree-DNA](../../docs/threads/tree_dna.md) (morphology) and
 > [fingerprints](../fingerprints/README.md) (connectivity) are meant to fill.
 
 > **Status: experimental.** Distinct from the main box-level pipeline. Kept in

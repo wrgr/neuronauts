@@ -39,7 +39,8 @@ three things of it:
 
 **The bar comes from a probe on disjoint cells.** This was first run by hand on
 the twelve cells with the most labelled fragments, which found a nearest-sibling
-median of 2 hops, 74.7% within 3, and zero direct contacts. Declaring a bar
+median of 2 hops, 74.7% within 3 (exploratory probe; held-out result: median 3,
+60.1%), and zero direct contacts. Declaring a bar
 after seeing that would be worthless, so those twelve are **excluded here** and
 the bar below is the probe's finding, tested on cells it never saw.
 

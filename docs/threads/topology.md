@@ -3,7 +3,7 @@
 **Goal.** Validate whether a candidate cell is **topologically atomic** — an
 attention-based arbor validator that flags clusters formed by merging two
 distinct roots. Used as an optional quality signal on top of
-[cell_assignment](../cell_assignment/README.md).
+[cell_assignment](cell_assignment.md).
 
 **Status:** optional (core thread). Wired but off the default path:
 `neuronauts/cell_graph.py` imports `topology_model` only inside

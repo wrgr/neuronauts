@@ -3,8 +3,8 @@
 **Goal.** Build training caches seeded from **proofread-anchor neighborhoods**
 (all synapses near a set of proofread root IDs) rather than spatially random
 boxes. Proofread anchors carry real edit signal, so these caches surface the
-false-merge / false-split pairs the [error_correction](../error_correction/README.md)
-and [grammar](../grammar/README.md) threads need — where random `boxes_30um`
+false-merge / false-split pairs the [error_correction](../../docs/threads/error_correction.md)
+and [grammar](../../docs/threads/grammar.md) threads need — where random `boxes_30um`
 caches showed `0 merge pairs, 0 split pairs`.
 
 **Status:** incubating (experiment thread).
