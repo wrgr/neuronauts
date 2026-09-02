@@ -1,5 +1,26 @@
 # EXP-075 — Can local geometry tell a grower when to stop?
 
+> **CORRECTION (EXP-076).** The headline AUC of 0.304 below rests on whole-cell
+> panels centred on "the farthest interior point from the soma", intended as an
+> arbor terminal. EXP-076 measured that the seed's own cloud **continues past
+> that point in 28 of 35 whole cells, by a median of 2,303 nm** — the point is
+> where the interior mask clipped the arbor, not where the arbor ends. So for
+> four fifths of that class the box sat mid-cable, and the "already whole,
+> nothing continues here" label was wrong for them.
+>
+> This is the **third** box-placement error in this experiment, after the
+> soma-versus-neurite caliber confound and the cube-boundary contamination
+> already documented below. I did not catch it, and the pattern is now
+> unmistakable: on this substrate, where the box sits is doing as much work as
+> what is computed inside it, and I have been auditing that only after the fact.
+>
+> **The 0.304 should be treated as unverified, not as a result.** EXP-076 did
+> not test which direction the error pushes it, and neither do I claim it is
+> wrong — only that it was not measured on the class it names. The corrected
+> terminal panels live in `data/external/panels_tip/`. The join-side numbers in
+> this document are unaffected: they come from panels centred on real
+> seed/target contacts, which involve no terminal selection.
+
 ## Result: no. Max-score AUC 0.304 — the evidence is not merely silent, it argues confidently for the wrong answer. The stop rule cannot be local, which is the strongest argument yet for scoring trees rather than pairs.
 
 EXP-074 established the specification: distance narrows a soma seed's field about

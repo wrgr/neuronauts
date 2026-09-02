@@ -123,7 +123,27 @@ def main():
                 print(f"  {key}: no interior terminal, skipping", flush=True)
                 continue
             cand_pts = Ps[inside]
-            ctr = cand_pts[int(np.argmax(np.linalg.norm(cand_pts - soma, axis=1)))]
+            # The farthest interior point is NOT a terminal -- it is where the
+            # interior mask clipped the arbor. EXP-076 measured the seed's cloud
+            # continuing past it in 28 of 35 cells by a median of 2,303 nm. A
+            # real cable end has nothing beyond it: walking outward from the
+            # soma, no seed points lie further along that direction nearby.
+            out = cand_pts - soma
+            nrm = np.linalg.norm(out, axis=1, keepdims=True)
+            dirs = out / np.maximum(nrm, 1.0)
+            tip_ok = np.zeros(len(cand_pts), dtype=bool)
+            tree_seed = cKDTree(Ps)
+            for i in range(len(cand_pts)):
+                nb = Ps[tree_seed.query_ball_point(cand_pts[i], r=3000.0)]
+                if len(nb) < 3:
+                    continue
+                # anything beyond this point, along the outward direction?
+                tip_ok[i] = not np.any((nb - cand_pts[i]) @ dirs[i] > 500.0)
+            if not tip_ok.any():
+                print(f"  {key}: no true cable end interior to the cube, skipping", flush=True)
+                continue
+            ends = cand_pts[tip_ok]
+            ctr = ends[int(np.argmax(np.linalg.norm(ends - soma, axis=1)))]
 
         t0 = time.time()
         lo = np.floor((ctr - HALF_NM) / res).astype(int)
@@ -163,7 +183,7 @@ def main():
         # or closes into a bouton. Caliber is profiled along the seed's own axis
         # out to its last voxel near this point.
         aS_all = axis_of(Sv[np.linalg.norm(Sv - ctr, axis=1) < LOCAL_NM])
-        end_ratio = end_drop = np.nan
+        end_ratio = np.nan
         if aS_all is not None:
             loc = Sv[np.linalg.norm(Sv - ctr, axis=1) < 2 * LOCAL_NM]
             t = (loc - ctr) @ aS_all
@@ -178,8 +198,7 @@ def main():
             tip = cal_at(edge - 300.0, edge)
             back = cal_at(edge - 1300.0, edge - 1000.0)
             if back > 0:
-                end_ratio = float(tip / back)
-                end_drop = float(1.0 - tip / back)
+                end_ratio = float(tip / back)   # end_drop was exactly 1-this; dropped
 
         sub = Sv if len(Sv) <= MAXPTS else Sv[:: len(Sv) // MAXPTS][:MAXPTS]
         st = cKDTree(sub)
@@ -212,7 +231,7 @@ def main():
                  cal_cand=np.array([r[5] for r in rec], dtype=np.float32),
                  in_target=np.array([r[6] for r in rec], dtype=bool),
                  seed=np.uint64(seed), cal_seed=np.float32(caliber(seed_mask)),
-                 end_ratio=np.float32(end_ratio), end_drop=np.float32(end_drop),
+                 end_ratio=np.float32(end_ratio),
                  already_whole=bool(c["structure"]["already_whole"]))
         n_t = sum(r[6] for r in rec)
         print(f"  {key}: {len(rec)} candidates, {n_t} in target, "
