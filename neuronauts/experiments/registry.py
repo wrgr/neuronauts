@@ -287,6 +287,42 @@ REGISTRY: list[Entry] = [
              "object distance downstream because it is the correct and "
              "strictly tighter quantity, not because it rescues the ball."),
 
+    Entry(series="B", est_minutes=20, spec=_s(
+        id="EXP-071", title="Contact adjacency and the connective gap",
+        question="Are the fragments of one cell separated by distance, or by "
+                 "objects the synapse-anchored population omits?",
+        criterion="on at least 20 proofread cells DISJOINT from the twelve the "
+                  "exploratory probe used: median nearest-sibling hop distance "
+                  "at most 5 AND at least 50% of fragments within 3 hops AND at "
+                  "least 80% of the objects holding the connective material "
+                  "absent from the population. Direct atom-to-atom level-2 "
+                  "contacts reported as a correctness check, expected zero. "
+                  "Hops to the NEAREST sibling, never the clique",
+        requires_ran=["EXP-057", "EXP-070"],
+        inputs=[TOPOLOGY_KALL, OBJGEOM_KALL, LABELS_NPZ],
+        flags={"network": True, "synthetic_fallback": False,
+               "labels_used_only_for_evaluation": True}),
+        module="neuronauts.experiments.exp071_connective_gap",
+        note="The one that reframes series B. EXP-060/060B/061/070 all measured "
+             "the distance between two SYNAPSE-ANCHORED atoms of one cell; the "
+             "population admits a v117 object only if it owns a synapse in the "
+             "cube, so the connective cable -- a passing neurite with no "
+             "synapse of its own -- is never enumerated. Walking the proofread "
+             "cell's own L2 graph instead, the nearest labelled sibling is a "
+             "median 2 hops away and every object holding the material in "
+             "between is missing from the population. Direct atom-to-atom L2 "
+             "contacts are ZERO by construction and always will be: had the "
+             "chunkedgraph joined two atoms they would be one atom, so "
+             "'is there a contact' is the wrong query -- which is why this "
+             "reports hop distance instead. Note the denominator trap repeats "
+             "here: the clique median is ~102 hops against a nearest-sibling "
+             "median of 2, the same error CORRECTION.md caught in EXP-060. "
+             "The bar was set by a hand probe on the twelve cells with the most "
+             "fragments and is tested here on cells that probe never saw. "
+             "Consequence: candidate generation was being asked to bridge a gap "
+             "the SUBSTRATE created, so the fix is upstream of every scorer and "
+             "solver -- see scripts/enumerate_region_objects.py."),
+
     # --- C. cuts and frankenmerge detection ---------------------------------
     Entry(series="C", est_minutes=90, spec=_s(
         id="EXP-062", title="Real-L2 cuts and seam location",

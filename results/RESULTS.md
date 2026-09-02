@@ -24,3 +24,4 @@ a gap. Full reports: [`results/reports/`](reports/).
 | EXP-070 | Object vs endpoint distance | error | -- | 0.2 | `8b509ef12` (dirty) | 2026-09-02T12:59:35+00:00 |
 | EXP-070 | Object vs endpoint distance | pass | control_reproduces=True, ordering_violations=0, tier10_mst_within_5um_endpoint=0.6486 | 0.2 | `8b509ef12` (dirty) | 2026-09-02T13:02:32+00:00 |
 | EXP-061 | Directed cone vs proximity ball | fail | best_cone=none, best_reach=0, best_median_panel=None | 5.1 | `8b509ef12` (dirty) | 2026-09-02T13:06:07+00:00 |
+| EXP-071 | Contact adjacency and the connective gap | pass | n_cells=40, nearest_sibling_median_hops=3, nearest_sibling_frac_within_3=0.6008 | 2.6 | `867cba04b` (dirty) | 2026-09-02T14:26:51+00:00 |
