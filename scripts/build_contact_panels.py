@@ -36,6 +36,8 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 R = Path("/Users/wgray13/projects/neuronauts")
+CUBE_C = np.array([663.0, 591.0, 860.0]) * 1000.0
+LO_NM, HI_NM = CUBE_C - 50_000.0, CUBE_C + 50_000.0
 HALF_NM, LOCAL_NM, MAXPTS = 4000.0, 1500.0, 20000
 
 
@@ -108,8 +110,20 @@ def main():
             # Centre instead where the grower would actually ask the question:
             # a terminal of the arbor, far from the soma, where the honest
             # answer is that nothing continues.
+            # ...and it must be an INTERIOR terminal. The farthest point from
+            # the soma is usually where the cell exits the cube, and there a
+            # continuation genuinely exists -- it just lies in tissue we never
+            # enumerated. Scoring that as "nothing continues here" would label
+            # a real join as an abstention. Six of the first eight whole-cell
+            # panels sat within 1 um of a cube face this way. Restrict to
+            # terminals a full box-width inside every face.
             soma = np.asarray(c["seed"]["pos_nm"], float)
-            ctr = Ps[int(np.argmax(np.linalg.norm(Ps - soma, axis=1)))]
+            inside = np.all((Ps - LO_NM > 2 * HALF_NM) & (HI_NM - Ps > 2 * HALF_NM), axis=1)
+            if not inside.any():
+                print(f"  {key}: no interior terminal, skipping", flush=True)
+                continue
+            cand_pts = Ps[inside]
+            ctr = cand_pts[int(np.argmax(np.linalg.norm(cand_pts - soma, axis=1)))]
 
         t0 = time.time()
         lo = np.floor((ctr - HALF_NM) / res).astype(int)
