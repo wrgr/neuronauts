@@ -7,9 +7,25 @@ nearby-different-root negatives) and global atomicity. The shared-grammar
 variant adds a `GlobalAssemblyGAT` head that refines connectivity edges against
 a soft-F1 surrogate of the terminal line-graph metric.
 
-**Status:** active (core thread). Pairwise merge accuracy is strong (~85–87%);
-the open problem is translating that into global line-graph F1 (see
-[cell_assignment](cell_assignment.md) and the roadmap).
+**Status:** superseded in its headline claim; the code is still the reference
+implementation.
+
+> **Read this before quoting the accuracy below.** The "~85–87% pairwise merge
+> accuracy" this thread was written around is an **in-sample number on a
+> synthetic substrate** — fragments produced by artificially damaging intact
+> skeletons, where the two halves of a split still carry matching geometry.
+> Every later attempt to reproduce it against real v117 segmentation came back
+> near zero: EXP-060, EXP-060B, EXP-061 and EXP-070 all measured candidate
+> generation at roughly **0.09% precision**, and EXP-072 collapsed the same way
+> once the substrate was widened. The number is not fraudulent, it answers a
+> different and much easier question than the one the program needs.
+>
+> What survives, measured on real data: **EXP-063** detects a frankenmerge at
+> held-out AUC **0.958**, and polarity alone reaches 0.914. What does not:
+> pairwise merge proposal on real segmentation, which is the task this thread
+> names. See `docs/threads/experiment_survey.md` for the evidence grade of every
+> experiment in the repo, and `results/EXP-075/evaluation.md` for the current
+> state of the join problem.
 
 ## Code (lives in core)
 
@@ -39,7 +55,7 @@ python scripts/train.py train \
 
 | File | What |
 |------|------|
-| `grammar_cave_real_50.pt` | best real-data grammar, val merge acc 87.2% |
+| `grammar_cave_real_50.pt` | best real-data grammar, val merge acc 87.2% — **in-sample, synthetic damage; see the status note above** |
 | `grammar_synthetic.pt` | synthetic smoke baseline (no CAVE token) |
 | `shared_grammar_real.pt` | shared grammar + GAT, real boxes |
 | `shared_grammar_raw_skel_50e.pt` / `_gat50e.pt` | `raw_delta3+skeleton` feature mode, without / with GAT |
