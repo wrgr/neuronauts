@@ -1,0 +1,292 @@
+{
+  "elapsed_min": 2.549557916323344,
+  "id": "EXP-060",
+  "note": "no setting met all three bars, and none could: only 47.4% of true pairs have any endpoint within the 5 um search radius, so the 90% recall bar was unreachable before any filter was applied",
+  "observed": {
+    "best_recall": 0.0,
+    "best_setting": "none",
+    "frac_true_pairs_within_search_radius": 0.473577,
+    "n_settings_meeting_bar": 0,
+    "true_pair_gap_median_nm": 6526.2,
+    "unfiltered_recall_ceiling": 0.174797
+  },
+  "population": {
+    "n_endpoints": 5103160,
+    "n_labelled_atoms": 1297,
+    "n_true_pairs": 492
+  },
+  "provenance": {
+    "argv": [
+      "/Users/wgray13/projects/neuronauts/neuronauts/experiments/exp060_endpoint_filter.py"
+    ],
+    "cwd": "/Users/wgray13/projects/neuronauts",
+    "git_branch": "feat/global-merge-assembly",
+    "git_commit": "3f8c6bb98c5d98f7947ace213942b49703d6073c",
+    "git_dirty": true,
+    "git_modified_files": [
+      "euronauts/experiments/registry.py",
+      "results/RESULTS.md"
+    ],
+    "git_untracked_count": 3,
+    "hostname": "DXJ5G9L3W1-ML",
+    "inputs": [
+      {
+        "algo": "quick-sha256",
+        "bytes": 140684671,
+        "hash": "07f8d4363cadde77a6b8d1263e2113431a6c34237b0e81ff7b41269aeb75887f",
+        "mtime_utc": "2026-09-01T22:12:51+00:00",
+        "path": "data/substrate/topology/k10.npz"
+      },
+      {
+        "algo": "sha256",
+        "bytes": 1321376,
+        "hash": "64f436a008bd0b5b027c28bb1d074eac972dda5acc6194f6e463c88f65a0635a",
+        "mtime_utc": "2026-09-01T22:57:45+00:00",
+        "path": "data/substrate/c100um/labels_v1822.npz"
+      }
+    ],
+    "labels_used_only_for_evaluation": true,
+    "packages": {
+      "caveclient": "8.0.1",
+      "matplotlib": "3.10.8",
+      "networkx": "3.6.1",
+      "neuroglancer": "2.41.2",
+      "numpy": "2.4.3",
+      "pandas": "2.3.3",
+      "scipy": "1.17.1",
+      "torch": "2.10.0"
+    },
+    "params": {
+      "k": 8,
+      "radius_nm": 5000.0,
+      "sweep": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          1000.0,
+          0.0
+        ],
+        [
+          1000.0,
+          30.0
+        ],
+        [
+          1000.0,
+          50.0
+        ],
+        [
+          2000.0,
+          30.0
+        ],
+        [
+          2000.0,
+          50.0
+        ],
+        [
+          2000.0,
+          80.0
+        ],
+        [
+          5000.0,
+          30.0
+        ],
+        [
+          5000.0,
+          50.0
+        ],
+        [
+          5000.0,
+          80.0
+        ]
+      ]
+    },
+    "platform": "macOS-15.7.9-arm64-arm-64bit-Mach-O",
+    "python": "3.14.2",
+    "synthetic_fallback": false,
+    "timestamp_utc": "2026-09-02T00:22:22+00:00"
+  },
+  "question": "Which of the 5.1M endpoints are real split sites rather than spines?",
+  "requires": [],
+  "requires_ran": [
+    "EXP-057"
+  ],
+  "status": "failed",
+  "success_criterion": "at least 90% recall of true continuation pairs, at a median panel of at most 20 partners per labelled atom, while keeping at most 1% of endpoints -- all three at once",
+  "tables": {
+    "filter_sweep": {
+      "leaf>=0nm_cal>=0nm": {
+        "endpoints_kept": 5102946,
+        "frac_endpoints_kept": 0.999958,
+        "median_panel": 819.0,
+        "meets_bar": false,
+        "min_caliber_nm": 0.0,
+        "min_leaf_nm": 0.0,
+        "n_pairs": 6848187,
+        "p90_panel": 3423.600000000001,
+        "recall": 0.174797,
+        "true_pairs_found": 86
+      },
+      "leaf>=1000nm_cal>=0nm": {
+        "endpoints_kept": 3501646,
+        "frac_endpoints_kept": 0.686172,
+        "median_panel": 613.0,
+        "meets_bar": false,
+        "min_caliber_nm": 0.0,
+        "min_leaf_nm": 1000.0,
+        "n_pairs": 5014659,
+        "p90_panel": 2771.2000000000007,
+        "recall": 0.156504,
+        "true_pairs_found": 77
+      },
+      "leaf>=1000nm_cal>=30nm": {
+        "endpoints_kept": 1801646,
+        "frac_endpoints_kept": 0.353045,
+        "median_panel": 422.0,
+        "meets_bar": false,
+        "min_caliber_nm": 30.0,
+        "min_leaf_nm": 1000.0,
+        "n_pairs": 3399038,
+        "p90_panel": 2116.0,
+        "recall": 0.107724,
+        "true_pairs_found": 53
+      },
+      "leaf>=1000nm_cal>=50nm": {
+        "endpoints_kept": 668420,
+        "frac_endpoints_kept": 0.130982,
+        "median_panel": 203.0,
+        "meets_bar": false,
+        "min_caliber_nm": 50.0,
+        "min_leaf_nm": 1000.0,
+        "n_pairs": 1659595,
+        "p90_panel": 1260.2000000000003,
+        "recall": 0.03252,
+        "true_pairs_found": 16
+      },
+      "leaf>=2000nm_cal>=30nm": {
+        "endpoints_kept": 883742,
+        "frac_endpoints_kept": 0.173175,
+        "median_panel": 221.0,
+        "meets_bar": false,
+        "min_caliber_nm": 30.0,
+        "min_leaf_nm": 2000.0,
+        "n_pairs": 2299627,
+        "p90_panel": 1493.2000000000003,
+        "recall": 0.054878,
+        "true_pairs_found": 27
+      },
+      "leaf>=2000nm_cal>=50nm": {
+        "endpoints_kept": 353396,
+        "frac_endpoints_kept": 0.06925,
+        "median_panel": 112.0,
+        "meets_bar": false,
+        "min_caliber_nm": 50.0,
+        "min_leaf_nm": 2000.0,
+        "n_pairs": 1062201,
+        "p90_panel": 850.2000000000003,
+        "recall": 0.014228,
+        "true_pairs_found": 7
+      },
+      "leaf>=2000nm_cal>=80nm": {
+        "endpoints_kept": 20408,
+        "frac_endpoints_kept": 0.003999,
+        "median_panel": 1.0,
+        "meets_bar": false,
+        "min_caliber_nm": 80.0,
+        "min_leaf_nm": 2000.0,
+        "n_pairs": 17814,
+        "p90_panel": 16.0,
+        "recall": 0.002033,
+        "true_pairs_found": 1
+      },
+      "leaf>=5000nm_cal>=30nm": {
+        "endpoints_kept": 103011,
+        "frac_endpoints_kept": 0.020186,
+        "median_panel": 17.0,
+        "meets_bar": false,
+        "min_caliber_nm": 30.0,
+        "min_leaf_nm": 5000.0,
+        "n_pairs": 323911,
+        "p90_panel": 99.80000000000018,
+        "recall": 0.006098,
+        "true_pairs_found": 3
+      },
+      "leaf>=5000nm_cal>=50nm": {
+        "endpoints_kept": 28104,
+        "frac_endpoints_kept": 0.005507,
+        "median_panel": 2.0,
+        "meets_bar": false,
+        "min_caliber_nm": 50.0,
+        "min_leaf_nm": 5000.0,
+        "n_pairs": 37708,
+        "p90_panel": 20.0,
+        "recall": 0.002033,
+        "true_pairs_found": 1
+      },
+      "leaf>=5000nm_cal>=80nm": {
+        "endpoints_kept": 4861,
+        "frac_endpoints_kept": 0.000953,
+        "median_panel": 0.0,
+        "meets_bar": false,
+        "min_caliber_nm": 80.0,
+        "min_leaf_nm": 5000.0,
+        "n_pairs": 1602,
+        "p90_panel": 1.0,
+        "recall": 0.0,
+        "true_pairs_found": 0
+      }
+    },
+    "true_pair_gap_percentiles_nm": {
+      "p10": {
+        "nm": 730.5
+      },
+      "p25": {
+        "nm": 1615.7
+      },
+      "p50": {
+        "nm": 6526.2
+      },
+      "p75": {
+        "nm": 31819.8
+      },
+      "p90": {
+        "nm": 56351.0
+      },
+      "p99": {
+        "nm": 90839.0
+      }
+    },
+    "true_pairs_reachable_by_radius": {
+      "within_100um": {
+        "frac": 0.995935,
+        "n": 490
+      },
+      "within_10um": {
+        "frac": 0.571138,
+        "n": 281
+      },
+      "within_1um": {
+        "frac": 0.146341,
+        "n": 72
+      },
+      "within_20um": {
+        "frac": 0.676829,
+        "n": 333
+      },
+      "within_2um": {
+        "frac": 0.308943,
+        "n": 152
+      },
+      "within_50um": {
+        "frac": 0.865854,
+        "n": 426
+      },
+      "within_5um": {
+        "frac": 0.473577,
+        "n": 233
+      }
+    }
+  },
+  "title": "Endpoint filter"
+}

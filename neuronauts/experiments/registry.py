@@ -153,6 +153,7 @@ REGISTRY: list[Entry] = [
                   "panel size of at most 20; and at most 1% of endpoints kept",
         requires_ran=["EXP-057"], inputs=[TOPOLOGY_K10, LABELS_NPZ],
         flags={"synthetic_fallback": False}),
+        module="neuronauts.experiments.exp060_endpoint_filter",
         note="Redo of EXP-053B on a substrate that has coverage. Bar adopted "
              "verbatim from the PCFG report's E4. Needs EXP-057's overlay, not "
              "its density bar: continuation pairs come from the 4,802 "
@@ -162,10 +163,18 @@ REGISTRY: list[Entry] = [
     Entry(series="B", est_minutes=45, spec=_s(
         id="EXP-061", title="Proximity vs cone, by compartment",
         question="Does the axon proximity failure hold for dendrites too?",
-        criterion="the direction cone improves precision at equal recall on "
-                  "axons; report dendrites separately",
+        criterion="a directed cone reaches at least 70% of true pairs at a "
+                  "median panel of at most 20 -- i.e. beats EXP-060's measured "
+                  "proximity ceiling of 47.4% reachable / 17.5% proposed, at "
+                  "comparable panel size",
         requires_ran=["EXP-060"], inputs=[TOPOLOGY_K10, LABELS_NPZ]),
-        note="Stratify by the polarity compartment signal (H1), which is free."),
+        note="Rewritten after EXP-060: the cone is not an improvement on the "
+             "proximity ball, it is the replacement. EXP-060 measured the "
+             "median true partner at 6.5 um and p90 at 56 um, so a 5 um ball "
+             "reaches 47.4% at best while a 50 um ball would hold ~2.7M "
+             "endpoints. A cone projects along the neurite instead, reaching "
+             "far partners without the volume. Stratify by the polarity "
+             "compartment signal (H1), which is free."),
 
     # --- C. cuts and frankenmerge detection ---------------------------------
     Entry(series="C", est_minutes=90, spec=_s(
