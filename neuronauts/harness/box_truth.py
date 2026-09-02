@@ -143,3 +143,25 @@ def spanning_target(bt: BoxTruth, *, mode: str = "all_components") -> list[list[
     if mode == "all_components":
         return [c for c in bt.components if len(c) > 1]
     raise ValueError(f"unknown mode {mode!r}")
+
+
+def seeded_target(bt: BoxTruth, seed: int) -> list[int]:
+    """The component containing ``seed`` -- the root process a grower recovers.
+
+    This is the target for the task a grammar actually performs: start at a
+    cell body and grow a tree outward. Everything in the seed's in-box component
+    is what that process can reach; fragments in other components of the same
+    cell are not misses for this process -- they are a different root process,
+    or the same cell re-entering the box, which no in-box grower can join.
+
+    Seeding from neuronal somas also puts glia, vasculature and debris out of
+    scope by construction: nothing is a target unless a neuron's growth could
+    reach it. Returns an empty list when the seed is not a labelled fragment in
+    the box (no soma here means no seed here), or when its component is a
+    singleton (nothing to grow into).
+    """
+    seed = int(seed)
+    for c in bt.components:
+        if seed in c:
+            return c if len(c) > 1 else []
+    return []

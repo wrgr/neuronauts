@@ -72,3 +72,22 @@ def test_unknown_mode_is_rejected():
     e, pos, frag = _chain([0, 1], [10, 10])
     with pytest.raises(ValueError):
         spanning_target(box_components(e, pos, frag, LO, HI), mode="biggest")
+
+
+def test_seeded_target_is_the_seeds_own_component():
+    from neuronauts.harness.box_truth import seeded_target
+    pos = np.array([[0, 0, 0], [1, 0, 0], [100, 0, 0],
+                    [5, 0, 0], [6, 0, 0], [7, 0, 0]], float)
+    e = np.array([[0, 1], [1, 2], [2, 3], [3, 4], [4, 5]])
+    frag = np.array([10, 20, 0, 30, 40, 50], np.int64)
+    bt = box_components(e, pos, frag, LO, HI)
+    assert seeded_target(bt, 30) == [30, 40, 50]      # the soma's own piece
+    assert seeded_target(bt, 10) == [10, 20]          # a different root process
+    assert seeded_target(bt, 999) == []               # no such fragment in the box
+
+
+def test_seeded_target_singleton_has_nothing_to_grow_into():
+    from neuronauts.harness.box_truth import seeded_target
+    e, pos, frag = _chain([0, 1, 100, 5, 6], [10, 10, 0, 20, 20])
+    bt = box_components(e, pos, frag, LO, HI)
+    assert seeded_target(bt, 10) == []
