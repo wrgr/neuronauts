@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial import cKDTree
 sys.path.insert(0, "/Users/wgray13/projects/neuronauts")
-from neuronauts.harness.box_truth import box_components, seeded_target
+from neuronauts.harness.box_truth import box_components, drop_crossing_links, seeded_target
 from neuronauts.harness.labels import TIER_NONE, load_labels
 from neuronauts.harness.population import load_population
 R = Path("/Users/wgray13/projects/neuronauts"); X = R / "data/external"; OUT = X / "cell_cards"; OUT.mkdir(exist_ok=True)
@@ -115,7 +115,11 @@ def build(cell):
             links.append({"a": tgt[a_], "b": tgt[b_], "gap_nm": round(float(D[a_, b_])), "at_a_nm": pa.round().astype(int).tolist(),
                           "at_b_nm": pb.round().astype(int).tolist(), "compartment_a": comp_at(pa), "compartment_b": comp_at(pb)})
             intree.append(b_); rest.remove(b_)
-    card["split_challenges"] = links
+    kept, crossed = drop_crossing_links(links)
+    for l in kept: l["scored"] = True
+    for l in crossed: l["scored"] = False
+    card["split_challenges"] = kept + crossed
+    card["n_links_scored"] = len(kept); card["n_links_dropped_crossing"] = len(crossed)
     # merge challenges: mixed atoms among this cell's fragments (owner==cell but n_roots>=2), and which other root shares them
     mixed_here = [int(a) for a, o_, nr in zip(atoms, own, nroots) if o_ == cell and nr >= 2]
     merges = []

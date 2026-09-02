@@ -91,3 +91,27 @@ def test_seeded_target_singleton_has_nothing_to_grow_into():
     e, pos, frag = _chain([0, 1, 100, 5, 6], [10, 10, 0, 20, 20])
     bt = box_components(e, pos, frag, LO, HI)
     assert seeded_target(bt, 10) == []
+
+
+def test_crosses_compartment_only_for_two_different_non_soma_compartments():
+    from neuronauts.harness.box_truth import crosses_compartment
+    assert crosses_compartment("axon", "dendrite")
+    assert crosses_compartment("dendrite", "axon")
+    assert not crosses_compartment("axon", "axon")
+    assert not crosses_compartment("dendrite", "dendrite")
+    assert not crosses_compartment("soma", "axon")      # everything attaches to the soma
+    assert not crosses_compartment("axon", "soma")
+    assert not crosses_compartment(None, "axon")        # unknown: keep, do not guess
+    assert not crosses_compartment("?", "dendrite")
+
+
+def test_drop_crossing_links_partitions_and_keeps_unknowns():
+    from neuronauts.harness.box_truth import drop_crossing_links
+    links = [{"compartment_a": "axon", "compartment_b": "axon", "gap_nm": 900},
+             {"compartment_a": "axon", "compartment_b": "dendrite", "gap_nm": 7600},
+             {"compartment_a": "soma", "compartment_b": "axon", "gap_nm": 400},
+             {"compartment_a": None, "compartment_b": "axon", "gap_nm": 500}]
+    kept, dropped = drop_crossing_links(links)
+    assert [l["gap_nm"] for l in kept] == [900, 400, 500]
+    assert [l["gap_nm"] for l in dropped] == [7600]
+    assert len(kept) + len(dropped) == len(links)

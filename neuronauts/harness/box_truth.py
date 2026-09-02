@@ -165,3 +165,38 @@ def seeded_target(bt: BoxTruth, seed: int) -> list[int]:
         if seed in c:
             return c if len(c) > 1 else []
     return []
+
+
+#: Compartment pairs that a real continuation can join. A neurite does not change
+#: compartment along its length, so an axon fragment and a dendrite fragment of
+#: the same cell are not a continuation -- whatever joins them runs through the
+#: soma. Soma is permitted with anything, because every process attaches there.
+def crosses_compartment(a: str | None, b: str | None) -> bool:
+    """True when a link joins two different non-soma compartments.
+
+    Measured over the 103 soma-seeded cells: such links are 6.3x wider than
+    same-compartment ones (median 7,574 nm against 1,202) and are 13.8% of the
+    links a minimum spanning tree produces. That width is the tell -- the tree is
+    bridging an axonal and a dendritic sub-arbor at their nearest approach, not
+    tracing a join a proofreader made. Scoring a grower on them asks for a join
+    that does not exist.
+    """
+    if not a or not b or a == "?" or b == "?":
+        return False                     # unknown compartment: keep, do not guess
+    if a == b or "soma" in (a, b):
+        return False
+    return True
+
+
+def drop_crossing_links(links: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Split scored links from compartment-crossing ones.
+
+    Returns ``(kept, dropped)``. Dropping can disconnect a target into
+    sub-targets; that is the intended outcome, not a failure -- an axonal and a
+    dendritic sub-arbor really are separate things to grow, each from the soma.
+    """
+    kept, dropped = [], []
+    for l in links:
+        (dropped if crosses_compartment(l.get("compartment_a"), l.get("compartment_b"))
+         else kept).append(l)
+    return kept, dropped
