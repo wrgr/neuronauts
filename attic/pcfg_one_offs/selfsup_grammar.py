@@ -11,7 +11,7 @@ Trained on clean (v1718) arbor junctions, scored on v117 arbor junctions; report
 AUC(seam | surprise) vs the supervised ceiling (0.85) and the earlier baselines.
 
 Usage:
-    python -m experiments.pcfg.selfsup_grammar --sidetable data/sidetable_7box.npz
+    python -m attic.pcfg_one_offs.selfsup_grammar --sidetable data/sidetable_7box.npz
 """
 from __future__ import annotations
 

@@ -14,7 +14,7 @@ fix, no labels / no hand features / no synthesized merges -- and only makes the 
 Inputs are still raw: [xyz, log radius, is_synapse]. Trained on the noisy corpus; group-by-cell
 CV; do-nothing-relevant precision@k.
 
-    python -m experiments.pcfg.skel_ssl_grammar_v2 --sidetable data/sidetable_7box.npz
+    python -m attic.pcfg_one_offs.skel_ssl_grammar_v2 --sidetable data/sidetable_7box.npz
 """
 from __future__ import annotations
 

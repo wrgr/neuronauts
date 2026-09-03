@@ -56,15 +56,15 @@ Using two assumed extents:
 
 ```bash
 # Geometric estimates only (no network)
-python scripts/analyze_minnie65_boxes.py --estimate-only
+python attic/one_off_analyses/analyze_minnie65_boxes.py --estimate-only
 
 # Actual counts from CAVE sample (requires caveclient, network)
-python scripts/analyze_minnie65_boxes.py --sample 50000 --source cave
+python attic/one_off_analyses/analyze_minnie65_boxes.py --sample 50000 --source cave
 
 # From static synapse CSV (if downloaded)
-python scripts/analyze_minnie65_boxes.py --static-dir data/microns_static --version 1078 --sample 200000 --source static
+python attic/one_off_analyses/analyze_minnie65_boxes.py --static-dir data/microns_static --version 1078 --sample 200000 --source static
 ```
 
 ---
 
-*See `scripts/analyze_minnie65_boxes.py` for the analysis script.*
+*See `attic/one_off_analyses/analyze_minnie65_boxes.py` for the analysis script.*

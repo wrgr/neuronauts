@@ -28,3 +28,4 @@ a gap. Full reports: [`results/reports/`](reports/).
 | EXP-073 | Constrained chaining: does structure prune the panel? | blocked | -- | 0.0 | `81aec2b81` (dirty) | 2026-09-02T15:46:46+00:00 |
 | EXP-072 | Object-level proposal on the widened substrate | fail | widened_chained_recall_at_bar=0.6365, population_only_chained_recall_at_bar=0.7109, gain_from_widening=-0.07445 | 10.4 | `81aec2b81` (dirty) | 2026-09-02T15:54:19+00:00 |
 | EXP-063 | Frankenmerge detection | pass | best_feature_set=all/gbdt, best_val_auc_strict=0.9576, size_only_val_auc_strict=0.6538 | 2.0 | `81aec2b81` (dirty) | 2026-09-02T17:08:53+00:00 |
+| EXP-074 | Soma-seeded growth, distance only | fail | recovery_at_bar=0.00431, purity_at_bar=0.000609, abstention_at_bar=0 | 15.1 | `2c92d4efd` (dirty) | 2026-09-02T20:35:59+00:00 |

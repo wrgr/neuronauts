@@ -17,14 +17,14 @@ level rather than under `legacy/` (see
 |--------|------|
 | [`neuronauts/topology_model.py`](../../neuronauts/topology_model.py) | `AttentionArborValidator`, `TrainingConfig`, `train_iteration` |
 | [`neuronauts/topology_dataset.py`](../../neuronauts/topology_dataset.py) | atomicity dataset construction |
-| [`scripts/train_topology_model.py`](../../scripts/train_topology_model.py) | standalone trainer (helper) |
-| [`scripts/export_topology_dataset.py`](../../scripts/export_topology_dataset.py) | export an atomicity dataset |
+| [`attic/superseded_training/train_topology_model.py`](../../attic/superseded_training/train_topology_model.py) | standalone trainer (helper) |
+| [`attic/superseded_training/export_topology_dataset.py`](../../attic/superseded_training/export_topology_dataset.py) | export an atomicity dataset |
 
 ## Run
 
 ```bash
-python scripts/export_topology_dataset.py --output data/topology_dataset.npz
-python scripts/train_topology_model.py \
+python attic/superseded_training/export_topology_dataset.py --output data/topology_dataset.npz
+python attic/superseded_training/train_topology_model.py \
   --dataset data/topology_dataset.npz --output models/scratch/topology.pt
 ```
 

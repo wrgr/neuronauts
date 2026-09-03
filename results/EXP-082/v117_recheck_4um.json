@@ -1,0 +1,352 @@
+[
+ {
+  "op": 763701,
+  "span_nm": 1695.263991241482,
+  "touch_4um": false
+ },
+ {
+  "op": 1968882,
+  "span_nm": 463.93102935673534,
+  "touch_4um": false
+ },
+ {
+  "op": 1125225,
+  "span_nm": 307.9740248787225,
+  "touch_4um": false
+ },
+ {
+  "op": 2149420,
+  "span_nm": 1566.570777207337,
+  "touch_4um": false
+ },
+ {
+  "op": 2117746,
+  "span_nm": 1151.6388322733824,
+  "touch_4um": false
+ },
+ {
+  "op": 820697,
+  "span_nm": 1787.172067821115,
+  "touch_4um": false
+ },
+ {
+  "op": 2185031,
+  "span_nm": 259.59969183340723,
+  "touch_4um": false
+ },
+ {
+  "op": 747471,
+  "span_nm": 1124.2775458044157,
+  "touch_4um": false
+ },
+ {
+  "op": 382876,
+  "span_nm": 870.2367493963927,
+  "touch_4um": false
+ },
+ {
+  "op": 2144026,
+  "span_nm": 1011.7707250162954,
+  "touch_4um": false
+ },
+ {
+  "op": 1352759,
+  "span_nm": 1595.5337664869396,
+  "touch_4um": false
+ },
+ {
+  "op": 1387362,
+  "span_nm": 205.52372125864207,
+  "touch_4um": false
+ },
+ {
+  "op": 351443,
+  "span_nm": 1464.7211338681504,
+  "touch_4um": false
+ },
+ {
+  "op": 806197,
+  "span_nm": 2858.0160951261278,
+  "touch_4um": false
+ },
+ {
+  "op": 2157852,
+  "span_nm": 1026.9956182963977,
+  "touch_4um": false
+ },
+ {
+  "op": 1403407,
+  "span_nm": 1036.7333311898485,
+  "touch_4um": false
+ },
+ {
+  "op": 1897756,
+  "span_nm": 664.7706371373513,
+  "touch_4um": false
+ },
+ {
+  "op": 1999252,
+  "span_nm": 1154.2200829997716,
+  "touch_4um": false
+ },
+ {
+  "op": 375652,
+  "span_nm": 1331.008640092167,
+  "touch_4um": true
+ },
+ {
+  "op": 819051,
+  "span_nm": 1242.7067232456739,
+  "touch_4um": false
+ },
+ {
+  "op": 2151154,
+  "span_nm": 137.8695035169127,
+  "touch_4um": false
+ },
+ {
+  "op": 1207489,
+  "span_nm": 1137.491977993691,
+  "touch_4um": false
+ },
+ {
+  "op": 566806,
+  "span_nm": 1311.170469466118,
+  "touch_4um": false
+ },
+ {
+  "op": 332712,
+  "span_nm": 1019.4272901977855,
+  "touch_4um": false
+ },
+ {
+  "op": 562671,
+  "span_nm": 1068.471805898499,
+  "touch_4um": false
+ },
+ {
+  "op": 2200112,
+  "span_nm": 1949.0141097488238,
+  "touch_4um": false
+ },
+ {
+  "op": 818911,
+  "span_nm": 221.99099080818573,
+  "touch_4um": false
+ },
+ {
+  "op": 1137852,
+  "span_nm": 1675.6897087468192,
+  "touch_4um": true
+ },
+ {
+  "op": 1001886,
+  "span_nm": 503.5553594193989,
+  "touch_4um": false
+ },
+ {
+  "op": 1609685,
+  "span_nm": 2151.910778819605,
+  "touch_4um": false
+ },
+ {
+  "op": 1797280,
+  "span_nm": 536.9543742255947,
+  "touch_4um": false
+ },
+ {
+  "op": 1001337,
+  "span_nm": 843.8388471740324,
+  "touch_4um": false
+ },
+ {
+  "op": 734269,
+  "span_nm": 517.0377162258088,
+  "touch_4um": false
+ },
+ {
+  "op": 1613120,
+  "span_nm": 605.6269478812844,
+  "touch_4um": false
+ },
+ {
+  "op": 1958336,
+  "span_nm": 322.9860678109816,
+  "touch_4um": true
+ },
+ {
+  "op": 1429616,
+  "span_nm": 651.2019655989991,
+  "touch_4um": false
+ },
+ {
+  "op": 2118916,
+  "span_nm": 1945.6124999598455,
+  "touch_4um": false
+ },
+ {
+  "op": 736917,
+  "span_nm": 122.63767773404713,
+  "touch_4um": false
+ },
+ {
+  "op": 1797531,
+  "span_nm": 381.1561359862911,
+  "touch_4um": false
+ },
+ {
+  "op": 766426,
+  "span_nm": 351.5451606835173,
+  "touch_4um": false
+ },
+ {
+  "op": 1391114,
+  "span_nm": 1492.809431910182,
+  "touch_4um": false
+ },
+ {
+  "op": 2179807,
+  "span_nm": 1475.8428100580359,
+  "touch_4um": false
+ },
+ {
+  "op": 2125847,
+  "span_nm": 355.70774520665134,
+  "touch_4um": false
+ },
+ {
+  "op": 766462,
+  "span_nm": 213.16660151158766,
+  "touch_4um": false
+ },
+ {
+  "op": 1658781,
+  "span_nm": 764.2407997483516,
+  "touch_4um": false
+ },
+ {
+  "op": 2102578,
+  "span_nm": 377.35924528226417,
+  "touch_4um": false
+ },
+ {
+  "op": 2200133,
+  "span_nm": 1649.882420053017,
+  "touch_4um": false
+ },
+ {
+  "op": 816617,
+  "span_nm": 1191.7852155485064,
+  "touch_4um": false
+ },
+ {
+  "op": 2114802,
+  "span_nm": 1346.711550407139,
+  "touch_4um": false
+ },
+ {
+  "op": 1001896,
+  "span_nm": 1066.6733333125,
+  "touch_4um": false
+ },
+ {
+  "op": 2152851,
+  "span_nm": 419.14198071775155,
+  "touch_4um": false
+ },
+ {
+  "op": 2115147,
+  "span_nm": 491.1374553014665,
+  "touch_4um": false
+ },
+ {
+  "op": 2126723,
+  "span_nm": 1033.0227490234665,
+  "touch_4um": false
+ },
+ {
+  "op": 342653,
+  "span_nm": 2213.066650600474,
+  "touch_4um": true
+ },
+ {
+  "op": 1938563,
+  "span_nm": 1289.0430559139597,
+  "touch_4um": true
+ },
+ {
+  "op": 1659919,
+  "span_nm": 1177.6043478180607,
+  "touch_4um": false
+ },
+ {
+  "op": 2009254,
+  "span_nm": 1283.8193019268717,
+  "touch_4um": false
+ },
+ {
+  "op": 2130086,
+  "span_nm": 1163.9931271274759,
+  "touch_4um": false
+ },
+ {
+  "op": 1616001,
+  "span_nm": 1008.9202148832186,
+  "touch_4um": false
+ },
+ {
+  "op": 736619,
+  "span_nm": 1879.8808472879339,
+  "touch_4um": false
+ },
+ {
+  "op": 278028,
+  "span_nm": 1763.3785753490372,
+  "touch_4um": false
+ },
+ {
+  "op": 2192379,
+  "span_nm": 1298.9349483326714,
+  "touch_4um": false
+ },
+ {
+  "op": 763790,
+  "span_nm": 1227.4200584966827,
+  "touch_4um": false
+ },
+ {
+  "op": 2151063,
+  "span_nm": 1075.1595230476266,
+  "touch_4um": false
+ },
+ {
+  "op": 1024000,
+  "span_nm": 580.0965436890656,
+  "touch_4um": false
+ },
+ {
+  "op": 883482,
+  "span_nm": 1644.3065407642214,
+  "touch_4um": false
+ },
+ {
+  "op": 2143253,
+  "span_nm": 392.3263947276553,
+  "touch_4um": false
+ },
+ {
+  "op": 2115899,
+  "span_nm": 437.22762950207067,
+  "touch_4um": false
+ },
+ {
+  "op": 1968873,
+  "span_nm": 975.9672125640287,
+  "touch_4um": false
+ },
+ {
+  "op": 565968,
+  "span_nm": 1727.629589929508,
+  "touch_4um": true
+ }
+]

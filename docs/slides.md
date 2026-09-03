@@ -336,7 +336,7 @@ GlobalSynapseGraph(
 
 The GNN adds signal by aggregating neighbourhood context across the k-NN graph — synapses near same-neuron neighbours inherit their DNA signal through message passing.
 
-Real-data Phase 2 numbers pending (the DNA training on 80 real fragments with large trees is slow; runs as `scripts/global_gnn_ablation.py --n-neurons 40`).
+Real-data Phase 2 numbers pending (the DNA training on 80 real fragments with large trees is slow; runs as `attic/prior_results/global_gnn_ablation.py --n-neurons 40`).
 
 ---
 
@@ -451,13 +451,13 @@ source .venv/bin/activate
 pytest -m "not legacy" -q
 
 # Phase 1 ablation — no data required
-python scripts/ablate_dna.py --synthetic
+python attic/prior_results/ablate_dna.py --synthetic
 
 # Phase 2 ablation — no data required
-python scripts/global_gnn_ablation.py --synthetic
+python attic/prior_results/global_gnn_ablation.py --synthetic
 
 # Real-data ablation — requires CAVE network access
-python scripts/half_split_ablation.py --n-neurons 40
+python attic/prior_results/half_split_ablation.py --n-neurons 40
 ```
 
 <br>

@@ -17,7 +17,7 @@ earlier AVAILABLE materialization (1621, 1507, 1300).
 
 Usage
 -----
-  python scripts/real_lineage_partition.py --n-objects 15 --version 1718 \
+  python attic/prior_results/real_lineage_partition.py --n-objects 15 --version 1718 \
       --max-syn-per-obj 300 --embed-epochs 40 --partition-epochs 80
 """
 

@@ -11,10 +11,10 @@ Two modes:
 Usage
 -----
   # Synthetic demo (runs anywhere, no data required)
-  python scripts/ablate_dna.py --synthetic --neurons 6 --roots-per-neuron 4
+  python attic/prior_results/ablate_dna.py --synthetic --neurons 6 --roots-per-neuron 4
 
   # Real data
-  python scripts/ablate_dna.py --archive data/skeleton_archive.npz \
+  python attic/prior_results/ablate_dna.py --archive data/skeleton_archive.npz \
       --region data/region.npz \
       --epochs 30
 """

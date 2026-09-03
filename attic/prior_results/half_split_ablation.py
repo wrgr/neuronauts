@@ -12,7 +12,7 @@ fragments of the same physical neuron.
 
 Usage
 -----
-  python scripts/half_split_ablation.py --n-neurons 40 --epochs 80
+  python attic/prior_results/half_split_ablation.py --n-neurons 40 --epochs 80
 """
 from __future__ import annotations
 

@@ -1,5 +1,17 @@
 # Findings — synapse-level correction model `f(v117) → v1718`
 
+> **Where the code went (2026-09-02).** Fifteen of the scripts named below are
+> one-off probes and now live in
+> [`attic/pcfg_one_offs/`](../../attic/pcfg_one_offs/README.md):
+> `ablate_merge`, `close_loop_merge`, `continuation_merge`, `cut_report`,
+> `grammar_regime`, `group_eval`, `join_corrector`, `learned_grammar_neural`,
+> `recursive_corrector`, `seam_hash`, `seam_ssl`, `selfsup_grammar`,
+> `skel_ssl_grammar`, `skel_ssl_grammar_v2`, `synapse_grammar_ar`. They still
+> run — `python -m attic.pcfg_one_offs.<name>`. Everything else this file names
+> (`synapse_correction`, `close_loop_cut`, `seam_detector`, `global_shape_merge`,
+> `run_synapse_correction`, `skeleton_cut_op`) is still in `experiments/pcfg/`.
+> The numbers below are unchanged.
+
 Learning the proofreading correction at the synapse level: join each synapse-side to
 itself across materializations via its immutable supervoxel, label every pair by
 "same later root?", and learn the affinity. Grouped-by-cell CV (union-find over

@@ -15,7 +15,7 @@ Splices are adversarial by construction (a tip of cell A facing a near tip of a 
 cell B), which is exactly the hard negative the earlier merge stratum lacked.
 
 Usage:
-    python -m experiments.pcfg.continuation_merge --sidetable data/sidetable_7box.npz
+    python -m attic.pcfg_one_offs.continuation_merge --sidetable data/sidetable_7box.npz
 """
 from __future__ import annotations
 

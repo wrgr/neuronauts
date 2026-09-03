@@ -2,7 +2,7 @@
 """Train a partition GNN on the L2-node substrate (P1 proofread-dense region).
 
 The shared synapse-trained checkpoint is out of distribution on the L2 substrate
-(``scripts/p1_completeness_benchmark.py`` shows ARI≈0): a fragment-centroid graph
+(``attic/prior_results/p1_completeness_benchmark.py`` shows ARI≈0): a fragment-centroid graph
 has one node per fragment and therefore *no same-fragment edges*, which is the
 signal the model relies on.  This script trains a model **on the L2 substrate
 itself**, where each observation is an L2 node and same-fragment edges (edge type
@@ -28,7 +28,7 @@ The high-precision end of that sweep is the trustworthy scaffold.
 Usage
 -----
   NEURONAUTS_L2_CACHE_DIR=$PWD/cache/l2_skeleton \
-  PYTHONPATH=$PWD python3 scripts/train_l2_partition.py \
+  PYTHONPATH=$PWD python3 attic/prior_results/train_l2_partition.py \
     --save-checkpoint /tmp/neuronauts_l2.pt
 """
 from __future__ import annotations

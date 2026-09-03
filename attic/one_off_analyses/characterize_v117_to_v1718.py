@@ -13,7 +13,7 @@ Reports the real distribution we need to make benchmarks realistic:
 
 Usage
 -----
-  python scripts/characterize_v117_to_v1718.py --n 40 --version 1718 --max-sv 1500
+  python attic/one_off_analyses/characterize_v117_to_v1718.py --n 40 --version 1718 --max-sv 1500
 """
 
 from __future__ import annotations

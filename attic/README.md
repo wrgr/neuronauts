@@ -1,24 +1,44 @@
-# attic — retired pathways
+# attic — the archive
 
-Code here is **kept for history, excluded from the default test run, and not
-part of the active pipeline.** Nothing is deleted: git history is preserved
-(everything arrived via `git mv`), and import shims keep old call sites
-working with a `DeprecationWarning`.
+**This directory is the repository's archive.** Everything here is kept for
+history, excluded from the default test run, and not on any active path. Nothing
+is deleted: every file arrived by `git mv`, so `git log --follow` still works,
+and import shims keep old call sites resolving with a `DeprecationWarning`.
 
-> **The rule for coming back.** A pathway leaves the attic by *passing a
+If you are trying to work out what is *live*, you are in the wrong directory —
+read [`docs/MAP.md`](../docs/MAP.md), then `neuronauts/`, `scripts/` and
+`experiments/`.
+
+> **The rule for coming back.** A pathway leaves the archive by *passing a
 > registered experiment*, not by being imported again. See
 > [`docs/consolidation_plan.md`](../docs/consolidation_plan.md) §6 for the
 > experiment that governs each one.
+
+## The three eras, in one table
+
+Every subdirectory has its own README saying what it was, why it is here, and
+what replaced it. Follow the links rather than trusting this summary.
+
+| Era | Directories | The one-line verdict |
+|---|---|---|
+| **The semi-synthetic generation** (EXP-020–050, ~spring 2026) | [`benchmarks_semi_synthetic/`](benchmarks_semi_synthetic/) · [`morpho_grammar/`](morpho_grammar/) · [`outer_loop_and_viz/`](outer_loop_and_viz/) · [`tests/`](tests/) | **Not evidence.** Untrained engines scored on synthetically cut and frankenmerged skeletons. `EXPERIMENT_LOG.md` §1–3 is entirely this era. |
+| **The box-local and incubating tracks** (spring–early summer 2026) | [`incubating_threads/`](incubating_threads/) · [`superseded_training/`](superseded_training/) · [`one_off_analyses/`](one_off_analyses/) · [`superseded_modules/`](superseded_modules/) | **No result on the board.** Threads and training entry points that never scored themselves against a stated bar. |
+| **Real results, superseded as a direction** (June–August 2026) | [`prior_results/`](prior_results/) · [`pcfg_one_offs/`](pcfg_one_offs/) | **Real data, honestly measured.** Two of these still supply front-page numbers in `README.md`. They are archived because they are not part of the registered program, not because they were overturned. |
 
 ## Contents
 
 | Path | What it is | Why it is here | Route back |
 |---|---|---|---|
 | [`morpho_grammar/`](morpho_grammar/) | 26 "engines": dual-engine infillers, SANTIAGO grammars, MCTS handshake, Cajal geodesic tracers, global hypothesis search, Hungarian assembler, NEURD/autoproof baselines | **No engine loads a trained checkpoint.** 15 of 26 draw random numbers at runtime; none contains a `torch.load` or a `.pt` path. Every benchmark that consumed them ran on synthetic damage (below). So the reported accuracies are those of randomly initialised models on fabricated errors. | **EXP-069** — same engine, real harness substrate, EXP-064 fixed-panel protocol, trained grammar. Individual ideas (tangent flow, caliber continuity, conservation priors) are expected back sooner as *features* in the EXP-064 scorer bake-off. |
-| [`benchmarks_semi_synthetic/`](benchmarks_semi_synthetic/) | 34 benchmark scripts: `benchmark_exp021`–`exp050` plus 6 unnumbered siblings | Their test worlds are not real. See the audit below. | **EXP-058** replaces them with a real baseline ladder on one substrate. |
+| [`benchmarks_semi_synthetic/`](benchmarks_semi_synthetic/) | **40** benchmark scripts: `benchmark_exp021`–`exp050` plus 6 unnumbered siblings, plus the 6 added 2026-09-02 (`real_franken_partition`, `real_skeleton_partition`, `test_global_merge_franken`, `optimize_tree_stitch`, `run_global_merge`, `sota_benchmark`) | Their test worlds are not real. See the audit below, and the widened criterion in [`benchmarks_semi_synthetic/README.md`](benchmarks_semi_synthetic/README.md). | **EXP-058** replaces them with a real baseline ladder on one substrate. |
 | [`tests/`](tests/) | `test_morpho_grammar.py` | Tests attic code; moved with it so the default suite stays clean. | Moves back with its subject. |
 | [`outer_loop_and_viz/`](outer_loop_and_viz/) | 9 outer-loop scripts (`watch_and_eval.sh`, `eval_at_t099.sh`, `eval_path_models.sh`, `run_feature_ablation.sh`, `run_k_ablation.sh`, `run_timing_pipeline.sh`, `render_whitepaper_pdf.sh`, `generate_dashboard.py`, `export_viz_data.py`); `viz_pipeline.py` (was `tools/`); the `dashboard/` Flask + Streamlit app (5 files); two stale synthetic visualizer artifacts in `viz_synthetic_artifacts/` | Shell loops that train/evaluate the box-local CellGNN track outside any tracked pipeline, plus viz tooling built on top of the synthetic-frankenmerge world (§1.4). See the audits below. | No registered route back. `neuronauts/meshing/` (§3) is the live replacement for `dashboard/`'s Neuroglancer views; a dashboard/viz feature returns only as a `report/` or `meshing/` module built against real data. |
 | [`superseded_modules/`](superseded_modules/) | `cave_synapse_counts_v1412.py`, `cave_synapse_degrees_v1412.py` | Predecessors that a later consolidation replaced and then left in the tree. `neuronauts/cave_synapse.py`'s own docstring names them as the two of three single-purpose scripts it consolidated; nothing imports them and no test imports them. See the audit below. | Not a research pathway, so no experiment gates them. They come back only if `neuronauts/cave_synapse.py` turns out to have lost a behaviour they had — and the equivalence check below is the thing to re-run first. |
+| [`prior_results/`](prior_results/) ([README](prior_results/README.md)) | 20 scripts: the treestitch global-partition trainers and the tree-DNA identity ablations | **Real results that nothing has replaced.** ARI 0.752 / merge precision 0.951 and half-skeleton AUC 0.829 are still quoted in `README.md`. Here because they are not part of the registered program. | EXP-058 already re-runs the level-2 partition checkpoint as a baseline rung. |
+| [`superseded_training/`](superseded_training/) ([README](superseded_training/README.md)) | 4 training entry points: shared-grammar and topology-validator | Neither track has a real-data result. The "~85–87% merge accuracy" figure the grammar trainer produced is in-sample cross-validation and is contradicted by EXP-053A on real data. | EXP-064 (grammar scorer), EXP-062 (atomicity). |
+| [`incubating_threads/`](incubating_threads/) ([README](incubating_threads/README.md)) | `low_res_segmentation/` (8 modules) | Incubating since April with no number against its own stated graduation bar; pull request #9 stale since 2026-04-07. Its two tests stayed in `tests/` and still run. | Score it on the harness substrate and register it. |
+| [`pcfg_one_offs/`](pcfg_one_offs/) ([README](pcfg_one_offs/README.md)) | 15 single-run scripts from `experiments/pcfg/` | Each answered one question once, recorded in `experiments/pcfg/FINDINGS_synapse_correction.md`. Nothing in the remaining package imports any of them. They still run from the new path. | EXP-064. |
+| [`one_off_analyses/`](one_off_analyses/) ([README](one_off_analyses/README.md)) | 7 single-use analyses, exports and characterizations | Not a research track — each answered one question once and was never wired into a pipeline. | None gated by an experiment. |
 
 ## The audit that put the benchmarks here
 
@@ -67,7 +87,7 @@ before this change and are unrelated to it.
 | `render_whitepaper_pdf.sh` | `pandoc`/`xelatex` wrapper that renders `docs/whitepaper.md` to PDF | No reference anywhere in `*.py`/`*.md`/`*.sh`/`Makefile`/`pyproject.toml` besides the plan line that named it |
 | `generate_dashboard.py` | Builds a standalone Three.js HTML dashboard from `neuronauts.global_merge.represent.{vicreg_gnn,asymmetric_relational_gnn,local_em_verifier}` — the ATTIC-verdict "synthetic series" `represent/` modules (§4.1) — with hardcoded KPI numbers (e.g. `kpi-erl` = "3,595.4 μm") baked into the HTML string, not computed | Not imported anywhere; run only via `if __name__ == "__main__"` |
 | `export_viz_data.py` | Confirmed by reading the file: `_split_skeleton_n_pieces` cuts real proofread skeletons into synthetic pieces (line 33), `rng.choice`/`rng.integers` fabricate `syn_coords`/`syn_types`/`syn_partners` with no real synapse fetch (lines 38–44), and `treestitch.worldbuild.frankenmerge_adjacent` injects frankenmerges at 35% (line 58) before writing `viz/sample_connectome_viz.json`. Matches `results/exp051_evaluation.md`'s independent finding verbatim | No importer; the two files it produces are moved with it (below) |
-| `dashboard/` (`app.py`, `neuroglancer_export.py`, `results_explorer.py`, `streamlit_app.py`, `templates/index.html`) | Flask "v2 performance dashboard" (`app.py`, keyed to the v1 `run_research_cycle` pipeline) plus two Streamlit result-bundle viewers | `grep -rn "import dashboard\|from dashboard"` outside the directory found only its own internal `results_explorer.py → dashboard.neuroglancer_export` import. `neuronauts/report/ngl.py`'s docstring names `dashboard/neuroglancer_export.py` only as a comparison of voxel-grid conventions — not an import — and `neuronauts/report/` is explicitly out of scope for this move, so that stale path in the comment was left as-is. `scripts/spatial_variance.py`'s `--save-bundle` help string pointed at the old `dashboard/` path; updated to the new `attic/outer_loop_and_viz/dashboard/` path |
+| `dashboard/` (`app.py`, `neuroglancer_export.py`, `results_explorer.py`, `streamlit_app.py`, `templates/index.html`) | Flask "v2 performance dashboard" (`app.py`, keyed to the v1 `run_research_cycle` pipeline) plus two Streamlit result-bundle viewers | `grep -rn "import dashboard\|from dashboard"` outside the directory found only its own internal `results_explorer.py → dashboard.neuroglancer_export` import. `neuronauts/report/ngl.py`'s docstring names `dashboard/neuroglancer_export.py` only as a comparison of voxel-grid conventions — not an import — and `neuronauts/report/` is explicitly out of scope for this move, so that stale path in the comment was left as-is. `attic/prior_results/spatial_variance.py`'s `--save-bundle` help string pointed at the old `dashboard/` path; updated to the new `attic/outer_loop_and_viz/dashboard/` path |
 | `viz_synthetic_artifacts/connectome_visualizer.html`, `viz_synthetic_artifacts/sample_connectome_viz.json` | The Three.js viewer and its companion data file that `export_viz_data.py` produces | Not `viz/` itself (below) — just these two generated files, which are the synthetic output `results/exp051_evaluation.md` already flagged ("contains synthetic IDs and zero links") |
 
 **`viz/` the directory was not moved.** `neuronauts/meshing/__init__.py`'s
@@ -80,7 +100,7 @@ root.
 
 **`treestitch/ngl_export.py` was not moved** despite being the second half of
 `neuronauts/report/ngl.py`'s "two state builders disagree" comment: it is
-imported by `treestitch/stitch_viz.py`, `scripts/out_of_column_eval.py`, and
+imported by `treestitch/stitch_viz.py`, `attic/prior_results/out_of_column_eval.py`, and
 `neuronauts/meshing/bundle.py` — the last one a KEEP package — so it is a live
 dependency, not a retired one.
 

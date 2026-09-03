@@ -6,8 +6,8 @@ If pos_frac is near 0.9 or 0.1, predicting the majority class yields
 high accuracy with no learning — the metric is misleading.
 
 Usage:
-  python scripts/inspect_topology_metric.py --cache-dir data/boxes_v117
-  python scripts/inspect_topology_metric.py --cache-dir data/boxes_v117 --sample 5
+  python attic/superseded_training/inspect_topology_metric.py --cache-dir data/boxes_v117
+  python attic/superseded_training/inspect_topology_metric.py --cache-dir data/boxes_v117 --sample 5
 """
 
 from __future__ import annotations

@@ -136,7 +136,7 @@ under §6. This is the single most important cleanup item.
 | Polarity → compartment, label-blind (~95% pure vs binomial null) | harness | `results/figures/06_polarity_compartments.png` |
 | Real L2 adjacency for 40,109 atoms, 100% attribute coverage | harness | `results/atom_geometry_tiers.json`, verified independently |
 | Contracted topology: 5.1M endpoints, 245/atom, 4.3 components/atom | harness | `results/atom_topology_k10.json` |
-| Tree-DNA individual identity at half-skeleton scale (within-type AUC 0.829) | STATUS.md | `scripts/half_split_ablation.py --encoder gnn` |
+| Tree-DNA individual identity at half-skeleton scale (within-type AUC 0.829) | STATUS.md | `attic/prior_results/half_split_ablation.py --encoder gnn` |
 | Dendritic scaffold certifiable by nucleus lineage (59.6% of synapses at 99.8% purity) | tree_assembly handoff | 200 µm dual-side census |
 | Tile stitching +0.10 ARI at ~0 precision cost; 100 µm tiles, not 300 | tree_assembly handoff | 3 runs, 200 µm box |
 | Cut-face texture combiner: precision 1.0 at 11% coverage on real split sites | `experiments/fingerprints/` | 73 held-out sites |

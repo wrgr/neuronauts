@@ -15,7 +15,7 @@ candidates), built and grouped-by-cell exactly as the corrector sees them:
     NET change in partition errors vs do-nothing (positive = actually better than nothing).
 
 Usage:
-    python -m experiments.pcfg.group_eval --sidetable data/sidetable_7box.npz
+    python -m attic.pcfg_one_offs.group_eval --sidetable data/sidetable_7box.npz
 """
 from __future__ import annotations
 

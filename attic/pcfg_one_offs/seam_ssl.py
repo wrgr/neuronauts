@@ -9,7 +9,7 @@ gives unlimited training data and teaches "what two-cables-joined looks like" wh
 LEARNS the cues itself. Then evaluate ZERO-SHOT on the REAL v117 merges and compare to the
 supervised-from-scratch seam detector -- especially on the axon side.
 
-    python -m experiments.pcfg.seam_ssl \
+    python -m attic.pcfg_one_offs.seam_ssl \
         --sidetable data/sidetable_big.npz --n-splice 3000 --epochs 8
 """
 from __future__ import annotations

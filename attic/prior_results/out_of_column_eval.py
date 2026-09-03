@@ -27,16 +27,16 @@ Tertiary — conservative-behavior sanity check:
 Usage
 -----
   # Default: evaluate at x=200–400k (well outside the x=750k–1550k column)
-  python scripts/out_of_column_eval.py --version 1718
+  python attic/prior_results/out_of_column_eval.py --version 1718
 
   # Custom out-of-column bbox:
-  python scripts/out_of_column_eval.py \\
+  python attic/prior_results/out_of_column_eval.py \\
       --ooc-x0 200000 --ooc-x1 400000 \\
       --ooc-y0 400000 --ooc-y1 500000 \\
       --ooc-z0 600000 --ooc-z1 700000
 
   # Faster debugging (1 training region):
-  python scripts/out_of_column_eval.py --quick-train --embed-epochs 10
+  python attic/prior_results/out_of_column_eval.py --quick-train --embed-epochs 10
 """
 
 from __future__ import annotations

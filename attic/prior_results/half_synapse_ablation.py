@@ -18,7 +18,7 @@ Two modes
 
 Usage
 -----
-  python scripts/half_synapse_ablation.py --synthetic --n-neurons 10 --epochs 30
+  python attic/prior_results/half_synapse_ablation.py --synthetic --n-neurons 10 --epochs 30
 """
 
 from __future__ import annotations

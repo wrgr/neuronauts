@@ -14,7 +14,7 @@ traversal); the synapses are the tokens the grammar generates.
 
 Trained on real (noisy) neurons; group-by-cell CV; both error types scored by the one grammar.
 
-    python -m experiments.pcfg.synapse_grammar_ar --sidetable data/sidetable_7box.npz
+    python -m attic.pcfg_one_offs.synapse_grammar_ar --sidetable data/sidetable_7box.npz
 """
 from __future__ import annotations
 

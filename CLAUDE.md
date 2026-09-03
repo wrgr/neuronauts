@@ -74,3 +74,5 @@ code is correct here, with a check I could show?"* If no, don't write it.
   MICrONS docs recommend filtering by root id. Any region/synapse fetch helper
   must have its **counts validated against a trusted query** before being relied
   on.
+
+Always use American english spelling and avoid jargon or acronymns not spelled out. 

@@ -19,12 +19,12 @@ materialization token).
 
 Usage
 -----
-  python scripts/multi_fragment_ablation.py \\
+  python attic/prior_results/multi_fragment_ablation.py \\
       --n-neurons 60 --n-splits 4 --epochs 80 \\
       --token $CAVE_TOKEN
 
   # Restrict to medium-volume neurons (crude pyramidal-cell proxy)
-  python scripts/multi_fragment_ablation.py \\
+  python attic/prior_results/multi_fragment_ablation.py \\
       --n-neurons 60 --n-splits 4 \\
       --volume-min 300 --volume-max 3000 \\
       --epochs 80

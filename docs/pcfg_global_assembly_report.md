@@ -93,7 +93,7 @@ typed branching process (a bottom-up probabilistic tree automaton). The
 string would be O(n³) for no gain.
 
 This inversion is also why the earlier autoregressive "grammar"
-(`experiments/pcfg/synapse_grammar_ar.py`) scored 0.63 on merges and chance on
+(`attic/pcfg_one_offs/synapse_grammar_ar.py`) scored 0.63 on merges and chance on
 splits: it linearised a synapse tree into a trajectory and scored per-step
 displacement NLL, so "the likelihood scores edge geometry, not branching
 topology" (its own diagnosis). Adding a degree head did not rescue it because

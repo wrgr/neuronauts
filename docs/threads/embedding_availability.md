@@ -502,7 +502,7 @@ separation from the cross-owner background at this sample size.
 - **n is small.** 34 atoms in 12 owner-clusters is closer to 12 independent samples than 34;
   wide uncertainty is expected, and I did not compute a formal interval.
 - **Type is not controlled.** The 0.829 tree-DNA bar is specifically a *within-type* number
-  (`scripts/within_type_ablation.py` exists precisely because cross-type pairs are trivially
+  (`attic/prior_results/within_type_ablation.py` exists precisely because cross-type pairs are trivially
   separable and inflate the naive score). My 12 owners were picked only by atom count, not
   matched by cell type — if several are the same type, local-window embeddings failing to
   separate individuals within a type would look exactly like this result, and it would not be

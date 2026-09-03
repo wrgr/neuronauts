@@ -15,6 +15,20 @@ Two kinds of threads:
 > the longer-range direction is [`docs/roadmap_global_assembly.md`](../docs/roadmap_global_assembly.md).
 > Checkpoints are catalogued in [`models/README.md`](../models/README.md).
 
+**Only five threads still have code under `experiments/`:** `pcfg/`,
+`fingerprints/`, `minnie_column/`, `soma_graph/` and `root_neighborhood/`. The
+rest of this page's rows are *core* threads whose code lives in `neuronauts/`, or
+history. Retired threads and one-off scripts are in
+[`attic/`](../attic/README.md), which is the archive; each subdirectory there has
+a README saying what it was and what replaced it.
+
+Two threads moved out on 2026-09-02:
+
+| Was | Now | Why |
+|---|---|---|
+| `experiments/low_res_segmentation/` | [`attic/incubating_threads/low_res_segmentation/`](../attic/incubating_threads/README.md) | Incubating since April with no number against its own graduation bar; branch stale since 2026-04-07. Its two tests stayed in `tests/` and still run. |
+| 15 one-off scripts in `experiments/pcfg/` | [`attic/pcfg_one_offs/`](../attic/pcfg_one_offs/README.md) | Each answered one question once; nothing in the remaining package imports any of them. They still run from the new path. |
+
 | Thread | Status | Kind | Code | Entry point | Checkpoints |
 |--------|--------|------|------|-------------|-------------|
 | [fingerprints](fingerprints/README.md) | external | branch | `claude/neuron-fingerprints-connectivity-jg95xp` (unmerged) | see thread README | — |
@@ -26,7 +40,7 @@ Two kinds of threads:
 | [root_neighborhood](root_neighborhood/README.md) | incubating | experiment | `experiments/root_neighborhood/` | `train.py build-dataset --strategy proofread-core` | `shared_grammar_root_neighborhood_run001` |
 | [soma_graph](soma_graph/README.md) | incubating | experiment | `experiments/soma_graph/` | `smoke_test.py` | — |
 | [minnie_column](minnie_column/README.md) | active (data) | experiment | `experiments/minnie_column/` | see its README | — |
-| [topology](../docs/threads/topology.md) | optional | core | `neuronauts/topology_model.py`, `topology_dataset.py` | `scripts/train_topology_model.py` | — (smoke only) |
+| [topology](../docs/threads/topology.md) | optional | core | `neuronauts/topology_model.py`, `topology_dataset.py` | `attic/superseded_training/train_topology_model.py` | — (smoke only) |
 | legacy (v1) | quarantined | — | `neuronauts/legacy/` | `neuronauts` console script | — |
 
 **Status legend:** *active* = part of the current workflow · *active (default)*

@@ -47,8 +47,48 @@ for label, pred in (("already whole", lambda r: r["already_whole"] and r["l2_in_
     if c: reps[label] = c
 print("representatives:", reps, flush=True)
 
+def decimate(V, E, k=4):
+    """Thin a skeleton without changing its shape.
+
+    Branch points and leaves are kept exactly; only the degree-2 chains between
+    them are sampled, every kth vertex. Topology therefore survives -- a branch
+    is still a branch -- while a 6,700-vertex arbor drops to roughly 1,700.
+    Shipping all 103 cells at full resolution would be 50 MB against a 16 MB
+    page budget.
+    """
+    from collections import defaultdict
+    adj = defaultdict(list)
+    for a, b in E:
+        adj[int(a)].append(int(b)); adj[int(b)].append(int(a))
+    if not adj:
+        return list(range(len(V))), [(int(a), int(b)) for a, b in E]
+    anchors = {i for i in adj if len(adj[i]) != 2} or {next(iter(adj))}
+    keep, newE, seen = set(anchors), [], set()
+    for a in anchors:
+        for nb in adj[a]:
+            if (a, nb) in seen:
+                continue
+            path, prev, cur = [a], a, nb
+            while True:
+                path.append(cur)
+                seen.add((prev, cur)); seen.add((cur, prev))
+                if cur in anchors:
+                    break
+                nxt = [x for x in adj[cur] if x != prev]
+                if not nxt:
+                    break
+                prev, cur = cur, nxt[0]
+            sel = sorted({0, len(path) - 1} | {i for i in range(1, len(path) - 1) if i % k == 0})
+            keep.update(path[i] for i in sel)
+            newE += [(path[sel[i]], path[sel[i + 1]]) for i in range(len(sel) - 1)]
+    idx = sorted(keep)
+    remap = {o: i for i, o in enumerate(idx)}
+    return idx, [(remap[a], remap[b]) for a, b in newE]
+
+
 skels = {}
-for label, cell in reps.items():
+# every cell, not only the representatives: each card in the gallery is clickable
+for cell in [r["cell"] for r in A]:
     f = X / f"cell_skeletons/{cell}_skv4.npz"
     if not f.exists(): continue
     z = np.load(f, allow_pickle=False)
@@ -70,14 +110,19 @@ for label, cell in reps.items():
         lab[np.flatnonzero(ok)] = near
         keys_out = [str(k) for k in keys]
     else: keys_out = []
-    inside = np.all((V >= LO) & (V <= HI), axis=1)
-    skels[str(cell)] = {"v": np.round(V).astype(int).tolist(), "e": E.tolist(),
-                        "label": lab.tolist(), "frag_ids": keys_out,
+    idx, E2 = decimate(V, E, k=4)
+    V2, lab2 = V[idx], lab[idx]
+    # quantise to 100 nm relative to the cube corner: coordinates become three
+    # or four digits instead of six, which roughly halves the payload again.
+    Q = np.round((V2 - LO) / 100.0).astype(int)
+    skels[str(cell)] = {"q": Q.ravel().tolist(), "e": [int(x) for e_ in E2 for x in e_],
+                        "label": lab2.tolist(), "frag_ids": keys_out,
                         "in_target": [int(int(k) in tgt) for k in keys_out],
                         "soma_frag": str(soma_frag),
-                        "inside": inside.astype(int).tolist(),
-                        "soma_nm": cards[cell]["seed"]["pos_nm"]}
-    print(f"  {label}: {cell} -> {len(V)} vertices, {len(keys_out)} fragments", flush=True)
+                        "soma_nm": [float(x) for x in cards[cell]["seed"]["pos_nm"]]}
+    n_done = len(skels)
+    if n_done % 20 == 0 or n_done < 3:
+        print(f"  {n_done}/{len(A)}: {cell} -> {len(V)} -> {len(V2)} vertices", flush=True)
 
 rows = []
 for r in A:
@@ -108,6 +153,6 @@ def finite(x):
     return x
 
 payload = finite({"rows": rows, "reps": {k: str(v) for k, v in reps.items()}, "skeletons": skels,
-                  "cube": {"lo_nm": LO.tolist(), "hi_nm": HI.tolist()}})
+                  "cube": {"lo_nm": LO.tolist(), "hi_nm": HI.tolist(), "quant_nm": 100.0}})
 json.dump(payload, open(OUT, "w"), separators=(",", ":"), allow_nan=False)
 import os; print(f"\nwrote {OUT}  {os.path.getsize(OUT)/1e6:.1f} MB  ({len(rows)} cells, {len(skels)} skeletons)")

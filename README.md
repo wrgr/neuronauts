@@ -2,6 +2,11 @@
 
 `neuronauts` reconstructs neurons from electron microscopy connectome data. Given CAVE synapse tables and skeleton fragments, it learns to partition synapses by their parent neuron and assembles fragment trees into globally consistent neurons.
 
+> **New here?** [`docs/MAP.md`](docs/MAP.md) is the orientation page: what is live,
+> what is superseded but real, and what is archived synthetic-substrate history.
+> The numbers in this README predate the registered experiment program in
+> [`results/RESULTS.md`](results/RESULTS.md); the MAP says which is which.
+
 Two research tracks are active and have now cleared their initial viability bars on real MICrONS minnie65 data:
 
 | Track | What it learns | Key result |
@@ -10,6 +15,21 @@ Two research tracks are active and have now cleared their initial viability bars
 | **grammar** (merge scoring) | PathEdgeEncoder + MergeScorer scores pairwise fragment merges | Cross-region holdout AUC=**0.816** [0.754, 0.874] |
 
 The earlier **CellGNN** baseline (synapse graph → cell assignment) is in `neuronauts/cell_graph.py` and remains the default `train-cell-gnn` CLI target; test F1=0.272.
+
+---
+
+## Repository layout
+
+| Directory | What is in it |
+|---|---|
+| [`neuronauts/`](neuronauts/) | The package. `harness/` is the substrate, `metrics/` the one metric home, `experiments/` the registered program, `report/` the runner and renderer, `data/` the CAVE access layer. |
+| [`scripts/`](scripts/README.md) | **Only** what builds or refreshes current data, plus the minimal-repro probes and the `train.py` command line. |
+| [`experiments/`](experiments/README.md) | **Only** live research threads: `pcfg/`, `fingerprints/`, `minnie_column/`, `soma_graph/`, `root_neighborhood/`. |
+| [`treestitch/`](treestitch/) | The global-partition package behind the top result above. |
+| [`tests/`](tests/) | The default suite. |
+| [`attic/`](attic/README.md) | **The archive.** Everything superseded, in ten subdirectories, each with a README saying what it was and what replaced it. Excluded from `pytest`; nothing is deleted. |
+| [`results/`](results/RESULTS.md) | One directory per experiment. A run without a row in `RESULTS.md` does not exist. |
+| [`docs/`](docs/MAP.md) | `MAP.md` first, then `threads/` for per-thread state and `archive/` for dated snapshots. |
 
 ---
 
@@ -26,8 +46,8 @@ CAVE skeleton cache  (cache/l2_skeleton/*.npz)
 Entry point:
 
 ```bash
-python scripts/train_l2_partition.py --help
-python scripts/multi_region_train.py --help   # multi-region with seam-buffer leak fix
+python attic/prior_results/train_l2_partition.py --help
+python attic/prior_results/multi_region_train.py --help   # multi-region with seam-buffer leak fix
 ```
 
 ## CellGNN baseline pipeline (box-cache route)
@@ -204,9 +224,9 @@ Path-encoder and training-run checkpoints are produced locally; write new runs t
 | `neuronauts/fetch.py` | CAVE synapse/skeleton fetch (query + bulk routes) |
 | `neuronauts/schemas.py` | Typed contracts: `Region`, `Fragment`, `NeuronHypothesis` |
 | `scripts/train.py` | All CellGNN/grammar training and evaluation CLI |
-| `scripts/train_l2_partition.py` | treestitch L2 partition training |
-| `scripts/multi_region_train.py` | Multi-region train with seam-buffer leak fix |
-| `scripts/spatial_variance.py` | Spatial variance + OOC shape study (7 test bboxes) |
+| `attic/prior_results/train_l2_partition.py` | treestitch L2 partition training |
+| `attic/prior_results/multi_region_train.py` | Multi-region train with seam-buffer leak fix |
+| `attic/prior_results/spatial_variance.py` | Spatial variance + OOC shape study (7 test bboxes) |
 | `data/boxes_30um/` | 247 cached CAVE boxes |
 | `cache/l2_skeleton/` | L2 skeleton NPZ cache (PROVENANCE.json tracked; NPZs local-only) |
 

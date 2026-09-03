@@ -59,7 +59,7 @@ Run on one or more fixed validation boxes from `neuronauts.run.REAL_BOXES`.
 Command:
 
 ```bash
-python scripts/export_topology_dataset.py \
+python attic/superseded_training/export_topology_dataset.py \
   --output data/topology_dataset_smoke.npz \
   --box-indices 0
 ```
@@ -90,7 +90,7 @@ Verify:
 Command:
 
 ```bash
-python scripts/train_topology_model.py \
+python attic/superseded_training/train_topology_model.py \
   --dataset data/topology_dataset_smoke.npz \
   --output models/topology_atomicity_smoke.pt
 ```

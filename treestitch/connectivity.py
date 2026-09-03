@@ -37,7 +37,7 @@ from neuronauts.metrics.connectome import (
 )
 
 # Re-exported under their historical private names: a couple of callers in
-# this repo (scripts/spatial_variance.py) import these directly.
+# this repo (attic/prior_results/spatial_variance.py) import these directly.
 _prf1 = edge_set_prf1
 _match_clusters_to_neurons = match_clusters_majority
 _undirected_edge_set = undirected_edge_set

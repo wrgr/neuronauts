@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "attic" / "prior_results"))
 from multi_fragment_ablation import split_skeleton_n_parts
 
 

@@ -17,7 +17,7 @@ Outputs
 4. Systematic vs idiosyncratic -- concentration of seam transitions (top-bigram lift).
 
 Usage:
-    python -m experiments.pcfg.grammar_regime \
+    python -m attic.pcfg_one_offs.grammar_regime \
         --sidetable data/sidetable_7box.npz
 """
 from __future__ import annotations

@@ -7,9 +7,9 @@ positive edges per confidence bin.
 
 Usage
 -----
-    python scripts/plot_calibration.py
-    python scripts/plot_calibration.py --checkpoint /tmp/neuronauts_variance.pt
-    python scripts/plot_calibration.py --out /tmp/calib.pdf
+    python attic/prior_results/plot_calibration.py
+    python attic/prior_results/plot_calibration.py --checkpoint /tmp/neuronauts_variance.pt
+    python attic/prior_results/plot_calibration.py --out /tmp/calib.pdf
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ def main() -> int:
 
     ckpt_path = Path(args.checkpoint)
     if not ckpt_path.exists():
-        print(f"Checkpoint not found at {ckpt_path}. Run scripts/spatial_variance.py first.")
+        print(f"Checkpoint not found at {ckpt_path}. Run attic/prior_results/spatial_variance.py first.")
         return 1
 
     print(f"Loading checkpoint from {ckpt_path} …")

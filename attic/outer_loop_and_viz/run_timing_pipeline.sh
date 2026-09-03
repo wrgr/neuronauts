@@ -191,7 +191,7 @@ must step1_build_dataset "$RUN_DIR/step1_build_dataset.log" \
 # fewer than 5% of probed svids show lineage divergence — that means the cache
 # would yield no edit pairs and step 2 would silently produce zero training data.
 must step1b_verify_lineage "$RUN_DIR/step1b_verify_lineage.log" \
-  python scripts/verify_cache_lineage.py \
+  python attic/one_off_analyses/verify_cache_lineage.py \
     --cache-dir data/boxes_30um \
     --min-edit-fraction 0.05 \
     --n-svids 1000

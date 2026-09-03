@@ -19,7 +19,7 @@ where the problem is hardest.
 
 Usage
 -----
-  python scripts/spatial_train_test_split.py \\
+  python attic/prior_results/spatial_train_test_split.py \\
       --version 1718 --partition-epochs 150 --cc-bias -1.0
 """
 

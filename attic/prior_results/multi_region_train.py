@@ -23,8 +23,8 @@ Dense mode (--dense): doubles y-extent to 100k nm for higher fragment density.
 
 Usage
 -----
-  python scripts/multi_region_train.py --version 1718 --partition-epochs 150
-  python scripts/multi_region_train.py --dense  # stress-test at higher density
+  python attic/prior_results/multi_region_train.py --version 1718 --partition-epochs 150
+  python attic/prior_results/multi_region_train.py --dense  # stress-test at higher density
 """
 
 from __future__ import annotations

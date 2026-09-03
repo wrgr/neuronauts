@@ -6,8 +6,8 @@ Outputs docs/latex/figures/variance_barchart.pdf and .png.
 
 Usage
 -----
-    python scripts/plot_variance.py
-    python scripts/plot_variance.py --out /tmp/variance.pdf
+    python attic/prior_results/plot_variance.py
+    python attic/prior_results/plot_variance.py --out /tmp/variance.pdf
 """
 
 from __future__ import annotations

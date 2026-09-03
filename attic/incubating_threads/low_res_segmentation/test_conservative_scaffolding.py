@@ -10,8 +10,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from experiments.low_res_segmentation.conservative_scaffolding import ConservativeScaffoldingPipeline
-from experiments.low_res_segmentation.evaluate_neuron_purity import create_synthetic_connectome, evaluate_neuron_purity
+from attic.incubating_threads.low_res_segmentation.conservative_scaffolding import ConservativeScaffoldingPipeline
+from attic.incubating_threads.low_res_segmentation.evaluate_neuron_purity import create_synthetic_connectome, evaluate_neuron_purity
 
 
 def main():

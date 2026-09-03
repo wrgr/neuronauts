@@ -16,7 +16,7 @@ corpus (clean-vs-noisy grammar KL was ~0) buys scale. Group-by-cell CV; do-nothi
 precision@k. Skeletons from --skel-cache (grown by the background corpus fetch); synapses from
 the cached SideTable.
 
-    python -m experiments.pcfg.skel_ssl_grammar --sidetable data/sidetable_7box.npz
+    python -m attic.pcfg_one_offs.skel_ssl_grammar --sidetable data/sidetable_7box.npz
 """
 from __future__ import annotations
 

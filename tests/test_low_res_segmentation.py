@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from experiments.low_res_segmentation.low_res_segmentation import (
+from attic.incubating_threads.low_res_segmentation.low_res_segmentation import (
     LowResSegmentationPipeline,
     LowResSegmentation,
     SynapseMappingResult,

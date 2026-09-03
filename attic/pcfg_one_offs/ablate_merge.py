@@ -18,7 +18,7 @@ dist-only/size-only is mechanical, not morphological.  Report per-stratum AUC vs
 permutation null for both LogReg and RandomForest.
 
 Usage:
-    python -m experiments.pcfg.ablate_merge --sidetable data/sidetable_7box.npz
+    python -m attic.pcfg_one_offs.ablate_merge --sidetable data/sidetable_7box.npz
 """
 from __future__ import annotations
 

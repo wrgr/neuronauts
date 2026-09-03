@@ -47,11 +47,11 @@ Usage
   # both substrates (default):
   NEURONAUTS_L2_CACHE_DIR=$PWD/cache/l2_skeleton \
   NEURONAUTS_SYNAPSE_CACHE_DIR=$PWD/cache/synapse \
-  PYTHONPATH=$PWD python3 scripts/p1_completeness_benchmark.py
+  PYTHONPATH=$PWD python3 attic/prior_results/p1_completeness_benchmark.py
 
   # one substrate only:
-  python3 scripts/p1_completeness_benchmark.py --substrate l2
-  python3 scripts/p1_completeness_benchmark.py --substrate synapse
+  python3 attic/prior_results/p1_completeness_benchmark.py --substrate l2
+  python3 attic/prior_results/p1_completeness_benchmark.py --substrate synapse
 """
 from __future__ import annotations
 

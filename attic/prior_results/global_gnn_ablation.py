@@ -12,8 +12,8 @@ Pipeline
 
 Usage
 -----
-  python scripts/global_gnn_ablation.py --n-neurons 40 --dna-epochs 60 --gnn-epochs 50
-  python scripts/global_gnn_ablation.py --synthetic   # fast offline test
+  python attic/prior_results/global_gnn_ablation.py --n-neurons 40 --dna-epochs 60 --gnn-epochs 50
+  python attic/prior_results/global_gnn_ablation.py --synthetic   # fast offline test
 """
 from __future__ import annotations
 

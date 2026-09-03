@@ -34,7 +34,7 @@ implementation.
 | [`neuronauts/grammar.py`](../../neuronauts/grammar.py) | `PathEdgeEncoder`/`TorchPathEncoder`, `MergeScorer`, `ArborEncoder` |
 | [`neuronauts/shared_grammar_model.py`](../../neuronauts/shared_grammar_model.py) | `SharedGrammarModel`, `BridgeHead`, `GlobalAssemblyGAT`, `multitask_train_step` |
 | [`neuronauts/assembly.py`](../../neuronauts/assembly.py) | `gat_refine_connectivity`, `label_graph_edges` |
-| [`scripts/train_shared_grammar.py`](../../scripts/train_shared_grammar.py) | standalone shared-grammar trainer (helper) |
+| [`attic/superseded_training/train_shared_grammar.py`](../../attic/superseded_training/train_shared_grammar.py) | standalone shared-grammar trainer (helper) |
 
 ## Run
 

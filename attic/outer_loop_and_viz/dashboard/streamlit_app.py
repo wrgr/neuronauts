@@ -4,7 +4,7 @@ Launch:
     streamlit run dashboard/streamlit_app.py
 
 Load a result bundle produced by:
-    python scripts/spatial_variance.py --save-bundle results.json ...
+    python attic/prior_results/spatial_variance.py --save-bundle results.json ...
 """
 
 from __future__ import annotations
@@ -69,7 +69,7 @@ if bundle is None:
         "**Load a result bundle to explore results.**\n\n"
         "Generate one with:\n"
         "```bash\n"
-        "python scripts/spatial_variance.py \\\n"
+        "python attic/prior_results/spatial_variance.py \\\n"
         "  --checkpoint /tmp/neuronauts_dual_trained.pt \\\n"
         "  --dual-side --save-bundle results.json\n"
         "```"

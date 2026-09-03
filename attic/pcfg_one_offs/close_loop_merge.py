@@ -16,7 +16,7 @@ Loop:
 net_fixed = do_nothing_pair_errors - corrected_pair_errors  (>0 == actually better than nothing).
 Merge direction only; the split/join half needs the relational model.
 
-    python -m experiments.pcfg.close_loop_merge --sidetable data/sidetable_7box.npz
+    python -m attic.pcfg_one_offs.close_loop_merge --sidetable data/sidetable_7box.npz
 """
 from __future__ import annotations
 

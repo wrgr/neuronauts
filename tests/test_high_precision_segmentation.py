@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from experiments.low_res_segmentation.high_precision_segmentation import (
+from attic.incubating_threads.low_res_segmentation.high_precision_segmentation import (
     HighPrecisionSegmentation3D,
     SegmentationResult,
     SynapseSeparability,

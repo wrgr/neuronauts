@@ -10,8 +10,8 @@ Tests neuron purity metrics:
 from __future__ import annotations
 
 import numpy as np
-from experiments.low_res_segmentation.low_res_segmentation import LowResNeuronSegmentationPipeline
-from experiments.low_res_segmentation.high_precision_segmentation import HighPrecisionSegmentation3D
+from attic.incubating_threads.low_res_segmentation.low_res_segmentation import LowResNeuronSegmentationPipeline
+from attic.incubating_threads.low_res_segmentation.high_precision_segmentation import HighPrecisionSegmentation3D
 
 
 def create_synthetic_connectome(

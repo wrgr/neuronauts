@@ -36,13 +36,13 @@ Out-of-column (shape plausibility only, no GT):
 Usage
 -----
   # Full run (train once, eval 7 bboxes, takes ~20 min):
-  python scripts/spatial_variance.py
+  python attic/prior_results/spatial_variance.py
 
   # Quick debug (fewer epochs, skip calibration):
-  python scripts/spatial_variance.py --quick --no-calibration
+  python attic/prior_results/spatial_variance.py --quick --no-calibration
 
   # Load existing checkpoint to skip training:
-  python scripts/spatial_variance.py --checkpoint /tmp/neuronauts_variance.pt
+  python attic/prior_results/spatial_variance.py --checkpoint /tmp/neuronauts_variance.pt
 """
 
 from __future__ import annotations

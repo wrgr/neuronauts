@@ -20,7 +20,7 @@ substrate** we sample it with.
 
 ## Two substrates, same region
 
-`scripts/p1_completeness_benchmark.py` builds P1 under both substrates.
+`attic/prior_results/p1_completeness_benchmark.py` builds P1 under both substrates.
 
 | | **Synapse** (`min_syn=5`) | **L2 node** (`min_l2=2`) |
 |---|---|---|
@@ -76,7 +76,7 @@ training on the L2 substrate itself. We did that next.
 
 ## Training on the L2 substrate
 
-`scripts/train_l2_partition.py` trains a partition GNN directly on the L2 substrate.
+`attic/prior_results/train_l2_partition.py` trains a partition GNN directly on the L2 substrate.
 Each observation is an L2 node; **same-fragment edges (edge type 0) connect the L2
 nodes of one v117 fragment** — the signal the fragment-centroid graph destroyed. To
 fit a 1.38M-node region in memory, each v117 fragment is subsampled to ≤50 L2 nodes
@@ -182,25 +182,25 @@ step for an out-of-region claim.
 # both substrates (synapse fetch is cached; L2 loads from cache/l2_world/p1_full.npz):
 NEURONAUTS_L2_CACHE_DIR=$PWD/cache/l2_skeleton \
 NEURONAUTS_SYNAPSE_CACHE_DIR=$PWD/cache/synapse \
-PYTHONPATH=$PWD python3 scripts/p1_completeness_benchmark.py
+PYTHONPATH=$PWD python3 attic/prior_results/p1_completeness_benchmark.py
 
 # GT only, no model:
-python3 scripts/p1_completeness_benchmark.py --no-model
+python3 attic/prior_results/p1_completeness_benchmark.py --no-model
 
 # train a partition model ON the L2 substrate (held-out spatial split, ~5 min):
 NEURONAUTS_L2_CACHE_DIR=$PWD/cache/l2_skeleton \
-PYTHONPATH=$PWD python3 scripts/train_l2_partition.py \
+PYTHONPATH=$PWD python3 attic/prior_results/train_l2_partition.py \
   --save-checkpoint models/neuronauts_l2_partition.pt
 ```
 
 The L2 world (533 neurons, 1.38M nodes, ~52 min to build) is cached to
 `cache/l2_world/p1_full.npz` (git-lfs); reruns load in seconds. P1 is also wired into
-`scripts/spatial_variance.py` as in-column eval region `P1`. The L2-trained
+`attic/prior_results/spatial_variance.py` as in-column eval region `P1`. The L2-trained
 checkpoint is `models/neuronauts_l2_partition.pt`.
 
 ```bash
 # train cross-region (A–E → P1 eval; caches load instantly, training ~15 min):
-PYTHONPATH=$PWD python3 scripts/train_l2_partition.py \
+PYTHONPATH=$PWD python3 attic/prior_results/train_l2_partition.py \
   --train-regions A,B,C,D,E \
   --save-checkpoint models/neuronauts_l2_partition_xregion.pt
 ```

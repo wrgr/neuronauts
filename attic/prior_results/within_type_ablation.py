@@ -25,13 +25,13 @@ Expected difficulty:
 Usage
 -----
   # 40 L2/3 pyramidal cells, default settings
-  python scripts/within_type_ablation.py --cell-type 23P --n-neurons 40
+  python attic/prior_results/within_type_ablation.py --cell-type 23P --n-neurons 40
 
   # Try inhibitory basket cells (harder — axon dominates)
-  python scripts/within_type_ablation.py --cell-type BC --n-neurons 30
+  python attic/prior_results/within_type_ablation.py --cell-type BC --n-neurons 30
 
   # List available cell types and counts
-  python scripts/within_type_ablation.py --list-types
+  python attic/prior_results/within_type_ablation.py --list-types
 """
 from __future__ import annotations
 

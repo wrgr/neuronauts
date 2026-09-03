@@ -35,7 +35,7 @@ Group-by-cell CV everywhere (union-find over v117<->later co-occurrence); within
 permutation nulls; seeded; CPU-fast.
 
 Usage:
-    python -m experiments.pcfg.learned_grammar_neural \
+    python -m attic.pcfg_one_offs.learned_grammar_neural \
         --sidetable data/sidetable_7box.npz
 """
 from __future__ import annotations

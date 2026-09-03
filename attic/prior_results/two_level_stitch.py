@@ -19,11 +19,11 @@ sparse-box regime) vs stitched, on the same per-tile predictions:
 Usage
 -----
   # Offline synthetic world (no network needed)
-  python scripts/two_level_stitch.py --synthetic
+  python attic/prior_results/two_level_stitch.py --synthetic
 
   # Real Minnie65 region (requires CAVE access): 2×2 tiles over the two
   # largest axes of the bbox
-  python scripts/two_level_stitch.py \\
+  python attic/prior_results/two_level_stitch.py \\
       --bbox 950000 930000 700000 1350000 1000000 800000 --halo-nm 20000
 """
 

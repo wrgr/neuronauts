@@ -109,20 +109,20 @@ Conventions:
 
 ```bash
 # Synthetic ablation: generates a multi-neuron world on the fly
-python scripts/ablate_dna.py --synthetic
+python attic/prior_results/ablate_dna.py --synthetic
 
 # Hard-split ablation (validates the multi-root use case; requires CAVE network access)
-python scripts/half_split_ablation.py --n-neurons 40
+python attic/prior_results/half_split_ablation.py --n-neurons 40
 ```
 
 **Phase 2 — Global GNN (implemented):**
 
 ```bash
 # Synthetic global GNN ablation (no network required)
-python scripts/global_gnn_ablation.py --synthetic
+python attic/prior_results/global_gnn_ablation.py --synthetic
 
 # Real-data global GNN ablation (requires CAVE auth token)
-python scripts/global_gnn_ablation.py --n-neurons 40
+python attic/prior_results/global_gnn_ablation.py --n-neurons 40
 ```
 
 Expected Phase 1 results on the hard-split ablation (40 real minnie65 neurons):

@@ -21,7 +21,7 @@ Compare against the neuron-seeded baseline in real_lineage_partition.py.
 
 Usage
 -----
-  python scripts/real_region_partition.py \\
+  python attic/prior_results/real_region_partition.py \\
       --bbox-nm 1150000,930000,780000,1250000,980000,880000 \\
       --version 1718 --embed-epochs 20 --partition-epochs 40
 """

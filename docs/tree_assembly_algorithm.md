@@ -213,7 +213,7 @@ hierarchical agglomeration (Beier et al., Nat. Methods 2017), specialized by
    `fragment_graph.py` / `assemble.py`).
 
    **→ RUN (2026-08-20), synthetic worlds.** Implemented as
-   `treestitch/stitch.py` + `scripts/two_level_stitch.py` (level 0 = the real
+   `treestitch/stitch.py` + `attic/prior_results/two_level_stitch.py` (level 0 = the real
    FragmentEncoder → EdgePartitionGNN → GAEC pipeline per tile). Findings:
 
    | Config (24 obj × 4 pieces) | ΔARI | Δmerge_P | multi-tile assembly |

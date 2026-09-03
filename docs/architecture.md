@@ -319,7 +319,7 @@ on the GNN embeddings to produce integer neuron labels per synapse.
 ### 6.3 Connecting GNN output to `NeuronHypothesis`
 
 The current pipeline evaluates via cosine AUC over synapse pairs (see
-`scripts/global_gnn_ablation.py`). The path to `NeuronHypothesis` artifacts
+`attic/prior_results/global_gnn_ablation.py`). The path to `NeuronHypothesis` artifacts
 is: cluster the GNN synapse embeddings → one cluster = one candidate neuron
 → collect the fragment IDs that overlap each cluster → emit
 `NeuronHypothesis(fragment_ids=..., spans_regions=...)`. This wiring is the
@@ -335,7 +335,7 @@ The key question for Phase 2 is: can the encoder recognise two halves of the
 same neuron as the same neuron? This is exactly the multi-root use case —
 where a proofread neuron is covered by multiple segmentation roots.
 
-The hard-split ablation (`scripts/half_split_ablation.py`) bisects each real
+The hard-split ablation (`attic/prior_results/half_split_ablation.py`) bisects each real
 proofread neuron's skeleton at its balance edge (the edge that most evenly
 splits vertex count), trains the encoder to treat both halves as the same
 neuron, and evaluates the same-neuron AUC on held-out pairs.

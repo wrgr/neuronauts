@@ -19,7 +19,7 @@ merges (accept boundary edges).  The oracle is reachable iff:
 
 Usage
 -----
-    python scripts/benchmark_boundary_search.py \\
+    python attic/one_off_analyses/benchmark_boundary_search.py \\
         --checkpoint models/cell_gnn_5feat.pt \\
         --cache-dir data/boxes
 """

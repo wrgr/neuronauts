@@ -8,7 +8,7 @@ Or with a pre-loaded bundle:
   streamlit run dashboard/results_explorer.py -- --bundle /tmp/my_bundle.json
 
 Expects a result bundle produced by:
-  python scripts/spatial_variance.py --dual-side --balanced-dual \\
+  python attic/prior_results/spatial_variance.py --dual-side --balanced-dual \\
     --save-bundle /tmp/my_bundle.json
 """
 
@@ -482,7 +482,7 @@ def main() -> None:
         st.markdown(
             "Load a result bundle produced by:\n"
             "```bash\n"
-            "python scripts/spatial_variance.py \\\n"
+            "python attic/prior_results/spatial_variance.py \\\n"
             "  --dual-side --balanced-dual \\\n"
             "  --save-bundle /tmp/neuronauts_bundle.json\n"
             "```\n"

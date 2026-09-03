@@ -100,7 +100,7 @@ print(format_metrics(m, title="PCFG vs learned, val region"))
   synapse *sides* joined across two segmentation versions via a `SideTable`,
   not a generic partition — so it wasn't folded into
   `neuronauts.metrics.connectome`. (A pre-existing, unrelated break -- this
-  file, `experiments/pcfg/group_eval.py`, and 21 other files under
+  file, `attic/pcfg_one_offs/group_eval.py`, and 21 other files under
   `experiments/pcfg/` still imported from the pre-rename package name
   `experiments.pcfg_synapse_partitions` -- was fixed in the 2026-09 code-health
   pass by rewriting those imports to `experiments.pcfg`.)

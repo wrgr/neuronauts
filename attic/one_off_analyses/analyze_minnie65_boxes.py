@@ -8,15 +8,15 @@ Usage
 -----
 With CAVE (requires network, caveclient)::
 
-    python scripts/analyze_minnie65_boxes.py --sample 100000
+    python attic/one_off_analyses/analyze_minnie65_boxes.py --sample 100000
 
 With static synapse CSV (if already downloaded)::
 
-    python scripts/analyze_minnie65_boxes.py --static-dir data/microns_static --version 1078 --sample 500000
+    python attic/one_off_analyses/analyze_minnie65_boxes.py --static-dir data/microns_static --version 1078 --sample 500000
 
 Estimate-only (no data fetch)::
 
-    python scripts/analyze_minnie65_boxes.py --estimate-only
+    python attic/one_off_analyses/analyze_minnie65_boxes.py --estimate-only
 """
 
 from __future__ import annotations

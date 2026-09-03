@@ -19,10 +19,10 @@ Reports ARI, cluster counts, and the over/under-merge asymmetry for each.
 Usage
 -----
   # Offline, synthetic world (no network needed)
-  python scripts/compare_partition_methods.py --synthetic --n-objects 20 --n-pieces 3
+  python attic/prior_results/compare_partition_methods.py --synthetic --n-objects 20 --n-pieces 3
 
   # Real Minnie65 neurons (requires CAVE access)
-  python scripts/compare_partition_methods.py --n-objects 20 --n-pieces 3 --cell-type 23P
+  python attic/prior_results/compare_partition_methods.py --n-objects 20 --n-pieces 3 --cell-type 23P
 """
 
 from __future__ import annotations

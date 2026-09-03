@@ -20,13 +20,13 @@ tested against Minnie65 soma boxes.
 
 ```bash
 # Synthetic smoke test (no CAVE needed)
-python experiments/low_res_segmentation/test_conservative_scaffolding.py
+python attic/incubating_threads/low_res_segmentation/test_conservative_scaffolding.py
 
 # Real Minnie65 CAVE box
-CAVE_TOKEN=<token> python experiments/low_res_segmentation/test_cave_scaffolding.py
+CAVE_TOKEN=<token> python attic/incubating_threads/low_res_segmentation/test_cave_scaffolding.py
 
 # Find soma box + full scaffold
-CAVE_TOKEN=<token> python experiments/low_res_segmentation/find_soma_box.py
+CAVE_TOKEN=<token> python attic/incubating_threads/low_res_segmentation/find_soma_box.py
 ```
 
 ## Tests

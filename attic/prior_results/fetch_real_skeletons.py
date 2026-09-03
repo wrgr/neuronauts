@@ -13,7 +13,7 @@ Workflow
 
 Usage
 -----
-  python scripts/fetch_real_skeletons.py \
+  python attic/prior_results/fetch_real_skeletons.py \
       --n-neurons 40 --epochs 80 --token <CAVE_AUTH_TOKEN>
 """
 from __future__ import annotations

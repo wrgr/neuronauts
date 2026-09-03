@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/bin/python /private/tmp/claude-501/-Users-wgray13-projects-neuronauts/cf09141a-b1df-4e7f-9934-ee973a777a45/scratchpad/repro_attrs.py)",
+      "Bash(ps -o pid,command -p 61871)",
+      "Bash(kill 61871)",
+      "Bash(.venv/bin/python -c ' *)",
+      "Read(//private/tmp/**)"
+    ]
+  }
+}

@@ -1372,7 +1372,7 @@ footer { font-size: 18px; color: #888; }
 </table>
 <br />
 <p>The GNN adds signal by aggregating neighbourhood context across the k-NN graph — synapses near same-neuron neighbours inherit their DNA signal through message passing.</p>
-<p>Real-data Phase 2 numbers pending (the DNA training on 80 real fragments with large trees is slow; runs as <code>scripts/global_gnn_ablation.py --n-neurons 40</code>).</p>
+<p>Real-data Phase 2 numbers pending (the DNA training on 80 real fragments with large trees is slow; runs as <code>attic/prior_results/global_gnn_ablation.py --n-neurons 40</code>).</p>
 </section>
 </foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="16" data-paginate="true" data-class="section-header" data-theme="default" data-style="section {
   font-family: 'Helvetica Neue', Arial, sans-serif;
@@ -2088,13 +2088,13 @@ uv <span class="hljs-built_in">sync</span>                              <span cl
 pytest -m <span class="hljs-string">&quot;not legacy&quot;</span> -q
 
 <span class="hljs-comment"># Phase 1 ablation — no data required</span>
-python scripts/ablate_dna.py --synthetic
+python attic/prior_results/ablate_dna.py --synthetic
 
 <span class="hljs-comment"># Phase 2 ablation — no data required</span>
-python scripts/global_gnn_ablation.py --synthetic
+python attic/prior_results/global_gnn_ablation.py --synthetic
 
 <span class="hljs-comment"># Real-data ablation — requires CAVE network access</span>
-python scripts/half_split_ablation.py --n-neurons 40
+python attic/prior_results/half_split_ablation.py --n-neurons 40
 </code></pre>
 <br />
 <p>Read <code>docs/architecture.md</code> for a full design walkthrough.<br />

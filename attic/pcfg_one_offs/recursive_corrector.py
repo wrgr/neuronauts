@@ -12,7 +12,7 @@ or `detector` (the Phase-3 RF p_merge; stop when a child looks like one clean ne
 Cut scorer: `oracle` (disagreement-minimizing edge) -- the realistic learned/abstaining cut
 plugs in via skeleton_cut_op once a trained seam model is supplied.
 
-    python -m experiments.pcfg.recursive_corrector --stop pure
+    python -m attic.pcfg_one_offs.recursive_corrector --stop pure
 """
 from __future__ import annotations
 
