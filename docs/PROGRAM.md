@@ -56,6 +56,33 @@ Its radius sweep never bound; the cap did. But recovery here is an upper bound �
 the panel is a single hop inside a box centred on the answer, ~450 candidates
 rather than ~300,000.
 
+### The honest translation of the ranking numbers
+
+"Top-1 on 22 of 66" sounds like a third. At the real frontier composition — 46
+cut ends per cell, one of them live — it is **0.33 correct joins and about 45
+false ones per cell, roughly 135 false per correct, a precision of 0.007.** Any
+ranking figure in this repository quoted without that conversion overstates the
+method by two orders of magnitude, including several I quoted today.
+
+Two further corrections from an independent recomputation off the panel files:
+the headline median rank is **6.0, not 5**, and the distance row does not
+reproduce (published top-1 2 of 66, recomputed **0 of 66**). Geometry's
+top-1/5/20 counts do reproduce exactly.
+
+**The corpus cannot currently certify the target.** Establishing a 2% per-tip
+false-positive rate needs at least 150 negative decision sites; we have 58. More
+negative sites is a prerequisite for any precision claim, not an optional extra.
+
+### Why distance cannot work, stated exactly
+
+In the median panel the minimum gap is **32 nm — one voxel — and a median of 85
+candidates (maximum 298) are tied at exactly that value.** The true partner sits
+at that minimum in 46 of 66 panels. Distance is not weak because the partner is
+far; it is weak because ~85 objects are equally near and no ordering exists among
+them. This is the tie, quantified, and it is why every distance-derived rule
+fails: `treestitch`'s scoring reduces to nearest-object and scores **0 of 66**
+top-1, unable to decline at any threshold.
+
 ## What works, and why it is the template
 
 **Cajal/Murray caliber conservation** (`results/EXP-084/`,
