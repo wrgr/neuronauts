@@ -134,15 +134,25 @@ include cases local adjacency cannot propose (skip connections).
 that bridge non-adjacent fragments — if it is material, adjacency-based
 candidate generation is refuted outright.
 
-### Stage 4 — Whole-cell shape as a global check  · IN FLIGHT
-**Concept.** A wrong join is detectable from the shape it produces, not from
-evidence at the join. EXP-063 detects a frankenmerge in an existing object at
-held-out area under the curve **0.958**; it has never been applied to a
-*proposed* join.
-**Claim.** A whole-cell shape score separates correct assemblies from ones
-corrupted by a real foreign fragment.
-**Needs.** Cached skeletons, `box_truth`. **Entry:** `stage4_shape.py`.
-**Bar.** Area under the curve above 0.9, plus the smallest detectable wrong join.
+### Stage 4 — Whole-cell shape: REFUTED as a global check, works as a re-ranker
+**Tested (EXP-083).** A wrong join was not detectable by an absolute shape
+threshold at any size: area under the curve **0.505** for random cuts, **0.507**
+on 214 real segmentation breaks, **0.547** even at frankenmerge scale (median
+12.8% of the arbor foreign). Cells differ from each other far more than a
+chimera differs from its host — a graft of an eighth of the arbor moves the
+shape vector by only 0.46 between-cell standard deviations. No threshold exists.
+**What does work:** given the true piece and a wrong piece on the identical
+base, gap and stem edge, the same shape score picks the true one **64.2%** of
+the time (68.0% on real breaks), because the pair equalizes everything local
+geometry already uses. Minimum reliably detectable graft is **3–10 µm** of
+cable; below 3 µm 31% of pairs are bit-identical. It is a **re-ranker among
+candidates already proposed**, not a gate on an assembly.
+**A sharper reading, from the control:** displacing *the cell's own* branch to
+the wrong site is detected *better* (0.710) than importing another cell's
+(0.642). The score reads "this does not belong **here**", referenced to the
+soma — a placement check, not a chimera detector. That is closer to Stage 1's
+conservation idea than to a shape classifier, and argues for folding it into
+Stage 1 rather than running it separately.
 
 ### Stage 5 — Grammar infilling  · SPECIFIED
 **Concept.** The grammar predicts what *should* be at a frontier — a dendrite of
@@ -155,6 +165,38 @@ finding live sites.
 `attic/morpho_grammar/tree_grammar_infiller.py` for reference.
 **Entry:** `stage5_infill.py`. **Bar.** Beat area under the curve 0.630 at the
 1.6% base rate.
+
+### Stage 4.5 — Attic assets worth carrying into the stages above
+A full audit of experiments 21–50 (`docs/attic_concept_audit.md`) found five
+reusable pieces, none of them a number to trust — every headline in that range
+had a mechanism-level defect (below). Route each into the stage it belongs to
+rather than reviving it standalone:
+- **Joint frontier assignment with a priced abstain**
+  (`attic/morpho_grammar/hungarian_bipartite_assembler.py`) — feeds Stage 2
+  directly; its cost matrix is already scorer-agnostic.
+- **A calibrated stop rule as a functional form to fit**, not the specific
+  numbers it once produced — feeds Stage 2's dummy-column cost.
+- **Conservation energy summed over every branch point of an arbor**
+  (extending `cajal_conservation_priors.py`) — feeds Stage 1 directly; this is
+  the regime where EXP-084's 0.675 stops being weak, because it compounds.
+- **The real edit log as oracle**, once `active_gap_oracle.py` is *not* used —
+  that file's "98%-accurate oracle" is `if gt_target_id in top_cand_ids: return
+  gt_target_id`, i.e. it returns the answer it is given. `fetch_edit_log`
+  returns 1,039 real operations for one gold cell and is the honest version.
+- **Grammar as a whole-object legality veto**, not a pairwise term —
+  consistent with EXP-063's polarity-only AUC 0.914 on real objects.
+
+**Why none of the old numbers survive:** in all 25 harnesses, synthetic
+synapse-partner identifiers are constructed as `partner_base = obj_counter *
+100`, so every fragment of one fabricated cell draws partners from a private
+numeric block and cross-cell overlap is identically zero by construction — the
+"synaptic fingerprinting" result was a one-hot label on the split, not a
+measurement. Several benchmarks silently fall back to a procedural skeleton
+generator when no data token is present, under a banner reading "real
+proofread neurons." One "98% oracle" returns the ground-truth id directly. The
+"~85–87%" figure counted a hit against *either* sibling fragment, scored at
+every leaf endpoint including ones with no true continuation. None of the 25
+engines runs today.
 
 ### Stage 6 — A learned tree scorer  · SPECIFIED
 **Concept.** Stages 1–5 are hand-specified. Once one of them separates
