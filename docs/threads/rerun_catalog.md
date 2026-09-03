@@ -59,3 +59,68 @@ carries its own audit, printed **before** the result:
 - power: state the effective sample. The abstention measurement swung from 0.44
   to 0.64 on one feature with 21 terminals — that is noise, and reporting either
   figure as a result was wrong.
+
+---
+
+# The older work, and why it can now be run for real
+
+The list above stops at the registered experiments, which is where I first drew
+the line and it was the wrong line. Most of this repository's work predates
+them — the grammar and PCFG threads, tree-DNA, fingerprints, topology, cell
+assignment, treestitch — 41 scripts in `attic/benchmarks_semi_synthetic/` and 28
+engines in `attic/morpho_grammar/`, plus 31 files in `experiments/pcfg/`.
+
+Those were all scored the same way: **take an intact skeleton, cut it in
+software, and see whether the method puts it back together.** Both halves of
+such a split still carry matching geometry, matching caliber and a matching
+tangent, so the task is far easier than the real one. 25 of the 26 engines also
+contain no checkpoint-loading code, so they were scored at initialization.
+
+That is the standing reason to distrust them. But it is not the only thing that
+was missing, and the missing piece is now present.
+
+## What was actually missing: a real task with real seeds
+
+A synthetic benchmark has to invent both the fragments *and* what counts as
+success. Every one of those scripts invented both. The real task now has neither
+invented:
+
+- **The seeds are real and exhaustive.** They come from `nucleus_detection_v0`,
+  a detection table independent of the segmentation — so segmentation errors
+  cannot corrupt the seed set. All 332 nuclei in the 100 µm cube resolve to a
+  v117 fragment; 76 (23%) are non-neuronal and are simply ignored, which is a
+  feature rather than a loss; 103 are evaluable neuron seeds. We know them all,
+  and the same table covers the entire volume.
+- **The target is real.** `box_truth.seeded_target` is the seed's own in-box
+  connected component under v1822 proofreading — what a grower starting at that
+  cell body should recover. 36 of 103 need nothing, which is what makes
+  abstention a real requirement rather than a stylistic one.
+- **The substrate is now correct.** Objects read with `agglomerate=True`, real
+  voxels at 32 nm, no supervoxel map in the path.
+
+So the honest statement about the attic is not "these were synthetic, discard
+them". It is: **these methods have never been asked the real question.** A
+grammar over morphology scored on soma-seeded recovery, with real seeds, a real
+target and correct geometry, is an experiment nobody in this repository has run.
+
+## Extended priority
+
+Everything above the line first — the proximity negatives are load-bearing and
+cheap to re-measure. Then:
+
+| | thread | what it needs to run for real | note |
+|---|---|---|---|
+| 7 | `experiments/pcfg/` (31 files) | soma-seeded panels instead of synthetic partitions | the PCFG scores trees rather than pairs, which is exactly what local geometry could not do — abstention and tie-breaking both want tree context |
+| 8 | `docs/threads/grammar.md` engines | real fragments, real seeds, and training (25 of 26 were never trained) | its 85–87% is in-sample on synthetic damage; the honest number is unknown, not low |
+| 9 | `tree_dna`, `topology`, `fingerprints` | per-object features on complete voxels | caliber went from useless to decisive under exactly this fix; these are the same kind of feature |
+| 10 | `cell_assignment`, `treestitch` | real seeds; these assign fragments to cells, which is the soma-seeded task under another name | closest in spirit to the current framing |
+
+## The rule for all of it
+
+Re-running an old experiment on new data is only worth doing if the result is
+believable afterward. Today five separate confident answers dissolved on
+inspection, every one of them substrate rather than hypothesis. So each re-run
+prints its audit before its result, states its effective sample size, and names
+the confound it is vulnerable to. An old method that now scores well on correct
+data is a real finding; an old method that scores well because the new substrate
+leaks is the same mistake in a better disguise.
