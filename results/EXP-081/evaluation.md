@@ -67,3 +67,45 @@ grows as it claims objects, and later tips are thinner and harder. Tips come
 from mip-5 centroids; the count is a micron-scale estimate, and a finer read
 would likely find more tips, which makes the base rate lower rather than higher.
 Live-site detection uses a 5 µm radius, which is generous.
+
+---
+
+## Follow-up: can local features find the live sites? No.
+
+Every tip scored, at the real 1.6% base rate:
+
+| feature | area under the curve |
+|---|---:|
+| nearest object (closer = live) | 0.535 |
+| best along-axis alignment | 0.564 |
+| alignment of the best candidate | 0.497 |
+| objects within 2 µm | 0.630 |
+| alignment × proximity | 0.572 |
+
+Precision at the operating point, ranking all 2,137 tips by alignment ×
+proximity:
+
+| | live found | precision |
+|---|---:|---:|
+| top 34 (one per cell) | **0** | **0.0%** |
+| top 68 | 2 | 2.9% |
+| top 170 | 3 | 1.8% |
+
+Against a 1.6% base rate, that is nothing. The best single feature — how many
+objects sit within 2 µm — reaches 0.630, and it is a density measure, not a
+continuation measure.
+
+Features are computed from mip-5 centroid clouds, so this understates them; a
+mip-2 pass would improve the numbers. It would not change the conclusion, because
+the same features on correct mip-2 identity reach only AUC 0.64 for the far
+easier stop decision at live sites.
+
+**This is the evidence that the pairwise line is finished.** Ranking candidates
+once you are already at a live site is a solvable problem — median rank 5 of
+2,440. Finding the live sites is not, with local evidence, and finding them is
+the task. A method that answers pairwise questions locally is reproducing a
+segmentation effort that has already been done, at worse quality, on one cube.
+
+What is left is what the local view cannot see: the shape of the whole assembled
+cell, the grammar that shape obeys, and the record of where humans actually
+chose to edit.
