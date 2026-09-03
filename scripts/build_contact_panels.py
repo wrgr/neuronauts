@@ -30,12 +30,20 @@ grammar that cannot decline to grow on them is not solving the task.
 
     python scripts/build_contact_panels.py --cells 24
 """
-import argparse, glob, json, time
+import argparse, glob, json, signal, time
+from datetime import datetime, timezone
 from pathlib import Path
 import numpy as np
 from scipy.spatial import cKDTree
 
+class _TimeoutSentinel(Exception):
+    """Raised by the per-cell alarm when a volume read hangs."""
+
+
 R = Path("/Users/wgray13/projects/neuronauts")
+# v117 is the base segmentation whose objects we assemble; supervoxel
+# identity must be read at its timestamp, not at head.
+V117_TS = datetime.fromtimestamp(1623399000, tz=timezone.utc)
 CUBE_C = np.array([663.0, 591.0, 860.0]) * 1000.0
 LO_NM, HI_NM = CUBE_C - 50_000.0, CUBE_C + 50_000.0
 HALF_NM, LOCAL_NM, MAXPTS = 4000.0, 1500.0, 20000
@@ -50,6 +58,10 @@ def axis_of(P):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--cells", type=int, default=24)
+    ap.add_argument("--only", choices=("both", "cut", "whole"), default="both",
+                    help="build only cut-centred or only terminal panels")
+    ap.add_argument("--per-cell-timeout", type=int, default=420,
+                    help="abandon a cell whose volume read hangs (seconds)")
     ap.add_argument("--out", default=str(R / "data/external/panels"))
     args = ap.parse_args()
     out = Path(args.out); out.mkdir(parents=True, exist_ok=True)
@@ -62,19 +74,18 @@ def main():
         k = rowi.get(int(a))
         return pos[int(ptr[k]):int(ptr[k + 1])] if k is not None else np.empty((0, 3))
 
-    sv = np.load(R / "data/substrate/c100um/objects_v117_mip5_svmap.npz", allow_pickle=False)
-    SV, RT = sv["sv"], sv["root"]
-    o = np.argsort(SV); SV, RT = SV[o], RT[o]
-
-    def to_root(x):
-        i = np.searchsorted(SV, x); i[i >= len(SV)] = 0
-        return np.where(SV[i] == x, RT[i], 0)
-
     import caveclient
     from cloudvolume import CloudVolume
     cl = caveclient.CAVEclient("minnie65_public")
+    # Read OBJECTS, not supervoxels. The volume stores supervoxel ids, but
+    # agglomerate=True resolves them to v117 objects server-side: measured at
+    # the same cost as doing it ourselves (8.0 s vs 8.1 s on a 12.5M-voxel box)
+    # and identical on 100.0000% of voxels. Doing it ourselves is what
+    # introduced the 21%-coverage defect, since our supervoxel map came from a
+    # mip-5 read and silently dropped every voxel it did not know.
     cv = CloudVolume(cl.chunkedgraph.cloudvolume_path, mip=2, use_https=True,
-                     progress=False, fill_missing=True, agglomerate=False)
+                     progress=False, fill_missing=True,
+                     agglomerate=True, timestamp=V117_TS)
     res = np.asarray(cv.resolution, float)
 
     cards = [json.load(open(f)) for f in sorted(glob.glob(str(R / "data/external/cell_cards/*.json")))
@@ -84,9 +95,14 @@ def main():
     whole = [c for c in cards if c["structure"]["already_whole"]]
     n_w = max(1, args.cells // 3)
     todo = need[: args.cells - n_w] + whole[:n_w]
+    if args.only == "cut":
+        todo = [c for c in todo if not c["structure"]["already_whole"]]
+    elif args.only == "whole":
+        todo = [c for c in todo if c["structure"]["already_whole"]]
     print(f"{len(todo)} panels: {len(todo)-n_w} needing joins, {n_w} already whole", flush=True)
 
     for c in todo:
+      try:
         cell = str(c["cell"]); key = cell[-8:]
         dest = out / f"panel_{key}.npz"
         if dest.exists():
@@ -128,9 +144,9 @@ def main():
             # continuing past it in 28 of 35 cells by a median of 2,303 nm. A
             # real cable end has nothing beyond it: walking outward from the
             # soma, no seed points lie further along that direction nearby.
-            out = cand_pts - soma
-            nrm = np.linalg.norm(out, axis=1, keepdims=True)
-            dirs = out / np.maximum(nrm, 1.0)
+            outward = cand_pts - soma      # not `out`: that is the output Path
+            nrm = np.linalg.norm(outward, axis=1, keepdims=True)
+            dirs = outward / np.maximum(nrm, 1.0)
             tip_ok = np.zeros(len(cand_pts), dtype=bool)
             tree_seed = cKDTree(Ps)
             for i in range(len(cand_pts)):
@@ -146,35 +162,21 @@ def main():
             ctr = ends[int(np.argmax(np.linalg.norm(ends - soma, axis=1)))]
 
         t0 = time.time()
+
+        def _alarm(sig, frm):
+            raise _TimeoutSentinel()
+
+        signal.signal(signal.SIGALRM, _alarm)
+        signal.alarm(args.per_cell_timeout)
         lo = np.floor((ctr - HALF_NM) / res).astype(int)
         hi = np.ceil((ctr + HALF_NM) / res).astype(int)
         vol = np.asarray(cv[lo[0]:hi[0], lo[1]:hi[1], lo[2]:hi[2]])[..., 0]
-        nz = np.nonzero(vol); svid = vol[nz]
-        rt = to_root(svid); ok = rt > 0
-        P2 = (np.stack(nz, 1)[ok] + lo) * res
-        R2 = rt[ok]; SV2 = svid[ok]
+        nz = np.nonzero(vol)
+        P2 = (np.stack(nz, 1) + lo) * res
+        R2 = vol[nz]                       # already v117 object ids
         Sv = P2[R2 == seed]
         if len(Sv) < 10:
             print(f"  {key}: seed absent from box", flush=True); continue
-
-        # supervoxel -> level-2 node, one batched call, then caliber per node
-        usv = np.unique(SV2)
-        l2 = np.zeros(len(usv), dtype=np.uint64)
-        for i in range(0, len(usv), 50_000):
-            l2[i:i + 50_000] = np.asarray(
-                cl.chunkedgraph.get_roots(usv[i:i + 50_000], stop_layer=2), dtype=np.uint64)
-        cal = {}
-        ul2 = np.unique(l2[l2 > 0]).tolist()
-        for i in range(0, len(ul2), 4000):
-            for k, v in cl.l2cache.get_l2data([int(x) for x in ul2[i:i + 4000]]).items():
-                if v and v.get("max_dt_nm") is not None:
-                    cal[int(k)] = float(v["max_dt_nm"])
-        sv2l2 = dict(zip(usv.tolist(), l2.tolist()))
-
-        def caliber(mask):
-            vals = [cal[sv2l2[s]] for s in np.unique(SV2[mask]).tolist()
-                    if sv2l2.get(s) in cal]
-            return float(np.median(vals)) if vals else np.nan
 
         # --- how does the SEED end here? ---
         # EXP-075 showed candidate geometry cannot say whether to stop. This asks
@@ -200,14 +202,44 @@ def main():
             if back > 0:
                 end_ratio = float(tip / back)   # end_drop was exactly 1-this; dropped
 
-        sub = Sv if len(Sv) <= MAXPTS else Sv[:: len(Sv) // MAXPTS][:MAXPTS]
+        sub = Sv if len(Sv) <= MAXPTS else Sv[np.linspace(0, len(Sv) - 1, MAXPTS).astype(int)]
         st = cKDTree(sub)
-        others = np.unique(R2[R2 != seed])
+        # Group voxels by object ONCE. Scanning `R2 == a` per
+        # candidate is O(candidates x voxels); with identity no longer eroded
+        # that is 2,445 x 12.5M and took 630 s a panel.
+        order = np.argsort(R2, kind="stable")
+        R2s, P2s = R2[order], P2[order]
+        uniq, starts = np.unique(R2s, return_index=True)
+        stops = np.append(starts[1:], len(R2s))
+        span = {int(o): (int(a_), int(b_)) for o, a_, b_ in zip(uniq.tolist(), starts, stops)}
+
+        vox_nm3 = float(np.prod(res))
+
+        def caliber_span(a_, b_):
+            """Equivalent radius of the object's local cross-section, in nm.
+
+            Measured from its own voxels. With identity no longer eroded this
+            needs no level-2 cache lookup and no supervoxel bookkeeping.
+            """
+            n = b_ - a_
+            if n <= 0:
+                return np.nan
+            P = P2s[a_:b_]
+            ax = axis_of(P)
+            if ax is None:
+                return float(np.cbrt(n * vox_nm3))
+            t = P @ ax
+            length = max(float(t.max() - t.min()), float(res[0]))
+            return float(np.sqrt(n * vox_nm3 / length / np.pi))
+
         rec = []
-        for a in others.tolist():
-            mask = R2 == a
-            Q = P2[mask]
-            Qs = Q if len(Q) <= 4000 else Q[:: len(Q) // 4000][:4000]
+        for a in [int(x) for x in uniq.tolist() if int(x) != seed]:
+            a_, b_ = span[a]
+            Q = P2s[a_:b_]
+            # never Q[::len(Q)//4000][:4000] -- when the stride rounds to 1
+            # that keeps the first 4,000 raster-ordered voxels, a slab at the
+            # low-x end of the object rather than a sample of it
+            Qs = Q if len(Q) <= 4000 else Q[np.linspace(0, len(Q) - 1, 4000).astype(int)]
             dq, jq = st.query(Qs, k=1)
             m = int(np.argmin(dq)); gap = float(dq[m])
             cp = (Qs[m] + sub[int(jq[m])]) / 2.0
@@ -220,8 +252,8 @@ def main():
                 u = Cl.mean(0) - Sl.mean(0); n = np.linalg.norm(u)
                 al = abs(float(aS @ (u / n))) if n > 0 else 0.0
                 co = abs(float(aS @ aC))
-            rec.append((a, gap, al, co, int(mask.sum()), caliber(mask), a in tgt))
-        seed_mask = R2 == seed
+            rec.append((a, gap, al, co, int(b_ - a_), caliber_span(a_, b_), a in tgt))
+        s_a, s_b = span.get(int(seed), (0, 0))
         np.savez(dest,
                  obj=np.array([r[0] for r in rec], dtype=np.uint64),
                  gap_nm=np.array([r[1] for r in rec], dtype=np.float32),
@@ -230,12 +262,22 @@ def main():
                  n_vox=np.array([r[4] for r in rec], dtype=np.int64),
                  cal_cand=np.array([r[5] for r in rec], dtype=np.float32),
                  in_target=np.array([r[6] for r in rec], dtype=bool),
-                 seed=np.uint64(seed), cal_seed=np.float32(caliber(seed_mask)),
+                 seed=np.uint64(seed), cal_seed=np.float32(caliber_span(s_a, s_b)),
                  end_ratio=np.float32(end_ratio),
                  already_whole=bool(c["structure"]["already_whole"]))
+        signal.alarm(0)
         n_t = sum(r[6] for r in rec)
         print(f"  {key}: {len(rec)} candidates, {n_t} in target, "
-              f"seed caliber {caliber(seed_mask):.0f}nm  [{time.time()-t0:.0f}s]", flush=True)
+              f"seed caliber {caliber_span(s_a, s_b):.0f}nm  [{time.time()-t0:.0f}s]", flush=True)
+      except _TimeoutSentinel:
+        signal.alarm(0)
+        print(f"  {key}: volume read exceeded {args.per_cell_timeout}s, skipped", flush=True)
+      except Exception as exc:
+        signal.alarm(0)
+        import os, traceback
+        if os.environ.get("PANEL_DEBUG"):
+            traceback.print_exc()
+        print(f"  {key}: {type(exc).__name__}: {str(exc)[:90]}, skipped", flush=True)
 
 
 if __name__ == "__main__":
