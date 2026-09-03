@@ -82,3 +82,6 @@ scratchpad_bulk_synapses.py
 .cloudvolume/
 secrets/
 *cave-secret*.json
+
+# large reference documents: keep locally, not in the tree
+docs/*.pdf
