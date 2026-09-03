@@ -77,3 +77,8 @@ scratchpad_bulk_synapses.py
 !models/cell_gnn_5feat.metrics.json
 !models/cell_gnn_real.pt
 !models/cell_gnn_real.metrics.json
+
+# credentials: never commit a token, and never a local secrets copy
+.cloudvolume/
+secrets/
+*cave-secret*.json

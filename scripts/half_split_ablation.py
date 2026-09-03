@@ -27,6 +27,20 @@ from pathlib import Path
 import numpy as np
 import requests
 
+try:  # the token lives in the environment or ~/.cloudvolume, never here
+    from neuronauts.auth import cave_token as _cave_token
+except ImportError:  # keep standalone scripts runnable
+    import json as _json, os as _os
+    from pathlib import Path as _Path
+
+    def _cave_token(required=False):
+        t = _os.environ.get("CAVE_TOKEN")
+        if t:
+            return t.strip()
+        f = _Path.home() / ".cloudvolume/secrets/cave-secret.json"
+        return _json.loads(f.read_text())["token"].strip() if f.exists() else None
+
+
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
@@ -39,9 +53,7 @@ SKELETON_CACHE_BASE = (
     "https://minnie.microns-daf.com/skeletoncache/api/v1/"
     "minnie65_public/precomputed/skeleton"
 )
-TOKEN = "a08cdcba8581846f48d5742a75c53311"
-
-
+TOKEN = _cave_token()
 # ---------------------------------------------------------------------------
 # Skeleton fetch (same as fetch_real_skeletons.py)
 # ---------------------------------------------------------------------------

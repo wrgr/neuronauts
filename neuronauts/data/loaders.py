@@ -40,8 +40,21 @@ import numpy as np
 import pandas as pd
 import requests
 
-DEFAULT_TOKEN = "a08cdcba8581846f48d5742a75c53311"
+try:  # the token lives in the environment or ~/.cloudvolume, never here
+    from neuronauts.auth import cave_token as _cave_token
+except ImportError:  # keep standalone scripts runnable
+    import json as _json, os as _os
+    from pathlib import Path as _Path
 
+    def _cave_token(required=False):
+        t = _os.environ.get("CAVE_TOKEN")
+        if t:
+            return t.strip()
+        f = _Path.home() / ".cloudvolume/secrets/cave-secret.json"
+        return _json.loads(f.read_text())["token"].strip() if f.exists() else None
+
+
+DEFAULT_TOKEN = _cave_token()
 _NUCLEUS_URL = (
     "https://storage.googleapis.com/mat_dbs/public/minnie65_phase3_v1/"
     "v1412/nucleus_detection_v0_merged.csv.gz"
