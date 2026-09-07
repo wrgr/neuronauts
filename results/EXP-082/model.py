@@ -2,7 +2,10 @@ import numpy as np, time
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.model_selection import GroupKFold
 from sklearn.metrics import roc_auc_score
-A=np.load('edit_join.npy'); Z=np.load('skel_cache.npz')
+from pathlib import Path
+_D = Path(__file__).resolve().parents[2] / 'data/external'
+A=np.load(_D / 'edit_join_v082.npz')['edit_join']
+Z=np.load(_D / 'edit_skel_cache_v082.npz')
 roots=sorted({int(k.split('_')[0]) for k in Z.files})
 g=lambda k:np.concatenate([Z[f'{r}_{k}'] for r in roots])
 cab,rad,comp,pd,deg=g('cable'),g('rad'),g('comp'),g('pathd'),g('deg')

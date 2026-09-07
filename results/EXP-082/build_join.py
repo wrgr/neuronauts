@@ -5,7 +5,19 @@ from scipy.spatial import cKDTree
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import dijkstra
 
-ROOT = "/Users/wgray13/projects/neuronauts"
+from pathlib import Path
+
+# Repo root from this file, so the script runs anywhere. It previously read
+# ROOT = "/Users/wgray13/projects/neuronauts".
+ROOT = str(Path(__file__).resolve().parents[2])
+# The two artifacts this experiment produces. They used to be written into a
+# Claude session scratchpad under /private/tmp, which is ephemeral: the corpus
+# behind EXP-082's 0.779 survived only in a temp directory belonging to a
+# session that has since ended, and EXP-082's own evaluation.md already cites
+# the data/external/ path below. CLAUDE.md section 1 says anything that took
+# real time to compute lands in data/external/ before the session ends.
+EDIT_JOIN = Path(ROOT) / "data/external/edit_join_v082.npz"
+SKEL_CACHE = Path(ROOT) / "data/external/edit_skel_cache_v082.npz"
 V117_MS = 1623399000 * 1000
 out = []
 skels = {}
@@ -54,8 +66,11 @@ dt = np.dtype([("root", "i8"), ("op", "i8"), ("t_ms", "i8"), ("user", "i4"),
                ("d_skel", "f8"), ("radius", "f8"), ("comp", "i2"),
                ("path_soma", "f8"), ("deg", "i2"), ("vert", "i8")])
 arr = np.array(out, dtype=dt)
-np.save("/private/tmp/claude-501/-Users-wgray13-projects-neuronauts/8c2bcfd4-b48d-453f-ae78-fb9ed1b00ae7/scratchpad/edit_join.npy", arr)
-np.savez_compressed("/private/tmp/claude-501/-Users-wgray13-projects-neuronauts/8c2bcfd4-b48d-453f-ae78-fb9ed1b00ae7/scratchpad/skel_cache.npz",
+EDIT_JOIN.parent.mkdir(parents=True, exist_ok=True)
+# Saved as a single-array .npz under the name evaluation.md cites; the older
+# runs wrote a bare .npy. Readers accept either.
+np.savez_compressed(EDIT_JOIN, edit_join=arr)
+np.savez_compressed(SKEL_CACHE,
                     **{f"{r}_{k}": v for r, s in skels.items() for k, v in s.items()
                        if isinstance(v, np.ndarray)})
 print("cells", cells, "endpoint rows", len(arr))

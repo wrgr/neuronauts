@@ -2,7 +2,8 @@
 +-1 um box -- do they touch if the box is widened to +-4 um?"""
 import json, numpy as np, time
 from datetime import datetime, timezone
-R="/Users/wgray13/projects/neuronauts"
+from pathlib import Path
+R = str(Path(__file__).resolve().parents[2])
 V117_TS=datetime.fromtimestamp(1623399000,tz=timezone.utc)
 rows=json.load(open(f"{R}/results/EXP-082/v117_merge_probe.json"))
 cand=[x for x in rows if (not x['same']) and x['id_a'] and x['id_b'] and not x['touch']]

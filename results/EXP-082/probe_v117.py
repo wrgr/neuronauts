@@ -4,7 +4,8 @@ seen: same object? two objects in contact? or two objects with other tissue
 in between (a skip)."""
 import json, glob, sys, time, numpy as np
 from datetime import datetime, timezone
-R = "/Users/wgray13/projects/neuronauts"
+from pathlib import Path
+R = str(Path(__file__).resolve().parents[2])
 V117_TS = datetime.fromtimestamp(1623399000, tz=timezone.utc)
 V117_MS = 1623399000 * 1000
 PAD_NM = 1000.0

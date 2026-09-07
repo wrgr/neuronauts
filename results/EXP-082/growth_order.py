@@ -8,9 +8,11 @@ from scipy.spatial import cKDTree
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import dijkstra
 
-R = "/Users/wgray13/projects/neuronauts"
+from pathlib import Path
+
+R = str(Path(__file__).resolve().parents[2])
 V117_MS = 1623399000 * 1000
-A = np.load("/private/tmp/claude-501/-Users-wgray13-projects-neuronauts/8c2bcfd4-b48d-453f-ae78-fb9ed1b00ae7/scratchpad/edit_join.npy")
+A = np.load(Path(R) / "data/external/edit_join_v082.npz")["edit_join"]
 M = A[(A["is_merge"] == 1) & (A["d_skel"] < 2000) & (A["t_ms"] > V117_MS)]
 print("post-v117 merge endpoints on the final skeleton:", len(M), flush=True)
 rng = np.random.default_rng(0)
