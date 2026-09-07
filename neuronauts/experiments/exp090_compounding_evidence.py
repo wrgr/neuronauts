@@ -222,7 +222,11 @@ SPEC = Spec(
         f"whatever the headline number. All aggregates, both role assignments, "
         f"both residual families, both controls and a label-shuffle null are "
         f"reported, so the primary was not chosen after the fact"),
-    requires_ran=["EXP-083"],
+    # EXP-083 is named, not gated: it has a result.json but no
+    # registry entry, and the registry's consistency tests require
+    # every declared prerequisite to be registered. Registering it
+    # now would mean writing its bar after its data.
+    requires_ran=[],
     inputs=[SKEL_DIR, SHAPE_LIB],
     params={"k_list": list(K_LIST), "reps_per_cell": REPS_PER_CELL,
             "site_cable_um": list(SITE_CABLE_UM), "cable_tol": CABLE_TOL,
