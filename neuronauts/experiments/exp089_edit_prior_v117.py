@@ -139,6 +139,7 @@ import numpy as np
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components, dijkstra
 from scipy.spatial import cKDTree
+from scipy.stats import rankdata
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.model_selection import GroupKFold
 
@@ -284,14 +285,16 @@ def _per_vertex_level2(z, n_vertices: int) -> np.ndarray:
     return lv
 
 
-def _v117_root_per_vertex(root: int, z, n_vertices: int, cache_dir: Path,
+def _v117_root_per_vertex(root: int, l2: np.ndarray, cache_dir: Path,
                           token: Optional[str]) -> np.ndarray:
     """v117 object id for each skeleton vertex; 0 where unmapped.
 
-    Cached per cell. The mapping is level-2 id -> root at ``V117_TIMESTAMP``;
-    a vertex backed by several level-2 nodes takes the majority v117 root.
+    The mapping is level-2 id -> root at ``V117_TIMESTAMP``. Level-2 nodes are
+    agglomeration independent, which is what makes this a v117 quantity rather
+    than a projection of the finished cell. Cached per cell so only the first
+    run needs the chunkedgraph.
     """
-    vidx, l2 = _vertex_level2(z, n_vertices)
+    n_vertices = len(l2)
     uniq = np.unique(l2)
     if not len(uniq):
         return np.zeros(n_vertices, np.uint64)
@@ -320,27 +323,8 @@ def _v117_root_per_vertex(root: int, z, n_vertices: int, cache_dir: Path,
         cache.parent.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(cache, l2_id=have_id, v117_root=have_root)
 
-    j = np.searchsorted(have_id, l2)
-    j = np.clip(j, 0, len(have_id) - 1)
-    frag_of_pair = np.where(have_id[j] == l2, have_root[j], np.uint64(0))
-
-    # majority v117 root per vertex (usually a single level-2 node per vertex)
-    per_vertex = np.zeros(n_vertices, np.uint64)
-    keep = frag_of_pair > 0
-    if keep.any():
-        vk, fk = vidx[keep], frag_of_pair[keep]
-        order = np.lexsort((fk, vk))
-        vk, fk = vk[order], fk[order]
-        # run-length encode (vertex, frag) and take the longest run per vertex
-        new = np.r_[True, (vk[1:] != vk[:-1]) | (fk[1:] != fk[:-1])]
-        starts = np.flatnonzero(new)
-        lengths = np.diff(np.r_[starts, len(vk)])
-        rv, rf = vk[starts], fk[starts]
-        best_len = np.zeros(n_vertices, np.int64)
-        for v, f, ln in zip(rv.tolist(), rf.tolist(), lengths.tolist()):
-            if ln > best_len[v]:
-                best_len[v], per_vertex[v] = ln, f
-    return per_vertex
+    j = np.clip(np.searchsorted(have_id, l2), 0, len(have_id) - 1)
+    return np.where(have_id[j] == l2, have_root[j], np.uint64(0))
 
 
 def _pieces(edges: np.ndarray, frag: np.ndarray) -> tuple[np.ndarray, int]:
@@ -368,15 +352,17 @@ def _weighted_graph(V: np.ndarray, edges: np.ndarray) -> tuple[coo_matrix, np.nd
 
 
 def _cell_features(root: int, skel_path: Path, edit_path: Path, cache_dir: Path,
-                   caliber: Callable, token: Optional[str]) -> Optional[dict]:
+                   cal: "_MergedCaliber", vertex_radii: Callable,
+                   token: Optional[str]) -> Optional[dict]:
     """One cell's vertex table: EXP-082's proofread features and the v117 ones."""
     with np.load(skel_path, allow_pickle=False) as z:
         V = z["vertices"].astype(np.float64)
         E = z["edges"].astype(np.int64)
         radius = z["radius"].astype(np.float64)
         comp = z["compartment"].astype(np.int64)
-        frag = _v117_root_per_vertex(root, z, len(V), cache_dir, token)
+        l2 = _per_vertex_level2(z, len(V))
     n = len(V)
+    frag = _v117_root_per_vertex(root, l2, cache_dir, token)
 
     soma_rows = np.flatnonzero(comp == COMPARTMENT_SOMA)
     if not len(soma_rows):
@@ -393,9 +379,18 @@ def _cell_features(root: int, skel_path: Path, edit_path: Path, cache_dir: Path,
     np.add.at(cable, E[:, 1], w / 2)
 
     # --- v117 arm -----------------------------------------------------------
+    # Caliber comes from EXP-088's level-2 route. ``vertex_radii_from_l2`` is
+    # theirs; the ``n_vertices`` check is theirs too and is passed so a length
+    # mismatch raises there rather than being silently broadcast here.
+    radius_v117 = vertex_radii(l2, cal, n_vertices=n, stat=CALIBER_STAT)
+    radius_v117_alt = vertex_radii(l2, cal, n_vertices=n, stat=CALIBER_STAT_ALT)
+
     piece, _ = _pieces(E, frag)
-    mapped = frag > 0
-    radius_v117 = np.full(n, np.nan)
+    # Piece geometry uses every vertex with a v117 object id. Only the MODEL
+    # rows additionally require a caliber, so a gap in the level-2 attribute
+    # cache shrinks the sample without distorting the fragment shapes.
+    frag_ok = frag > 0
+    mapped = frag_ok & np.isfinite(radius_v117)
     path_in_piece = np.full(n, np.nan)
     piece_cable = np.zeros(n)
     piece_reach = np.zeros(n)
@@ -409,7 +404,7 @@ def _cell_features(root: int, skel_path: Path, edit_path: Path, cache_dir: Path,
     np.add.at(cable_in, Ein[:, 1], win / 2)
 
     rows_of: dict[int, np.ndarray] = {}
-    mrows = np.flatnonzero(mapped)
+    mrows = np.flatnonzero(frag_ok)
     if len(mrows):
         mrows = mrows[np.argsort(piece[mrows], kind="stable")]
         mpiece = piece[mrows]
@@ -418,8 +413,7 @@ def _cell_features(root: int, skel_path: Path, edit_path: Path, cache_dir: Path,
         rows_of = {int(mpiece[s]): mrows[s:e] for s, e in zip(starts, ends)}
 
     entries: list[int] = []
-    for p, rows in rows_of.items():
-        radius_v117[rows] = _caliber_of_piece(caliber, V[rows])
+    for rows in rows_of.values():
         entries.append(int(rows[np.argmin(euclid_soma[rows])]))
         piece_cable[rows] = cable_in[rows].sum()
     if entries:
@@ -427,7 +421,7 @@ def _cell_features(root: int, skel_path: Path, edit_path: Path, cache_dir: Path,
         # distance from its OWN piece's entry node.
         d = dijkstra(Ain, indices=np.asarray(entries), directed=False,
                      min_only=True)
-        path_in_piece[mapped] = d[mapped]
+        path_in_piece[frag_ok] = d[frag_ok]
         for rows in rows_of.values():
             finite = d[rows][np.isfinite(d[rows])]
             piece_reach[rows] = float(finite.max()) if len(finite) else 0.0
@@ -455,10 +449,11 @@ def _cell_features(root: int, skel_path: Path, edit_path: Path, cache_dir: Path,
         radius=radius, is_axon=(comp == COMPARTMENT_AXON).astype(np.float64),
         path_soma=path_soma, euclid_soma=euclid_soma, degree=degree,
         pos=V, cable=cable,
-        radius_v117=radius_v117, path_in_piece=path_in_piece,
+        radius_v117=radius_v117, radius_v117_alt=radius_v117_alt,
+        path_in_piece=path_in_piece,
         degree_v117=degree_v117, piece_cable=piece_cable,
-        piece_reach=piece_reach, frag=frag, piece=piece,
-        n_pieces=int(len(np.unique(piece[mapped]))) if mapped.any() else 0,
+        piece_reach=piece_reach, frag=frag, piece=piece, frag_ok=frag_ok,
+        n_pieces=len(rows_of),
         n_merge_points=n_merge_pts, n_merge_points_matched=n_matched,
     )
 
@@ -481,7 +476,7 @@ COLS = [
     "degree_v117",        # 10 v117
     "piece_cable_um",     # 11 v117, context only
     "piece_reach_um",     # 12 v117, context only
-    "radius_l2dt_raw_nm", # 13 optional diagnostic rung
+    "radius_v117_mean_nm",  # 13 v117, the alternative caliber statistic
 ]
 IDX = {c: i for i, c in enumerate(COLS)}
 
@@ -497,10 +492,11 @@ SET_V117 = ["radius_v117_nm", "path_in_piece_um", "euclid_soma_um",
 #: Reported, not gated: fragment context a grower also has, but which EXP-082
 #: had no counterpart for, and which the piece-truncation limit biases.
 SET_V117_PLUS = SET_V117 + ["piece_cable_um", "piece_reach_um"]
-#: Reported, not gated, and skipped when the level-2 attribute cache is absent:
-#: the raw distance transform at the vertex's own level-2 node, with no
-#: estimator on top. Separates "any v117 caliber" from "EXP-088's estimator".
-SET_V117_RAW_DT = ["radius_l2dt_raw_nm"] + SET_V117[1:]
+#: Reported, not gated: the same arm with EXP-088's other caliber statistic.
+#: v117_caliber's own docstring says max_dt_nm over-reports a shaft that shares
+#: a level-2 chunk with a bouton and mean_dt_nm under-reports for the same
+#: reason, and that the caller must state which it used. Both are run.
+SET_V117_MEAN_DT = ["radius_v117_mean_nm"] + SET_V117[1:]
 
 #: proofread column -> its v117 counterpart, or None when it is dropped.
 SUBSTITUTION = [
@@ -572,7 +568,7 @@ SPEC = Spec(
         f"difference and no claim about the substitution is made. The "
         f"feature-by-feature drop, proofread versus v117, is reported for every "
         f"column and is the result that matters more than the headline; the "
-        f"v117_plus and raw-distance-transform arms are reported, not gated."),
+        f"v117_plus and mean-distance-transform arms are reported, not gated."),
     requires=[], requires_ran=[],
     inputs=[SKELETON_DIR, EDIT_DIR],
     params={"merge_match_nm": MERGE_MATCH_NM, "n_folds": N_FOLDS,
@@ -585,7 +581,7 @@ SPEC = Spec(
                              "proofread_no_axon": SET_PROOFREAD_NO_AXON,
                              "v117": SET_V117,
                              "v117_plus": SET_V117_PLUS,
-                             "v117_raw_dt": SET_V117_RAW_DT}},
+                             "v117_mean_dt": SET_V117_MEAN_DT}},
     flags={"synthetic_fallback": False,
            "network": True,
            "labels_used_only_for_evaluation": False,
@@ -597,8 +593,31 @@ SPEC = Spec(
 
 def run(ctx: Context) -> Outcome:
     root = ctx.root
-    caliber, caliber_src = load_caliber_estimator()
-    print(f"  caliber estimator: {caliber_src} (EXP-088's, imported)", flush=True)
+    load_l2_caliber, vertex_radii, caliber_src = load_caliber_api()
+    caches, sources = [], []
+    for rel in L2_ATTR_CACHES:
+        p = root / rel
+        if not p.exists():
+            print(f"  level-2 caliber cache absent: {rel}", flush=True)
+            continue
+        try:
+            caches.append(load_l2_caliber(p))
+            sources.append(rel)
+            print(f"  level-2 caliber cache {rel}: "
+                  f"{caches[-1].coverage:,} nodes", flush=True)
+        except (KeyError, ValueError) as exc:
+            print(f"  level-2 caliber cache {rel}: unusable -- "
+                  f"{type(exc).__name__}: {exc}", flush=True)
+    if not caches:
+        raise RuntimeError(
+            "no usable level-2 attribute cache, so there is no v117 caliber and "
+            "the experiment has nothing to substitute. Looked for "
+            + ", ".join(L2_ATTR_CACHES) + ". Build one with "
+            "scripts/fetch_cell_l2_positions.py (whole cached arbors) or "
+            "scripts/build_object_geometry.py (harness cube).")
+    cal = _MergedCaliber(caches, sources)
+    print(f"  caliber: {caliber_src} (EXP-088's, imported), statistic "
+          f"{CALIBER_STAT}", flush=True)
     token = os.environ.get("CAVE_TOKEN") or L.DEFAULT_TOKEN
     cache_dir = root / FRAGMENT_CACHE
 
@@ -613,7 +632,8 @@ def run(ctx: Context) -> Outcome:
             skipped[str(r)] = "no edit history"
             continue
         try:
-            rec = _cell_features(r, Path(sf), ef, cache_dir, caliber, token)
+            rec = _cell_features(r, Path(sf), ef, cache_dir, cal,
+                                 vertex_radii, token)
         except (KeyError, ValueError, RuntimeError) as exc:
             skipped[str(r)] = f"{type(exc).__name__}: {exc}"
             print(f"  cell {r}: SKIPPED -- {type(exc).__name__}: "
@@ -650,36 +670,36 @@ def run(ctx: Context) -> Outcome:
     X[:, IDX["degree_v117"]] = cat("degree_v117")
     X[:, IDX["piece_cable_um"]] = cat("piece_cable") / 1000.0
     X[:, IDX["piece_reach_um"]] = cat("piece_reach") / 1000.0
+    X[:, IDX["radius_v117_mean_nm"]] = cat("radius_v117_alt")
+    have_mean_dt = bool(np.isfinite(X[:, IDX["radius_v117_mean_nm"]]).any())
 
-    # --- optional raw distance-transform rung --------------------------------
-    raw_dt_note = "not attempted"
-    l2_cache = root / L2_ATTR_CACHE
-    have_raw_dt = False
-    if l2_cache.exists():
-        try:
-            with np.load(l2_cache, allow_pickle=False) as z:
-                a_id, a_dt = z["l2_id"], z["max_dt_nm"]
-            order = np.argsort(a_id)
-            a_id, a_dt = a_id[order], a_dt[order]
-            col = np.full(len(y), np.nan)
-            off = 0
-            for c in cells:
-                with np.load(root / SKELETON_DIR / f"{c['root']}_skv4.npz",
-                             allow_pickle=False) as z:
-                    vidx, l2 = _vertex_level2(z, c["n"])
-                j = np.clip(np.searchsorted(a_id, l2), 0, len(a_id) - 1)
-                ok = a_id[j] == l2
-                col[off + vidx[ok]] = a_dt[j[ok]]
-                off += c["n"]
-            X[:, IDX["radius_l2dt_raw_nm"]] = col
-            have_raw_dt = bool(np.isfinite(col).mean() > 0.5)
-            raw_dt_note = (f"level-2 distance transform present for "
-                           f"{float(np.isfinite(col).mean()):.1%} of vertices")
-        except (KeyError, ValueError) as exc:
-            raw_dt_note = f"skipped: {type(exc).__name__}: {exc}"
-    else:
-        raw_dt_note = f"skipped: {L2_ATTR_CACHE} not present"
-    print(f"  raw distance-transform rung: {raw_dt_note}", flush=True)
+    # --- does the v117 caliber agree with the radius it replaces? ------------
+    # v117_caliber's docstring says neither estimator is validated against the
+    # proofread radius and that the caller must measure it. Reported, not gated.
+    both = np.isfinite(X[:, IDX["radius_v117_nm"]]) & np.isfinite(X[:, IDX["radius_nm"]])
+    pr, v1 = X[both, IDX["radius_nm"]], X[both, IDX["radius_v117_nm"]]
+    caliber_agreement = {
+        "statistic": CALIBER_STAT,
+        "n_vertices_with_both": int(both.sum()),
+        "pearson_r": (round(float(np.corrcoef(pr, v1)[0, 1]), 4)
+                      if both.sum() > 2 else float("nan")),
+        "spearman_r": (round(float(np.corrcoef(rankdata(pr), rankdata(v1))[0, 1]), 4)
+                       if both.sum() > 2 else float("nan")),
+        "median_ratio_v117_over_proofread": (
+            round(float(np.median(v1 / np.where(pr > 0, pr, np.nan))), 4)
+            if both.sum() else float("nan")),
+        "median_proofread_nm": (round(float(np.median(pr)), 1)
+                                if both.sum() else float("nan")),
+        "median_v117_nm": (round(float(np.median(v1)), 1)
+                           if both.sum() else float("nan")),
+        "note": "reported, not gated -- a weak correlation with a surviving "
+                "area under the curve would be a finding, not a failure",
+    }
+    print(f"  caliber agreement vs proofread radius: Spearman "
+          f"{caliber_agreement['spearman_r']}, median ratio "
+          f"{caliber_agreement['median_ratio_v117_over_proofread']} "
+          f"on {caliber_agreement['n_vertices_with_both']:,} vertices",
+          flush=True)
 
     # --- the two populations --------------------------------------------------
     # Everything comparing arms runs on the v117-mapped rows; the control also
@@ -714,15 +734,15 @@ def run(ctx: Context) -> Outcome:
         results[name] = score(cols, mapped)
         print(f"  {name:<26} AUC {results[name]['auc']:.3f}  "
               f"lift@k {results[name]['lift_at_k']:.2f}x", flush=True)
-    if have_raw_dt:
-        results["v117_raw_dt"] = score(SET_V117_RAW_DT, mapped)
-        print(f"  {'v117_raw_dt':<26} AUC {results['v117_raw_dt']['auc']:.3f}",
-              flush=True)
+    if have_mean_dt:
+        results["v117_mean_dt"] = score(SET_V117_MEAN_DT, mapped)
+        print(f"  {'v117_mean_dt':<26} AUC "
+              f"{results['v117_mean_dt']['auc']:.3f}", flush=True)
 
     # --- the feature-by-feature drop -----------------------------------------
     single: dict[str, float] = {}
     for c in dict.fromkeys([c for c in SET_PROOFREAD] + SET_V117_PLUS
-                           + (["radius_l2dt_raw_nm"] if have_raw_dt else [])):
+                           + (["radius_v117_mean_nm"] if have_mean_dt else [])):
         single[c] = round(float(roc_auc(y[mapped],
                                         _cv(X[mapped], y[mapped], groups[mapped],
                                             [c], ABLATION_ITERS))), 6)
@@ -812,6 +832,7 @@ def run(ctx: Context) -> Outcome:
                       f"out-of-fold on a cell the model never saw; identical to "
                       f"EXP-082"),
             "caliber_source": caliber_src,
+            "caliber_agreement": caliber_agreement,
         },
         population={
             "n_cells_with_skeleton_and_edits": n_cells_full,
@@ -827,7 +848,9 @@ def run(ctx: Context) -> Outcome:
             "n_merge_points_matched": int(sum(c["n_merge_points_matched"]
                                               for c in cells)),
             "merge_match_nm": MERGE_MATCH_NM,
-            "raw_dt_rung": raw_dt_note,
+            "caliber_statistic": CALIBER_STAT,
+            "caliber_cache_hits_by_source": cal.hits,
+            "mean_dt_arm_run": have_mean_dt,
         },
         tables={"by_feature_set": results, "feature_columns": COLS,
                 "substitution": [{"proofread": a, "v117": b}
