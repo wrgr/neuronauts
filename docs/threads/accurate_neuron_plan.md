@@ -276,3 +276,90 @@ Given §1.4, these are conditions on the work, not a phase of it:
    argument for relaxing it is that Stage 2's constraint helps at any base rate;
    the argument against is that the abstain price is exactly the parameter the
    base rate sets.
+
+---
+
+## 6. Amendment, same day: reconciling against EXP-086–090
+
+Sections 1–5 were written against `main`'s descendant `0985a39`. There is a
+branch this plan did not account for — `origin/claude/next-experiments-fanout-4kc8rr`,
+5,665 lines, eleven commits — carrying **five new registered experiments**:
+
+| | question | relation to §3 |
+|---|---|---|
+| EXP-086 | of the cut surfaces EXP-085 calls *unexplained*, what fraction are genuine splits rather than artifacts of our own pipeline? | close cousin of **Phase 1** |
+| EXP-087 | terminal classifier | gated on the clause of EXP-086 that bears on it |
+| EXP-088 | conservation at joins, with a v117 caliber measurement (`harness/v117_caliber.py`) | feeds **Phase 3** |
+| EXP-089 | does EXP-082's where-to-edit prior survive on v117-only features? | new; not in §3 |
+| EXP-090 | does tree-level evidence compound over k = 1, 3, 5 grafted wrong joins? | **is Phase 3**, already written |
+
+The work is good and the bars are written first, as the rules require. Three
+things follow.
+
+### 6.1 The binding constraint is execution, not design
+
+All five are registered. **None has a `results/` directory.** EXP-090's own
+commit says it plainly: *"Not run: no data, no CAVE credential in this
+container."*
+
+That is a sharper statement of §1.4 than §1.4 makes. The repository is not short
+of ideas or of code — it now has five experiments with pre-declared bars and
+zero numbers, on top of nine unregistered ones with numbers and no provenance.
+The pattern across both is the same: **work is being produced in environments
+that cannot execute it.** Nothing on the §3 critical path is blocked by not
+knowing what to do.
+
+So §5's second open decision is promoted out of "open decisions" and into the
+first thing to settle. Until one environment holds the substrate and a CAVE
+credential, every phase below Phase 0 produces more unrun modules.
+
+### 6.2 Phase 1 gains a concrete prerequisite, from EXP-086's own limits
+
+EXP-086's registry note records, in its resolution limit: *"tips and the
+continuation test both run on mip-5 centroid clouds as EXP-085's did … **no
+cube-wide mip-2 cloud exists yet**."*
+
+That is the same defect §1.3 identifies in EXP-081, named independently, and it
+turns Phase 1's premise into a build task rather than an open question. Phase 1
+is therefore restated:
+
+> **Phase 1a.** Build the cube-wide mip-2 object cloud
+> (`agglomerate=True, timestamp=V117_TS`), validated against a trusted
+> per-object read before anything consumes it.
+> **Phase 1b.** Re-run the frontier count on it, with `live` defined against
+> every object the v1822 root claims.
+
+1a unblocks EXP-086 and EXP-087 at the same time as Phase 1b. It is the highest
+fan-out item in the plan and nothing in §3 anticipated it.
+
+### 6.3 Phase 3 is written — run it, do not rewrite it
+
+`exp090_compounding_evidence.py` grafts k = 1, 3, 5 wrong joins using EXP-083's
+own construction, holds out by cell, carries both of EXP-083's controls
+(same-cell displacement, label shuffle), and checks its vectorized Murray solver
+against `scipy.optimize.brentq` on 20,000 random triples before any science runs,
+raising rather than warning. That is the experiment §3's Phase 3 asks for, built
+better than the sketch. Phase 3 becomes: run EXP-088, then EXP-090, and use the
+result to decide whether summed conservation is fit to be Phase 2's objective.
+
+### 6.4 What the new branch does not touch
+
+**Phase 0 stands, unchanged and still first.** All five new experiments measure
+discrimination — an area under the curve, a true-split rate, a held-out prior.
+Not one produces a reconstruction, and not one scores a reconstructed cell
+against v1822. The gap §1.1 names is untouched by 5,665 lines of new code, which
+is itself the clearest evidence for the premise this document opened with.
+
+EXP-089's note also confirms §1.4 independently and in the same terms: *"EXP-082
+was a one-off script, not a registered experiment, so its 0.779 has never been
+reproduced under this harness."* Its design responds correctly — it refits the
+proofread-feature control and gates on reproducing 0.779 to ±0.03 before making
+any claim about the substitution. That is the pattern §4.3 asks for, applied to
+one experiment. It should be applied to the other eight.
+
+### 6.5 Branch hygiene
+
+Two branches are now advancing the same program without either knowing about the
+other. Before more work lands, `claude/next-experiments-fanout-4kc8rr` should be
+merged forward or its five modules cherry-picked, so the next session plans
+against one state rather than a third.
