@@ -142,7 +142,8 @@ cube. Three candidate targets:
 | **B** | the **whole cell** across the volume, including cross-face matching | same | a different data program: fetch scope, out-of-box enumeration, cell-scale matching |
 | **C** | one cell, at whatever scope it reaches, presented with a proofreader-grade scorecard and a rendering | both references side by side | A plus a day of presentation |
 
-**Recommendation: A as the deliverable, C as how it is shown.** B is a real
+**Decided 2026-09-07: C** — the in-box arbor, scored against both references
+*and shown*. B is a real
 target and should be named as the thing after, not folded into this. Cross-face
 matching is a grammar at the scale of cells and the thread already says so.
 
@@ -264,18 +265,48 @@ Given §1.4, these are conditions on the work, not a phase of it:
 
 ---
 
-## 5. Open decisions
+## 5. Decisions taken, 2026-09-07
 
-1. **Scope**: A, B or C from §2. Recommendation A + C.
-2. **Where the work runs.** This session's container has no CAVE token and no
-   `data/substrate/` or `data/external/` — both are gitignored and the clone is
-   fresh. Nothing in §3 can execute here without a token and a fetch budget for
-   the 100 µm cube substrate. Either provision that, or the phases run on the
-   machine that already holds the substrate.
-3. **Whether Phase 1 gates Phase 2 strictly.** It is ordered that way above. The
-   argument for relaxing it is that Stage 2's constraint helps at any base rate;
-   the argument against is that the abstain price is exactly the parameter the
-   base rate sets.
+1. **Scope: C.** The seeded cell's in-box connected component, scored
+   cable-weighted completeness / purity / expected run length against v117-as-is
+   and v1822, and presented — rendering plus the three-column scorecard. B
+   (whole cell, cross-face matching) is the problem after this one and is not
+   folded in.
+2. **Execution: provision this environment.** The work runs in the remote
+   container, which means it needs a CAVE credential and a fetch budget for the
+   100 µm cube substrate. Concretely:
+   - `neuronauts/auth.py` resolves a token from **`CAVE_TOKEN`** in the
+     environment first, and `~/.cloudvolume/secrets/cave-secret.json` second.
+     Setting `CAVE_TOKEN` as an environment variable on the Claude Code
+     environment is the whole of it — nothing else needs configuring, and no
+     token is ever written to a file or a commit.
+   - `data/substrate/` and `data/external/` are gitignored and absent from every
+     fresh clone, so the first session after provisioning spends its budget on
+     the substrate build before any experiment runs.
+3. **Phase 1 gates Phase 2 strictly** (§5.3 as originally posed). The abstain
+   price is exactly the parameter the base rate sets, so tuning it against an
+   uncorrected base rate would waste the phase.
+
+### 5.1 What happens the moment the token lands, in order
+
+1. **Phase 1a** — build the cube-wide mip-2 object cloud
+   (`agglomerate=True, timestamp=V117_TS`), validated against a trusted
+   per-object read. Highest fan-out item in the plan: it unblocks Phase 1b,
+   EXP-086 and EXP-087 together.
+2. **Phase 0** — the reconstruction scorecard, and the v117-as-is and v1822
+   reference numbers over all 103 evaluable seeds. First numbers in the repo
+   that describe a cell rather than a decision.
+3. **Phase 1b** — the corrected frontier count. Does 1.6% survive.
+4. **EXP-088, then EXP-090** — is summed conservation fit to be an objective.
+5. **Phase 2** — joint assignment with a priced abstain, scored by Phase 0's
+   metric at Phase 1b's base rate.
+
+### 5.2 Deliberately not doing first
+
+Writing Phase 0's wrapper, or any other module, before the credential exists.
+§6.1 is that nine unregistered results and five unrun experiments are the same
+failure — work produced where it cannot be executed. Adding a sixth unrun module
+would repeat it, however small the module is.
 
 ---
 
