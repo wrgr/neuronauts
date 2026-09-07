@@ -275,7 +275,10 @@ _ROOTS_BATCH = 4000    # max supervoxels per roots_binary POST
 _version_ts_cache: dict[int, int] = {117: V117_TIMESTAMP}
 
 
-def _headers(token: str) -> dict:
+def _headers(token: Optional[str]) -> dict:
+    if not token:
+        from neuronauts.auth import cave_token
+        token = cave_token(required=True)
     return {"Authorization": f"Bearer {token}"}
 
 

@@ -54,7 +54,11 @@ except ImportError:  # keep standalone scripts runnable
         return _json.loads(f.read_text())["token"].strip() if f.exists() else None
 
 
-DEFAULT_TOKEN = _cave_token()
+# Resolved at import, but never *required* at import: a container or a CI job
+# with no credential must still be able to `import neuronauts` and run the
+# offline half of the repo. Code that actually reaches CAVE fails at the
+# request, where `_headers` raises the same informative error.
+DEFAULT_TOKEN = _cave_token(required=False)
 _NUCLEUS_URL = (
     "https://storage.googleapis.com/mat_dbs/public/minnie65_phase3_v1/"
     "v1412/nucleus_detection_v0_merged.csv.gz"
