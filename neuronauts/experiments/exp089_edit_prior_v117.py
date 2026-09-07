@@ -31,9 +31,12 @@ proofread skeleton vertices, and that is a different experiment.
 Feature by feature, proofread -> v117:
 
 ===================  ==========================================================
-``radius_nm``        ``radius_v117_nm`` -- EXP-088's caliber measurement on the
-                     containing v117 fragment. **Imported, never reimplemented**
-                     (see the dependency note below).
+``radius_nm``        ``radius_v117_nm`` -- EXP-088's v117 caliber, the level-2
+                     cache's distance transform at the vertex's own level-2
+                     node. Level-2 nodes are agglomeration independent, so this
+                     number is available at v117 and owes nothing to the
+                     proofread reconstruction. **Imported, never
+                     reimplemented** (see the dependency note below).
 ``path_soma_um``     ``path_in_piece_um`` -- geodesic distance inside the
                      vertex's own v117 fragment, from that fragment's entry node
                      (its point of closest approach to the seed soma). A grower
@@ -67,23 +70,29 @@ v117. This control is not optional and is not omitted.
 
 Dependency on EXP-088's caliber module
 --------------------------------------
-The v117 caliber measurement belongs to EXP-088
-(``neuronauts/experiments/exp088_conservation_joins.py`` plus a caliber module
-under ``neuronauts/harness/`` or ``neuronauts/metrics/``). **It was not present
-when this module was written**, so this module imports it and does not implement
-it. The assumed interface is deliberately one function::
+The v117 caliber measurement belongs to EXP-088 and is **imported, never
+reimplemented**: ``neuronauts.harness.v117_caliber.load_l2_caliber`` plus
+``vertex_radii_from_l2``, which is the route that module's own docstring names
+for this experiment ("the route EXP-082 needs, because its unit is a skeleton
+vertex and it has 650,200 of them"). Two independent caliber definitions would
+make any comparison against EXP-082 uninterpretable, so if the module is absent
+or has been renamed this experiment stops with a ``ModuleNotFoundError`` naming
+what it looked for. Importing *this* module always succeeds; the dependency is
+resolved inside ``run``.
 
-    fragment_caliber_nm(points_nm: np.ndarray) -> np.ndarray
-        points_nm : [N, 3] float, the node positions of ONE v117 fragment, nm
-        returns   : [N]    float, a radius estimate at each of those N points, nm
+That module states plainly that neither of its estimators is validated against
+the proofread ``radius`` it replaces, and that a caller must measure the
+agreement itself. So this run reports, on every vertex where both exist, the
+Spearman and Pearson correlation and the median ratio of the v117 caliber to the
+proofread skeleton radius, in ``observed['caliber_agreement']``. That
+diagnostic is reported, not gated: a poor correlation with a surviving area
+under the curve would be a finding, not a failure.
 
-resolved from ``neuronauts.harness.caliber`` or ``neuronauts.metrics.caliber``.
-Importing this module always succeeds; the missing dependency surfaces at
-``run`` time as a ``ModuleNotFoundError`` that names both candidate paths and
-the expected signature. A per-fragment scalar is refused rather than broadcast:
-EXP-082's caliber signal is a *within-arbor* gradient (26x top to bottom inside
-axon alone), so one number per fragment would not be the same feature and
-silently accepting it would fake the result.
+The level-2 route's support is a level-2 chunk, so ``max_dt_nm`` is a maximum
+over a chunk and over-reports a shaft that shares its chunk with a bouton;
+``mean_dt_nm`` under-reports for the same reason. Both are run, ``max_dt_nm``
+is the arm the bar is set on, and which one was used is recorded rather than
+left implicit.
 
 How the v117 fragmentation is obtained
 --------------------------------------
@@ -105,9 +114,12 @@ Limits this run does not paper over
   smaller here than it really is. That biases ``piece_cable_um`` and
   ``piece_reach_um``, which is why they sit in the reported ``v117_plus`` arm
   and not in the arm the bar is set on.
-- Caliber is evaluated at the proofread skeleton's vertex positions. Those
-  positions sample the fragment's medial axis, but the sampling was chosen by a
-  skeletonization of the finished cell.
+- Caliber is read at the vertex's level-2 node, and the vertices come from a
+  skeletonization of the finished cell. The *value* is v117; *where it is
+  sampled* was chosen by the proofread skeleton.
+- The level-2 attribute caches are region scoped. A vertex whose level-2 node
+  was never fetched has no v117 caliber and is excluded from both arms of the
+  comparison, with the excluded fraction reported.
 - The 103 cells are gold-proofread and atypical, exactly as EXP-082 warned.
 
     python -m neuronauts.experiments.exp089_edit_prior_v117
@@ -144,9 +156,13 @@ SKELETON_DIR = "data/external/cell_skeletons"
 EDIT_DIR = "data/external/edit_history"
 #: Built on demand by this module and cached, not a declared input.
 FRAGMENT_CACHE = "data/external/v117_fragment_map"
-#: Optional diagnostic rung: pooled level-2 attributes including the raw
-#: distance transform (scripts/fetch_cell_l2_positions.py). Skipped if absent.
-L2_ATTR_CACHE = "data/external/soma_viz/connective_l2_attrs.npz"
+#: Level-2 attribute caches that carry the distance transform EXP-088's
+#: ``L2Caliber`` reads. Both are tried and merged, because neither covers every
+#: vertex on its own: the substrate cache is scoped to the harness cube, the
+#: soma_viz one to the cached cell graphs (scripts/fetch_cell_l2_positions.py).
+#: Per-source coverage is reported.
+L2_ATTR_CACHES = ("data/substrate/geom/l2_attributes.npz",
+                  "data/external/soma_viz/connective_l2_attrs.npz")
 
 # --- protocol, held identical to EXP-082 -----------------------------------
 MERGE_MATCH_NM = 2000.0        # EXP-082's d_skel < 2000 label rule
@@ -167,91 +183,105 @@ V117_AUC_BAR = 0.70
 UNMAPPED_WARN_FRAC = 0.05
 
 # --- EXP-088's caliber module ----------------------------------------------
-CALIBER_CANDIDATES = (
-    ("neuronauts.harness.caliber", "fragment_caliber_nm"),
-    ("neuronauts.metrics.caliber", "fragment_caliber_nm"),
-)
+#: The module and the two names this experiment uses from it. EXP-088 owns the
+#: v117 caliber definition; EXP-089 does not implement a second one.
+CALIBER_MODULE = "neuronauts.harness.v117_caliber"
+CALIBER_STAT = "max_dt_nm"     # the arm the bar is set on
+CALIBER_STAT_ALT = "mean_dt_nm"
 
 
-def load_caliber_estimator() -> tuple[Callable, str]:
-    """EXP-088's v117 caliber measurement, imported rather than reimplemented.
+def load_caliber_api() -> tuple[Callable, Callable, str]:
+    """``(load_l2_caliber, vertex_radii_from_l2, source)`` from EXP-088.
 
-    Raises a ``ModuleNotFoundError`` that names both candidate paths and the
-    expected signature. Deliberately called from ``run`` and not at import time,
-    so ``import neuronauts.experiments.exp089_edit_prior_v117`` succeeds while
-    the dependency is still being written and the failure, when it comes, is
-    explained rather than silent.
+    Deliberately called from ``run`` and not at import time, so that
+    ``import neuronauts.experiments.exp089_edit_prior_v117`` succeeds even while
+    EXP-088 is still being written, and the missing dependency surfaces as a
+    named, explained failure rather than an import error at collection time.
     """
-    tried: list[str] = []
-    for mod_name, fn_name in CALIBER_CANDIDATES:
-        try:
-            mod = importlib.import_module(mod_name)
-        except ImportError as exc:
-            tried.append(f"{mod_name}: {type(exc).__name__}: {exc}")
-            continue
-        fn = getattr(mod, fn_name, None)
-        if fn is None:
-            tried.append(f"{mod_name}: imported but has no {fn_name}(); "
-                         f"exports {sorted(n for n in vars(mod) if not n.startswith('_'))[:12]}")
-            continue
-        return fn, f"{mod_name}.{fn_name}"
-    raise ModuleNotFoundError(
-        "EXP-089 needs EXP-088's v117 caliber measurement and does not "
-        "implement its own. Expected one function\n"
-        "    fragment_caliber_nm(points_nm: [N,3] float ndarray, nm) -> [N] "
-        "float ndarray of radius estimates, nm\n"
-        "at one of " + " or ".join(m for m, _ in CALIBER_CANDIDATES) + ".\n"
-        "Tried:\n  " + "\n  ".join(tried) + "\n"
-        "If EXP-088 named it differently, add the (module, function) pair to "
-        "CALIBER_CANDIDATES rather than writing a second caliber estimator: "
-        "two independent caliber definitions would make this experiment's "
-        "comparison against EXP-082 uninterpretable.")
+    try:
+        mod = importlib.import_module(CALIBER_MODULE)
+    except ImportError as exc:
+        raise ModuleNotFoundError(
+            f"EXP-089 needs EXP-088's v117 caliber measurement "
+            f"({CALIBER_MODULE}) and does not implement its own: two "
+            f"independent caliber definitions would make the comparison "
+            f"against EXP-082's 0.779 uninterpretable. Import failed with "
+            f"{type(exc).__name__}: {exc}") from exc
+    missing = [n for n in ("load_l2_caliber", "vertex_radii_from_l2")
+               if not hasattr(mod, n)]
+    if missing:
+        raise ModuleNotFoundError(
+            f"{CALIBER_MODULE} exists but does not export {missing}. EXP-089 "
+            f"uses the level-2 route -- load_l2_caliber(path) -> L2Caliber and "
+            f"vertex_radii_from_l2(lvl2_ids, cal, n_vertices=..., stat=...) -> "
+            f"[n_vertices] radii in nm -- which that module's own docstring "
+            f"names as the route this experiment needs. If EXP-088 renamed "
+            f"them, repoint this loader rather than writing a second "
+            f"estimator. Exports: "
+            f"{sorted(n for n in vars(mod) if not n.startswith('_'))}")
+    return mod.load_l2_caliber, mod.vertex_radii_from_l2, CALIBER_MODULE
 
 
-def _caliber_of_piece(fn: Callable, points_nm: np.ndarray) -> np.ndarray:
-    """Per-point radius for one v117 piece, with the contract enforced."""
-    out = np.asarray(fn(points_nm), dtype=np.float64)
-    if out.ndim == 0 or out.shape != (len(points_nm),):
-        raise ValueError(
-            f"caliber estimator returned shape {out.shape} for a piece of "
-            f"{len(points_nm)} points; EXP-089 needs one radius PER POINT. "
-            "EXP-082's caliber signal is a within-arbor gradient (26x top to "
-            "bottom inside axon alone), so a single number per fragment is a "
-            "different feature and is refused rather than broadcast.")
-    return out
+class _MergedCaliber:
+    """Several level-2 attribute caches, first non-NaN wins.
+
+    Not an estimator -- it only widens *coverage* over EXP-088's own
+    ``L2Caliber`` objects, because no single cache holds every level-2 node of
+    103 whole arbors. Per-source hit counts are reported.
+    """
+
+    def __init__(self, caches: list, sources: list[str]):
+        self.caches, self.sources = caches, sources
+        self.hits = {s: 0 for s in sources}
+
+    def radius_nm(self, l2_ids, stat: str) -> np.ndarray:
+        q = np.asarray(l2_ids, np.uint64)
+        out = np.full(len(q), np.nan)
+        for cal, src in zip(self.caches, self.sources):
+            need = ~np.isfinite(out)
+            if not need.any():
+                break
+            try:
+                got = cal.radius_nm(q[need], stat=stat)
+            except KeyError:
+                continue                      # this cache lacks this statistic
+
+            idx = np.flatnonzero(need)
+            fill = np.isfinite(got)
+            out[idx[fill]] = got[fill]
+            self.hits[src] += int(fill.sum())
+        return out
 
 
 # ---------------------------------------------------------------------------
 # per-cell substrate
 # ---------------------------------------------------------------------------
 
-def _vertex_level2(z, n_vertices: int) -> tuple[np.ndarray, np.ndarray]:
-    """``(vertex_index, level2_id)`` pairs, or raise saying why it cannot.
+def _per_vertex_level2(z, n_vertices: int) -> np.ndarray:
+    """``[n_vertices]`` level-2 id, or raise saying exactly why it cannot.
 
-    pcg_skel stores ``lvl2_ids`` either one per skeleton vertex or one per
-    level-2 node with ``mesh_to_skel_map`` giving the skeleton vertex. Both are
-    handled; anything else fails loudly with the shapes, because guessing here
-    would silently mis-assign the v117 fragmentation.
+    A pcg_skel v4 skeleton is documented to carry one ``lvl2_ids`` entry per
+    skeleton vertex. Nothing in this repository had consumed that field when
+    this was written, so the correspondence is *checked*, never assumed --
+    ``v117_caliber.vertex_radii_from_l2`` makes the same check and says a caller
+    who cannot show the lengths match should not use it. A skeleton that fails
+    the check is skipped and counted, not repaired by a guess: inventing a
+    vertex-to-level-2 aggregation here would put a second, undeclared estimator
+    between the segmentation and the caliber.
     """
     files = set(z.files)
     if "lvl2_ids" not in files:
         raise KeyError(
             "skeleton cache has no 'lvl2_ids', so no vertex can be mapped to a "
-            "v117 object. scripts/fetch_seed_skeletons.py keeps it; re-fetch, "
-            "and add 'mesh_to_skel_map' to its KEEP tuple while doing so.")
+            "level-2 node, hence to a v117 object or a v117 caliber. "
+            "scripts/fetch_seed_skeletons.py already keeps it; re-fetch.")
     lv = np.asarray(z["lvl2_ids"]).ravel().astype(np.uint64)
-    if len(lv) == n_vertices:
-        return np.arange(n_vertices, dtype=np.int64), lv
-    if "mesh_to_skel_map" in files:
-        m2s = np.asarray(z["mesh_to_skel_map"]).ravel().astype(np.int64)
-        if len(m2s) == len(lv):
-            ok = (m2s >= 0) & (m2s < n_vertices)
-            return m2s[ok], lv[ok]
-    raise ValueError(
-        f"lvl2_ids has length {len(lv)} but the skeleton has {n_vertices} "
-        f"vertices, and no usable mesh_to_skel_map is cached "
-        f"(files: {sorted(files)}). Re-fetch the skeletons with "
-        f"'mesh_to_skel_map' included.")
+    if len(lv) != n_vertices:
+        raise ValueError(
+            f"lvl2_ids has {len(lv)} entries for {n_vertices} skeleton "
+            f"vertices, so the one-per-vertex correspondence does not hold for "
+            f"this skeleton (files: {sorted(files)}).")
+    return lv
 
 
 def _v117_root_per_vertex(root: int, z, n_vertices: int, cache_dir: Path,

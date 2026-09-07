@@ -551,10 +551,12 @@ def evaluate(good, bad, cells, seed=SEED):
     good = np.asarray(good, np.float64)
     bad = np.asarray(bad, np.float64)
     cells = np.asarray(cells)
+    # Only pairs where BOTH arms scored enter the pooled AUC. Dropping one arm's
+    # value alone would unbalance the two classes and move the number for a
+    # reason that is not separation; the drop rate is reported on its own.
     both = np.isfinite(good) & np.isfinite(bad)
-    s = np.concatenate([good, bad])
-    y = np.concatenate([np.zeros(len(good)), np.ones(len(bad))])
-    c = np.concatenate([cells, cells])
+    s = np.concatenate([good[both], bad[both]])
+    y = np.concatenate([np.zeros(int(both.sum())), np.ones(int(both.sum()))])
     out = {"n_pairs": int(len(good)), "n_cells": int(len(np.unique(cells))),
            "n_pairs_scored": int(both.sum()),
            "abs_auc": _auc(y, s)}
@@ -571,7 +573,7 @@ def evaluate(good, bad, cells, seed=SEED):
     fold = cell_folds(cells, seed=seed)
     per_fold = []
     for k in range(N_FOLD):
-        m = fold == k
+        m = (fold == k) & both
         if m.sum() < 4:
             per_fold.append(float("nan"))
             continue
@@ -579,7 +581,8 @@ def evaluate(good, bad, cells, seed=SEED):
                              np.concatenate([good[m], bad[m]])))
     out["fold_auc"] = per_fold
     ok = np.isfinite(per_fold)
-    out["fold_auc_mean"] = float(np.mean(np.asarray(per_fold)[ok])) if ok.any() else float("nan")
+    pf = np.asarray(per_fold, np.float64)
+    out["fold_auc_mean"] = float(pf[ok].mean()) if ok.any() else float("nan")
     out["fold_auc_spread"] = ([float(np.min(np.asarray(per_fold)[ok])),
                                float(np.max(np.asarray(per_fold)[ok]))]
                               if ok.any() else [float("nan")] * 2)
@@ -646,7 +649,8 @@ def _verify_solvers(seed=0, n=4000):
                        for i in range(n)])
     aerr = float(np.max(np.abs(mine - theirs)))
     if aerr > 1e-12:
-        raise AssertionError(f"angle_prior disagrees with the Cajal prior by {aerr:.3g}")
+        raise AssertionError(
+            f"angle_prior disagrees with the Cajal prior by {aerr:.3g}")
     return {"murray_vs_brentq_max_abs_err": err,
             "murray_admission_agrees": True,
             "angle_vs_cajal_prior_max_abs_err": aerr,
@@ -764,6 +768,11 @@ def pick_samecell(A, donor_cable_a, forbidden, target, rng):
     return int(rng.choice(ok))
 
 
+def _median_graft(rows, k):
+    v = [r["graft_cable_um"] for r in rows if r["k"] == k]
+    return float(np.median(v)) if v else float("nan")
+
+
 # ---------------------------------------------------------------------------
 def run(ctx: Context) -> Outcome:
     root = Path(ctx.root)
@@ -812,6 +821,8 @@ def run(ctx: Context) -> Outcome:
     # scores[(k, arm, variant, residual, agg)] -> list per pair
     rows = []
     n_rep_attempt = n_rep_used = 0
+    rejected = {"no_second_removal": 0, "too_few_sites": 0,
+                "no_size_matched_donor": 0, "assembly_failed": 0}
     for ci, a_id in enumerate(cells):
         A = trees[a_id]
         sc = A["sub_cable"] / L.UM
@@ -825,11 +836,13 @@ def run(ctx: Context) -> Outcome:
             n_rep_attempt += 1
             zc = np.flatnonzero((sc > Z_FRAC[0] * total) & (sc < Z_FRAC[1] * total))
             if not len(zc):
+                rejected["no_second_removal"] += 1   # and the cell is done
                 break
             z = int(rng.choice(zc))
             mz = L.subtree_mask(A, z)
             sites = choose_sites(L, A, mz, sc, total, nkid, children, rng)
             if not sites:
+                rejected["too_few_sites"] += 1
                 continue
 
             forbidden = mz.copy()
@@ -847,6 +860,7 @@ def run(ctx: Context) -> Outcome:
                 donors_f.append(f)
                 donors_s.append(s)
             if not ok:
+                rejected["no_size_matched_donor"] += 1
                 continue
             n_rep_used += 1
 
@@ -868,6 +882,7 @@ def run(ctx: Context) -> Outcome:
                         break
                     built[name] = t
                 if not built:
+                    rejected["assembly_failed"] += 1
                     continue
                 scored = {n: score_assembly(t) for n, t in built.items()}
                 rows.append({"cell": a_id, "rep": rep, "k": k,
@@ -900,20 +915,30 @@ def run(ctx: Context) -> Outcome:
         return np.asarray(g), np.asarray(b), np.asarray(c)
 
     def collect_join(k, arm, variant, resid, how):
-        g, b, c, miss = [], [], [], []
+        """Residual over the k KNOWN join sites, per arm.
+
+        The rate at which a join bifurcation has NO admissible residual is
+        returned for BOTH arms, not just the corrupted one: a corruption that
+        pushes its own join point out of the admissible bracket would otherwise
+        be silently dropped, and the difference between the two rates is that
+        effect made visible.
+        """
+        g, b, c, miss_g, miss_b = [], [], [], [], []
+        f = np.nanmean if how == "mean" else np.nanmax
         for r in rows:
             if r["k"] != k:
                 continue
             gv = r["scored"]["correct"][1][variant][resid]
             bv = r["scored"][arm][1][variant][resid]
-            miss.append(float(np.isnan(bv).mean()))
-            f = np.nanmean if how == "mean" else np.nanmax
+            miss_g.append(float(np.isnan(gv).mean()))
+            miss_b.append(float(np.isnan(bv).mean()))
             with np.errstate(invalid="ignore"):
                 g.append(f(gv) if np.isfinite(gv).any() else np.nan)
                 b.append(f(bv) if np.isfinite(bv).any() else np.nan)
             c.append(r["cell"])
-        return (np.asarray(g), np.asarray(b), np.asarray(c),
-                float(np.mean(miss)) if miss else float("nan"))
+        rate = {"correct": float(np.mean(miss_g)) if miss_g else float("nan"),
+                "corrupted": float(np.mean(miss_b)) if miss_b else float("nan")}
+        return np.asarray(g), np.asarray(b), np.asarray(c), rate
 
     whole_tree, known_join, size_only = {}, {}, {}
     for k in K_LIST:
@@ -931,11 +956,12 @@ def run(ctx: Context) -> Outcome:
                         key = f"k{k}/{arm}/{variant}/{resid}/{agg}"
                         whole_tree[key] = evaluate(g, b, c)
                     for how in ("mean", "max"):
-                        g, b, c, miss = collect_join(k, arm, variant, resid, how)
+                        g, b, c, rate = collect_join(k, arm, variant,
+                                                     resid, how)
                         if not len(g):
                             continue
                         e = evaluate(g, b, c)
-                        e["join_residual_missing_rate"] = miss
+                        e["join_residual_missing_rate"] = rate
                         known_join[f"k{k}/{arm}/{variant}/{resid}/{how}"] = e
             # size-only control: the raw bifurcation COUNT, taken before the
             # murray admissibility filter, which the corruption itself can move
@@ -948,10 +974,11 @@ def run(ctx: Context) -> Outcome:
                 size_only[f"k{k}/{arm}/admitted_count"] = evaluate(g, b, c)
 
     prim = f"/{PRIMARY_VARIANT}/{PRIMARY_RESIDUAL}/{PRIMARY_AGG}"
-    auc_by_k = {f"k{k}": whole_tree.get(f"k{k}/foreign{prim}", {}).get("abs_auc", float("nan"))
-                for k in K_LIST}
-    ctl_by_k = {f"k{k}": whole_tree.get(f"k{k}/samecell{prim}", {}).get("abs_auc", float("nan"))
-                for k in K_LIST}
+    def _abs(arm, k):
+        return whole_tree.get(f"k{k}/{arm}{prim}", {}).get("abs_auc", float("nan"))
+
+    auc_by_k = {f"k{k}": _abs("foreign", k) for k in K_LIST}
+    ctl_by_k = {f"k{k}": _abs("samecell", k) for k in K_LIST}
     single = known_join.get(f"k1/foreign/{PRIMARY_VARIANT}/{PRIMARY_RESIDUAL}/mean", {})
     single_auc = single.get("abs_auc", float("nan"))
 
@@ -1009,8 +1036,8 @@ def run(ctx: Context) -> Outcome:
             "single_join_site_auc_k1": float(single_auc),
             "single_point_reference_exp084": SINGLE_POINT_REFERENCE,
             "paired_by_k_primary": {
-                f"k{k}": whole_tree.get(f"k{k}/foreign{prim}", {}).get("paired", float("nan"))
-                for k in K_LIST},
+                f"k{k}": whole_tree.get(f"k{k}/foreign{prim}", {}).get(
+                    "paired", float("nan")) for k in K_LIST},
             "null_abs_auc_k3_primary": whole_tree.get(
                 f"k3/foreign{prim}", {}).get("null_abs_auc", {}),
             "null_paired_k3_primary": whole_tree.get(
@@ -1031,9 +1058,7 @@ def run(ctx: Context) -> Outcome:
                 "min_radius_nm": MIN_RADIUS_NM,
                 "residual_threshold": dict(RESID_THRESHOLD),
                 "median_grafted_cable_um_by_k": {
-                    f"k{k}": float(np.median([r["graft_cable_um"] for r in rows
-                                              if r["k"] == k]) if per_k_pairs[f"k{k}"] else np.nan)
-                    for k in K_LIST},
+                    f"k{k}": _median_graft(rows, k) for k in K_LIST},
                 "median_arbor_cable_um": float(np.median(
                     [r["arbor_cable_um"] for r in rows])),
             },
@@ -1047,6 +1072,7 @@ def run(ctx: Context) -> Outcome:
             "cells_contributing": int(len(set(r["cell"] for r in rows))),
             "replicates_attempted": n_rep_attempt,
             "replicates_used": n_rep_used,
+            "replicates_rejected": rejected,
             "pairs_by_k": per_k_pairs,
             "assemblies_scored": 3 * len(rows),
         },

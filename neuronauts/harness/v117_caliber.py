@@ -85,7 +85,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Optional, Sequence
+from typing import Iterable, Optional
 
 import numpy as np
 from scipy.ndimage import distance_transform_edt

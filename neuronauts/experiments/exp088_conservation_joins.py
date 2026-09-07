@@ -63,7 +63,6 @@ compounding.
 
 from __future__ import annotations
 
-import json
 import time
 import warnings
 from collections import defaultdict
@@ -115,13 +114,21 @@ SNAP_MAX_NM = 2000.0
 #: covering all three arms stays small.
 ARM_NM = 1500.0
 MIN_ARM_NM = 700.0
-#: Padding around the site, the far click and the three arm points. Must exceed
-#: the caliber halo, or a radius near the box face would be measured against
-#: unread tissue and come back quietly too small.
-BOX_PAD_NM = 1400.0
-#: A read this size is already ~5 um on a side. Sites needing more are skipped
-#: and counted; if too many are, the run says so instead of reporting an area
-#: under the curve computed on whatever fitted.
+#: Padding around every point the site could be measured at. Must exceed the
+#: caliber window (``local + halo``), or a radius near the box face would be
+#: measured against unread tissue and come back quietly too small -- which
+#: would look exactly like a real caliber mismatch. The first version of this
+#: padded only the three true arms and a distractor sampled off to the side
+#: came back ``truncated`` every time.
+BOX_PAD_NM = DEFAULT_LOCAL_NM + DEFAULT_HALO_NM + 200.0
+#: The box is also forced to cover a sphere of this radius about the join site,
+#: because a distractor may lie in a direction no true arm points in.
+SITE_WINDOW_NM = 2000.0
+#: A read this size is already ~7 um on a side, which is ~8.4M voxels at the
+#: 32/32/40 nm the graphene segmentation serves at mip 2. Sites needing more are
+#: skipped and counted; if too many are -- reading at a finer mip would do it --
+#: the run says so instead of reporting an area under the curve computed on
+#: whatever happened to fit.
 MAX_BOX_VOXELS = 30_000_000
 MAX_SKIP_FRACTION = 0.20
 #: How far from a skeleton point an object may sit and still be read as this
@@ -131,6 +138,10 @@ SELF_TISSUE_NM = 400.0
 #: ~2 um apart, so testing against vertices alone would call mid-edge cable
 #: foreign.
 SKELETON_SAMPLE_NM = 200.0
+#: How far a skeleton vertex may sit from v117 tissue and still be read as
+#: lying on it. The skeleton is a v1822 object; at v117 the same cable is there
+#: but its centreline need not fall on the same voxel.
+ARM_OBJECT_SNAP_NM = 200.0
 
 # -- distractor construction -------------------------------------------------
 DISTRACTOR_MAX_GAP_NM = 2000.0
@@ -187,6 +198,7 @@ SPEC = Spec(
     params={"v117_timestamp": V117_TIMESTAMP, "mip": MIP,
             "snap_max_nm": SNAP_MAX_NM, "arm_nm": ARM_NM,
             "min_arm_nm": MIN_ARM_NM, "box_pad_nm": BOX_PAD_NM,
+            "site_window_nm": SITE_WINDOW_NM,
             "max_box_voxels": MAX_BOX_VOXELS,
             "self_tissue_nm": SELF_TISSUE_NM,
             "skeleton_sample_nm": SKELETON_SAMPLE_NM,
@@ -473,7 +485,7 @@ def _majority_object(box: VoxelCaliber, pts: np.ndarray) -> int:
     for p in pts:
         o = box.object_at(p)
         if o == 0:
-            near = box.objects_within(p, SELF_TISSUE_NM)
+            near = box.objects_within(p, ARM_OBJECT_SNAP_NM)
             o = near[0][0] if near else 0
         if o:
             votes[int(o)] += 1
@@ -536,6 +548,9 @@ def run(ctx: Context) -> Outcome:
         sk = skels[cell]
 
         for side in (0, 1):
+            # Funnel counts are per ENDPOINT attempt, not per operation: a merge
+            # whose first endpoint fails a gate is retried on its second.
+            funnel["endpoint_attempts"] += 1
             v = rec["vert"][side]
             p_site, p_other = rec["pts"][side], rec["pts"][1 - side]
             if v < 0 or v >= len(sk.V):
@@ -552,9 +567,12 @@ def run(ctx: Context) -> Outcome:
                 funnel["arm_too_short"] += 1
                 continue
 
-            pts_needed = [p_site, p_other, sk.V[v]] + [sk.V[a[0]] for a in arms]
-            lo = np.min(np.vstack(pts_needed), axis=0)
-            hi = np.max(np.vstack(pts_needed), axis=0)
+            anchor = sk.V[v]
+            pts_needed = [p_site, p_other, anchor] + [sk.V[a[0]] for a in arms]
+            lo = np.minimum(np.min(np.vstack(pts_needed), axis=0),
+                            anchor - SITE_WINDOW_NM)
+            hi = np.maximum(np.max(np.vstack(pts_needed), axis=0),
+                            anchor + SITE_WINDOW_NM)
             box = read_v117_box(cv, lo, hi, pad_nm=BOX_PAD_NM,
                                 max_voxels=MAX_BOX_VOXELS)
             if box is None:
@@ -593,12 +611,12 @@ def run(ctx: Context) -> Outcome:
 
             # -- real distractors, nearest first, this cell's tissue removed --
             dense = sk.dense_points()
-            near_mask = (np.abs(dense - p_site) <= DISTRACTOR_MAX_GAP_NM
+            near_mask = (np.abs(dense - anchor) <= DISTRACTOR_MAX_GAP_NM
                          + SELF_TISSUE_NM).all(axis=1)
             own_tree = cKDTree(dense[near_mask]) if near_mask.any() else None
-            cands = box.objects_within(p_site, DISTRACTOR_MAX_GAP_NM,
+            cands = box.objects_within(anchor, DISTRACTOR_MAX_GAP_NM,
                                        exclude=(obj_a, obj_b))
-            range_nm = float(np.linalg.norm(arm_pts[added] - p_site))
+            range_nm = float(np.linalg.norm(arm_pts[added] - anchor))
             distractors = []
             for obj, gap, p_near in cands:
                 if len(distractors) >= N_DISTRACTORS:
@@ -607,8 +625,8 @@ def run(ctx: Context) -> Outcome:
                         float(own_tree.query(p_near, k=1)[0]) <= SELF_TISSUE_NM:
                     funnel["distractor_is_own_tissue"] += 1
                     continue
-                d_dir = p_near - p_site
-                q = box.point_at_range(obj, p_site, d_dir, range_nm,
+                d_dir = p_near - anchor
+                q = box.point_at_range(obj, anchor, d_dir, range_nm,
                                        cone_cos=DISTRACTOR_CONE_COS,
                                        tol_nm=DISTRACTOR_RANGE_TOL_NM)
                 if q is None:
@@ -713,10 +731,19 @@ def run(ctx: Context) -> Outcome:
             real_owner.append(i)
     real_owner = np.asarray(real_owner, np.int64)
 
-    def assemble(true_rows, wrong_rows, wrong_site_idx=None):
-        idx = (np.arange(n_sites) if wrong_site_idx is None else wrong_site_idx)
+    def assemble(true_rows, wrong_rows, wrong_site_idx=None,
+                 true_site_idx=None):
+        """Stack one true and one wrong set into (label, fold, score) arrays.
+
+        Both index sets are explicit: a row's fold is the fold of the SITE it
+        was built at, and with several distractors per site the two sets are
+        different lengths, so neither may be assumed to be ``arange(n_sites)``.
+        """
+        widx = (np.arange(n_sites) if wrong_site_idx is None else wrong_site_idx)
+        tidx = (np.arange(n_sites) if true_site_idx is None else true_site_idx)
+        assert len(tidx) == len(true_rows) and len(widx) == len(wrong_rows)
         y = np.r_[np.ones(len(true_rows)), np.zeros(len(wrong_rows))]
-        f = np.r_[fold, fold[idx]]
+        f = np.r_[fold[tidx], fold[widx]]
         mur = np.r_[[t["murray"] for t in true_rows],
                     [w["murray"] for w in wrong_rows]]
         ang = np.r_[[t["angle_prior"] for t in true_rows],
@@ -760,7 +787,7 @@ def run(ctx: Context) -> Outcome:
     near_rows = [wrong_v_real[k] for k in sel]
     near_idx = real_owner[sel]
     y, f, mur, ang = assemble([true_v[i] for i in near_idx.tolist()],
-                              near_rows, near_idx)
+                              near_rows, near_idx, near_idx)
     results["C_nearest_distractor_only"] = {
         "murray": heldout_auc(mur, y, f),
         "angle_prior": heldout_auc(ang, y, f),
