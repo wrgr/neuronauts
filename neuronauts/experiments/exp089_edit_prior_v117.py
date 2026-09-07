@@ -645,7 +645,13 @@ def run(ctx: Context) -> Outcome:
         try:
             rec = _cell_features(r, Path(sf), ef, cache_dir, cal,
                                  vertex_radii, token)
-        except (KeyError, ValueError, RuntimeError) as exc:
+        # Per-cell data problems (no lvl2_ids, an unlocated edit log, a
+        # skeleton whose lvl2_ids do not line up) skip that cell and are
+        # counted. A failed chunkedgraph fetch raises RuntimeError and is NOT
+        # caught: it would otherwise skip all 103 cells one at a time and
+        # report "no cell produced a vertex table" instead of "the token is
+        # wrong".
+        except (KeyError, ValueError) as exc:
             skipped[str(r)] = f"{type(exc).__name__}: {exc}"
             print(f"  cell {r}: SKIPPED -- {type(exc).__name__}: "
                   f"{str(exc)[:160]}", flush=True)
