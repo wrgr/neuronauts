@@ -143,6 +143,7 @@ from scipy.stats import rankdata
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.model_selection import GroupKFold
 
+from neuronauts.auth import cave_token
 from neuronauts.data import lineage as L
 from neuronauts.experiments._runner import Context, Outcome, Spec, main
 from neuronauts.metrics.ranking import roc_auc
@@ -178,6 +179,16 @@ COMPARTMENT_AXON = 2
 # --- the bar, declared before the run --------------------------------------
 EXP082_AUC = 0.779             # the proofread-feature number being reproduced
 CONTROL_TOL = 0.03
+#: EXP-082's published population, so the CONTROL can be split in two. This
+#: module rebuilds the skeleton/edit-log join from source rather than reading
+#: EXP-082's cached ``data/external/edit_join_v082.npz``, deliberately: reusing
+#: that array would leave the join half of the pipeline unchecked and make the
+#: control test only the modelling half. The price is that a control miss could
+#: come from either half, so the join is reported against these three numbers
+#: and the reader can see which half moved.
+EXP082_N_VERTICES = 650_200
+EXP082_N_POSITIVE = 30_973
+EXP082_N_CELLS = 103
 V117_AUC_BAR = 0.70
 #: Above this fraction of vertices unmapped to a v117 root, the run still
 #: reports but says loudly that the fragmentation is incomplete.
@@ -618,7 +629,7 @@ def run(ctx: Context) -> Outcome:
     cal = _MergedCaliber(caches, sources)
     print(f"  caliber: {caliber_src} (EXP-088's, imported), statistic "
           f"{CALIBER_STAT}", flush=True)
-    token = os.environ.get("CAVE_TOKEN") or L.DEFAULT_TOKEN
+    token = cave_token(required=False)
     cache_dir = root / FRAGMENT_CACHE
 
     skels = sorted(glob.glob(str(root / SKELETON_DIR / "*_skv4.npz")))
@@ -654,6 +665,7 @@ def run(ctx: Context) -> Outcome:
     y = cat("label")
     groups = np.concatenate([np.full(c["n"], c["root"], np.int64) for c in cells])
     mapped = cat("mapped")
+    frag_ok = cat("frag_ok")
     pos = np.concatenate([c["pos"] for c in cells])
 
     X = np.full((len(y), len(COLS)), np.nan)
@@ -706,15 +718,35 @@ def run(ctx: Context) -> Outcome:
     # runs on the full EXP-082 population, because THAT is the number 0.779 was
     # measured on and the +/- 0.03 check has to be against the same population.
     full = np.ones(len(y), bool)
+    # Two separate causes, reported separately: no v117 object id at all
+    # (chunkedgraph), versus a v117 object id but no caliber (the level-2
+    # attribute cache does not reach here).
+    n_no_root = int((~frag_ok).sum())
+    n_no_caliber = int((frag_ok & ~mapped).sum())
     n_unmapped = int((~mapped).sum())
     frac_unmapped = float(n_unmapped / len(y))
     n_cells_full = len(cells)
     cells_mapped = sorted({int(g) for g in np.unique(groups[mapped])})
 
+    join_reproduction = {
+        "n_vertices": int(len(y)), "exp082_n_vertices": EXP082_N_VERTICES,
+        "n_positive": int(y.sum()), "exp082_n_positive": EXP082_N_POSITIVE,
+        "n_cells": n_cells_full, "exp082_n_cells": EXP082_N_CELLS,
+        "vertex_ratio": round(len(y) / EXP082_N_VERTICES, 4),
+        "positive_ratio": round(float(y.sum()) / EXP082_N_POSITIVE, 4),
+        "note": "the join is rebuilt from the skeletons and the edit log rather "
+                "than read from data/external/edit_join_v082.npz, so the "
+                "control checks the join as well as the model; these ratios "
+                "say which half moved if the control misses",
+    }
     print(f"  vertices {len(y):,}  positive {int(y.sum()):,} "
           f"(base {y.mean():.4f})  cells {n_cells_full}", flush=True)
-    print(f"  v117-mapped vertices {int(mapped.sum()):,} "
-          f"({1-frac_unmapped:.1%}), pieces "
+    print(f"  join vs EXP-082: vertices x{join_reproduction['vertex_ratio']}, "
+          f"positives x{join_reproduction['positive_ratio']}, "
+          f"cells {n_cells_full}/{EXP082_N_CELLS}", flush=True)
+    print(f"  usable for the v117 arm: {int(mapped.sum()):,} "
+          f"({1-frac_unmapped:.1%}); excluded {n_no_root:,} with no v117 root, "
+          f"{n_no_caliber:,} with no level-2 caliber; pieces "
           f"{sum(c['n_pieces'] for c in cells):,}", flush=True)
 
     def score(cols, sel, n_iter=HEADLINE_ITERS):
@@ -785,7 +817,11 @@ def run(ctx: Context) -> Outcome:
                 f"the EXP-082 feature set refitted here scores {ctrl:.3f}, "
                 f"outside {EXP082_AUC} +/- {CONTROL_TOL}. The reimplementation "
                 f"is the difference until that is explained; the v117 arm's "
-                f"{v117_auc:.3f} is reported but is not evidence about v117.")
+                f"{v117_auc:.3f} is reported but is not evidence about v117. "
+                f"observed['join_reproduction'] says which half moved: the "
+                f"rebuilt join has {join_reproduction['vertex_ratio']}x "
+                f"EXP-082's vertices and "
+                f"{join_reproduction['positive_ratio']}x its positives.")
     else:
         note = (f"control reproduces EXP-082 at {ctrl:.3f} (target {EXP082_AUC} "
                 f"+/- {CONTROL_TOL}), so the comparison is interpretable. "
@@ -802,10 +838,13 @@ def run(ctx: Context) -> Outcome:
                 f"not substituted; its cost on the proofread side is "
                 f"{results['proofread_control_mapped']['auc'] - results['proofread_no_axon_mapped']['auc']:+.3f}.")
     if frac_unmapped > UNMAPPED_WARN_FRAC:
-        note += (f" WARNING: {frac_unmapped:.1%} of vertices carry no v117 root "
-                 f"and were excluded from both arms of the comparison; the "
-                 f"fragmentation is incomplete and the v117 number is measured "
-                 f"on the mapped remainder.")
+        note += (f" WARNING: {frac_unmapped:.1%} of vertices were excluded "
+                 f"from both arms of the comparison -- {n_no_root:,} with no "
+                 f"v117 object id and {n_no_caliber:,} with an id but no "
+                 f"level-2 caliber. The v117 number is measured on the "
+                 f"remainder, and the excluded cable is not random: it is "
+                 f"whatever the chunkedgraph and the level-2 attribute caches "
+                 f"do not reach.")
 
     return Outcome(
         passed=passed,
@@ -833,14 +872,17 @@ def run(ctx: Context) -> Outcome:
                       f"EXP-082"),
             "caliber_source": caliber_src,
             "caliber_agreement": caliber_agreement,
+            "join_reproduction": join_reproduction,
         },
         population={
             "n_cells_with_skeleton_and_edits": n_cells_full,
             "n_cells_skipped": len(skipped),
             "skipped_reasons": skipped,
             "n_vertices": int(len(y)),
-            "n_vertices_unmapped_to_v117": n_unmapped,
-            "frac_vertices_unmapped": round(frac_unmapped, 6),
+            "n_vertices_excluded_from_v117_arm": n_unmapped,
+            "n_vertices_no_v117_root": n_no_root,
+            "n_vertices_no_v117_caliber": n_no_caliber,
+            "frac_vertices_excluded": round(frac_unmapped, 6),
             "n_v117_pieces": int(sum(c["n_pieces"] for c in cells)),
             "pieces_per_cell_median": float(np.median(
                 [c["n_pieces"] for c in cells])),
