@@ -679,6 +679,11 @@ def run(ctx: Context) -> Outcome:
             "boundary_false_boundary_rate": bound["true_split_rate"],
             "unexplained_true_split_rate_adjudicable":
                 unexp["true_split_rate_adjudicable"],
+            # Machine-readable, because EXP-087 gates on clause 2 alone:
+            # its training signal is label-free, so a clause-1 failure
+            # driven by label reach at a tip says nothing about it.
+            "clause_1_passed": clause_1,
+            "clause_2_passed": clause_2,
             "failed_clauses": fails,
         },
         population={

@@ -304,16 +304,29 @@ SPEC = Spec(
         f"{SPLIT_AXIS}, {SPLIT_BUFFER_NM/1000:.0f} um buffer). Features are "
         f"mip-5 v117 fragment geometry only -- no synapse feature (it defines "
         f"the training label), no box-face distance, no proofread skeleton"),
-    #: EXP-086 must have PASSED: the training population is only a negative
-    #: class if the unexplained class really is splits, and that is what it
-    #: measures. EXP-081 and EXP-085 are the two results this one is built on,
-    #: but they were run as ad-hoc scripts and wrote no ``results/<id>/
-    #: result.json``, so declaring them in ``requires_ran`` would block this
-    #: experiment forever on an artifact that does not exist. They are named
-    #: here instead of gated, and the run re-derives EXP-081's frontier from
-    #: first principles and prints it against the published 2,137 / 34 / 1.6%
-    #: rather than trusting it.
-    requires=["EXP-086"],
+    #: EXP-086 must have RUN, and its clause 2 must hold -- checked in ``run``
+    #: against ``ctx.upstream``, which ``_runner`` populates from ``requires``
+    #: and ``requires_ran`` alike.
+    #:
+    #: Not ``requires=["EXP-086"]``, which would gate on its whole bar. EXP-086
+    #: fails if EITHER clause fails, and its clause 1 -- the absolute
+    #: true-split rate -- is a floor that can fail because proofread labels do
+    #: not reach a tip, not because the tips are artifacts. This experiment's
+    #: training signal is label-free, so label reach says nothing about it;
+    #: gating on it would repeat the fault ``Spec.requires_ran`` was written
+    #: for, where EXP-057's bar on label DENSITY blocked candidate-generation
+    #: work its failure did not touch. Clause 2 -- that the grammar's STOP
+    #: label separates from its unexplained label -- is the one that decides
+    #: whether this training population means anything, and it is the one
+    #: gated here.
+    #:
+    #: EXP-081 and EXP-085 are the two results this one is built on, but they
+    #: were run as ad-hoc scripts and wrote no ``results/<id>/result.json``, so
+    #: declaring them would block this experiment forever on an artifact that
+    #: does not exist. They are named here instead of gated, and the run
+    #: re-derives EXP-081's frontier from first principles and prints it
+    #: against the published 2,137 / 34 / 1.6% rather than trusting it.
+    requires_ran=["EXP-086"],
     inputs=[CLOUDS, POPULATION],
     params={"tip_neighbor_nm": TIP_NEIGHBOR_NM, "tip_beyond_nm": TIP_BEYOND_NM,
             "tip_dedupe_nm": TIP_DEDUPE_NM, "live_radius_nm": LIVE_RADIUS_NM,
@@ -609,6 +622,31 @@ def _load_cards(root: Path) -> list[dict]:
 def run(ctx: Context) -> Outcome:
     root = ctx.root
     rng = np.random.default_rng(SEED)
+
+    # --- the one upstream clause this experiment stands on -------------------
+    # EXP-086 asks whether an "unexplained" cut surface is a real split. Its
+    # clause 2 -- that the synaptic-terminal class separates from the
+    # unexplained class -- is what makes the population below a negative class
+    # rather than a mixture. Refuse rather than train on a mixture and report a
+    # number. A missing verdict is not treated as consent.
+    up = ctx.upstream.get("EXP-086") or {}
+    clause_2 = (up.get("observed") or {}).get("clause_2_passed")
+    if clause_2 is False:
+        return Outcome(
+            passed=False,
+            observed={"blocked_on": "EXP-086 clause 2"},
+            note="EXP-086 found the grammar's synaptic-terminal class does not "
+                 "separate from its unexplained class, so the training "
+                 "population here is a mixture, not a negative class. Training "
+                 "on it and reporting a precision would be a number about the "
+                 "mixture. Not run.")
+    if clause_2 is None:
+        return Outcome(
+            passed=False,
+            observed={"blocked_on": "EXP-086 clause 2 verdict absent"},
+            note="EXP-086 has no clause_2_passed in its result. Its verdict is "
+                 "the premise of this experiment; absence of a verdict is not "
+                 "a passing one. Run EXP-086 first.")
 
     # --- substrate ----------------------------------------------------------
     with np.load(root / CLOUDS, allow_pickle=False) as z:
