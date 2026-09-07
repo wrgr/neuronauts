@@ -139,6 +139,45 @@ def hash_file(path: str | Path, *, quick: bool = False,
     }
 
 
+def hash_dir(path: str | Path, *, pattern: str = "*") -> dict:
+    """A manifest digest of a directory: names and sizes, never contents.
+
+    Some experiments depend on a *set* of files -- one skeleton archive per
+    cell, one card per seed -- rather than on a single artifact. Declaring the
+    directory used to raise ``IsADirectoryError`` inside
+    :func:`capture_provenance`, and only on the machine that actually has the
+    data, so an experiment could run to completion and then die writing its
+    result. Declaring nothing instead, which is what EXP-074 and EXP-087 had to
+    do, leaves the dependency unrecorded.
+
+    The digest covers each matching file's path relative to the directory and
+    its size, sorted, so it is deterministic and cheap on a directory of
+    thousands of files. It is labelled ``manifest-sha256`` because it is not a
+    content hash: a file edited without changing its length does not move it.
+    """
+    p = Path(path)
+    h = hashlib.sha256()
+    n, total = 0, 0
+    for f in sorted(p.rglob(pattern)):
+        if not f.is_file():
+            continue
+        size = f.stat().st_size
+        h.update(str(f.relative_to(p)).encode())
+        h.update(b"\x00")
+        h.update(str(size).encode())
+        h.update(b"\n")
+        n += 1
+        total += size
+    return {
+        "path": str(p),
+        "algo": "manifest-sha256",
+        "hash": h.hexdigest(),
+        "n_files": n,
+        "bytes": total,
+        "note": "directory manifest of names and sizes; not a content hash",
+    }
+
+
 def package_versions(names: Iterable[str] = _PACKAGES) -> dict[str, Optional[str]]:
     out: dict[str, Optional[str]] = {}
     for name in names:
@@ -177,7 +216,9 @@ def capture_provenance(*, inputs: Iterable[str | Path] = (),
     }
     for item in inputs:
         p = Path(item)
-        if p.exists():
+        if p.is_dir():
+            prov["inputs"].append(hash_dir(p))
+        elif p.exists():
             prov["inputs"].append(hash_file(p, quick=quick_hash))
         else:
             prov["inputs"].append({"path": str(p), "missing": True})
